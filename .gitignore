@@ -1,0 +1,51 @@
+# Python caches and test tooling
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
+
+# Temporary files and test runs
+.tmp*
+**/.tmp*
+*.tmp
+*.bak
+~$*
+
+# Packaged applications and build products
+**/build/
+**/build_*/
+**/dist/
+**/dist_*/
+**/working_snapshots/
+*.exe
+*.pkg
+*.pyz
+
+# Local logs and reports
+*.log
+/compilingReports/
+
+# Survey data, generated workspaces, and local catalog databases
+/repository/
+/workspace/
+/surveyInput/
+/SurveyPlatform/
+/NPA2900
+
+# Machine-specific configuration written by the GUIs
+/survey_tool_config.json
+/pipelines/table_merger/settings.json
+**/*_settings.json
+**/*.settings.json
+
+# Editor and operating-system metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+

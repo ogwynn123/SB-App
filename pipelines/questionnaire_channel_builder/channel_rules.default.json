@@ -1,0 +1,330 @@
+{
+  "schema_version": 1,
+  "description": "Default conservative rules for deriving phone and SMS questionnaire DOCX drafts from a final CATI-style questionnaire.",
+  "channels": {
+    "phone": {
+      "output_suffix": " - Phone",
+      "rules": []
+    },
+    "sms": {
+      "output_suffix": " - SMS",
+      "rules": [
+        {
+          "id": "sms_standard_intro",
+          "description": "Replace the CATI interviewer intro with the standard SMS intro marker.",
+          "type": "regex_replace",
+          "scope": "first_matching_paragraph",
+          "match": "(?is)^\\s*Hello,\\s+my name is\\b.*?(?:telephone number|phone number).*",
+          "replacement": "STANDARD SMS INTRO",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_remove_parentheses_from_response_options",
+          "description": "SMS instruments show volunteered / DK response labels without surrounding parentheses.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "unless": "^\\((?:Refused|Other|.*Refused)",
+          "match": "^\\(([^\\)]+)\\)(\\s+.+)$",
+          "replacement": "\\1\\2",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_curly_dont_know",
+          "description": "Normalize visible SMS Don't know labels to the house curly apostrophe style.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "\\bDon(?:'|\\u2019)t know\\b",
+          "replacement": "Don\u2019t know",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_read_list_wording",
+          "description": "Convert interviewer-read list wording into respondent self-read/select wording.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "\\bI'm going to read you a list of\\b",
+          "replacement": "you will read a list of",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_read_list_wording_formal",
+          "description": "Convert formal interviewer-read list wording into respondent self-read/select wording.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "\\bI am going to read you a list of\\b",
+          "replacement": "you will read a list of",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_read_some_items_wording",
+          "description": "Convert interviewer-read item wording into respondent self-read wording.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "\\bI(?:'|\\u2019)m going to read you some\\b",
+          "replacement": "You will read some",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_like_to_tell_you_wording",
+          "description": "Convert interviewer exposition wording into SMS self-read wording.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "\\bNow I(?:'|\\u2019)d like to tell you a little bit about\\b",
+          "replacement": "Now you will read a little bit about",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_will_hear_about_wording",
+          "description": "Convert hear-about wording into read-about wording.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "\\bYou will hear about\\b",
+          "replacement": "You will read about",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_others_will_hear_about_wording",
+          "description": "Convert hear-about wording into read-about wording.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "\\bOthers will hear about\\b",
+          "replacement": "Others will read about",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_tell_me_whether",
+          "description": "Convert tell-me phrasing into select phrasing.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "\\bI'd like you to tell me whether\\b",
+          "replacement": "select whether",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_tell_me_opinion",
+          "description": "Convert tell-me opinion phrasing into select phrasing.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "\\btell me your opinion\\b",
+          "replacement": "select your opinion",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_tell_me_how_well",
+          "description": "Convert tell-me rating phrasing into select phrasing.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "\\bplease tell me how well\\b",
+          "replacement": "please select how well",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_tell_me_if",
+          "description": "Convert tell-me if phrasing into select phrasing.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "\\bplease tell me if\\b",
+          "replacement": "please select if",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_break_lean_questions",
+          "description": "Mark combined vote/lean prompts for SMS splitting.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "unless": "\\[BREAK INTO TWO QUESTIONS\\]",
+          "match": "(for whom would you vote\\? \\[IF UNDECIDED\\] well, toward whom do you lean\\?)$",
+          "replacement": "\\1 [BREAK INTO TWO QUESTIONS]",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_if_yes_plain_text",
+          "description": "Convert bracketed IF YES interviewer instruction to plain SMS text.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "\\[IF YES\\] and",
+          "replacement": "If yes,",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_demographic_read_prompt",
+          "description": "Convert final demographic interviewer prompt into SMS self-answer wording.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "^\\[READ\\]: Now, I would like to ask you a few questions for statistical purposes only\\.$",
+          "replacement": "[READ]: Now, please answer a few questions for statistical purposes only.",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_sex_observation_prompt",
+          "description": "Convert observed sex prompt into SMS respondent question.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "^Sex \\[OBSERVATION\\. DO NOT ASK\\]$",
+          "replacement": "What is your sex?",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_representative_sample_wording",
+          "description": "Convert tell-me demographic wording into SMS share wording.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "^To make sure we have a representative sample of voters, could you please tell me whether",
+          "replacement": "To make sure there is a representative sample of voters, could you please share whether",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_other_specify_text_box",
+          "description": "Convert Other specify response into SMS text-box notation.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "^\\(Other, specify: _+\\)(\\s+.+)$",
+          "replacement": "Other TEXT BOX\\1",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_make_last_question_skippable",
+          "description": "Add SMS review note before final local-politics source question.",
+          "type": "insert_before",
+          "scope": "first_matching_paragraph",
+          "match": "^Last question, when it comes to news and information about local politics",
+          "insert_text": "[MAKE QUESTION SKIPPABLE]",
+          "highlight": "all"
+        },
+        {
+          "id": "sms_percent_numeral",
+          "description": "Use compact percent notation in SMS copy.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "\\bfour percent\\b",
+          "replacement": "4%",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_approval_grid_top_header",
+          "description": "Expand abbreviated approval-grid top header for SMS.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "^STRG\\tSMWT\\tSMWT\\tSTRG$",
+          "replacement": "Strongly\\tSomewhat\\tSomewhat\\tStrongly\\tDon\u2019t",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_approval_grid_bottom_header",
+          "description": "Expand abbreviated approval-grid bottom header for SMS.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "^\\[RANDOMIZE\\]\\tAPP\\tAPP\\tDIS\\tDIS\\t\\[DK\\]$",
+          "replacement": "[RANDOMIZE \u2013 ONE AT A TIME]\\tapprove\\tapprove\\tdisapprove\\tdisapprove\\tknow",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_quality_grid_top_header",
+          "description": "Expand abbreviated quality-grid top header for SMS.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "^NOT(\\t+)EXTREMELY$",
+          "replacement": "Not\\1Extremely\\tDon\u2019t",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_quality_grid_bottom_header",
+          "description": "Expand abbreviated quality-grid bottom header for SMS.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "^\\[RANDOMIZE\\]\\tAT ALL(\\t+)WELL\\t\\[DK\\]$",
+          "replacement": "[RANDOMIZE, ONE AT A TIME]\\tat all\\1Well\\tknow",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_likelihood_grid_top_header",
+          "description": "Expand abbreviated likelihood-grid top header for SMS.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "^MUCH\\tSMWT\\tNO\\t\\tNOT$",
+          "replacement": "Much less\\tSomewhat\\tNo\\tNot\\tMore\\tDon\u2019t",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_likelihood_grid_bottom_header",
+          "description": "Expand abbreviated likelihood-grid bottom header for SMS.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "match": "^\\[RANDOMIZE\\]\\tLESS\\tLESS\\tDIFF\\t\\[MORE\\]\\tTRUE\\t\\[DK\\]$",
+          "replacement": "[RANDOMIZE, ONE AT A TIME]\\tlikely\\tless likely\\tdifference\\ttrue\\tlikely\\tknow",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_randomize_grids_one_at_a_time",
+          "description": "Grid/list randomization is usually shown one item at a time for SMS.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "when": "(?i)\\b(UNFAVORABLE|FAVORABLE|RATE|HEARD|CAN.?T|NEVER)\\b",
+          "match": "\\[RANDOMIZE\\]",
+          "replacement": "[RANDOMIZE, ONE AT A TIME]",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_grid_header_cant",
+          "description": "Normalize grid header casing for SMS.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "when": "(?i)\\bNEVER\\b|\\bUNFAVORABLE\\b|\\bFAVORABLE\\b|\\bRATE\\b|\\bHEARD\\b",
+          "match": "\\bCAN(?:'|\\u2019)T\\b",
+          "replacement": "Can\u2019t",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_grid_header_never",
+          "description": "Normalize grid header casing for SMS.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "when": "(?i)\\bCAN(?:'|\\u2019)T\\b|\\bUNFAVORABLE\\b|\\bFAVORABLE\\b|\\bRATE\\b|\\bHEARD\\b",
+          "match": "\\bNEVER\\b",
+          "replacement": "Never",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_grid_header_unfavorable",
+          "description": "Normalize grid header casing for SMS.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "when": "(?i)\\[RANDOMIZE",
+          "match": "\\bUNFAVORABLE\\b",
+          "replacement": "Unfavorable",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_grid_header_favorable",
+          "description": "Normalize grid header casing for SMS.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "when": "(?i)\\[RANDOMIZE",
+          "match": "\\bFAVORABLE\\b",
+          "replacement": "Favorable",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_grid_header_rate",
+          "description": "Normalize grid header casing for SMS.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "when": "(?i)\\[RANDOMIZE",
+          "match": "\\bRATE\\b",
+          "replacement": "Rate",
+          "highlight": "diff"
+        },
+        {
+          "id": "sms_grid_header_heard",
+          "description": "Normalize grid header casing for SMS.",
+          "type": "regex_replace",
+          "scope": "all_paragraphs",
+          "when": "(?i)\\[RANDOMIZE",
+          "match": "\\bHEARD\\b",
+          "replacement": "Heard",
+          "highlight": "diff"
+        }
+      ]
+    }
+  }
+}

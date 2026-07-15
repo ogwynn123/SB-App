@@ -1,0 +1,6 @@
+pdfplumber
+python-docx
+pandas
+openpyxl
+rapidfuzz
+openai
