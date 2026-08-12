@@ -4267,10 +4267,13 @@ def _q_similarity(a: QuestionSignature, b: QuestionSignature) -> int:
             return min(guarded, 59)
 
         if opt is None:
-            return int(round(0.45 * prompt_content + 0.55 * item))
+            weighted = int(round(0.45 * prompt_content + 0.55 * item))
+            return min(item, weighted)
 
-        # In battery-style questions, item labels should outweigh shared prompt text.
-        return int(round(0.15 * prompt + 0.35 * opt + 0.5 * item))
+        # A shared battery lead-in and response scale can support an item match,
+        # but cannot raise a different statement above the semantic threshold.
+        weighted = int(round(0.15 * prompt + 0.35 * opt + 0.5 * item))
+        return min(item, weighted)
 
     if opt is None:
         # Open-ended prompts share boilerplate text frequently, so use content
@@ -5055,7 +5058,7 @@ def cmd_merge(args: argparse.Namespace, cfg_all: dict, cfg_path: Path) -> int:
         duplicate_policy_secondary="continue",
         conflict_policy="append",
         output_mode=output_mode,
-        row_order=_choose(args.row_order, cfg, "row_order", "primary_first"),
+        row_order=_choose(args.row_order, cfg, "row_order", merge.DEFAULT_ROW_ORDER),
         output_path=output_path,
         xlsx_write_mode=_choose(args.xlsx_write_mode, cfg, "xlsx_write_mode", "preserve_sheets"),
         report_enabled=bool(_choose(args.report_enabled, cfg, "report_enabled", True)),

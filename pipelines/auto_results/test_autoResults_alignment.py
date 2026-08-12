@@ -15,7 +15,7 @@ APP_ROOT = Path(__file__).resolve().parent
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
-from autoResults_gui import run_autoresults
+from autoResults_gui import _dialog_initial_directory, run_autoresults
 
 
 class AutoResultsAlignmentTests(unittest.TestCase):
@@ -40,6 +40,10 @@ class AutoResultsAlignmentTests(unittest.TestCase):
     def _rows(self, report: Path) -> list[dict[str, str]]:
         with report.open("r", encoding="utf-8-sig", newline="") as handle:
             return list(csv.DictReader(handle))
+
+    def test_launcher_work_directory_is_used_as_dialog_fallback(self) -> None:
+        fallback = self._tmpdir()
+        self.assertEqual(_dialog_initial_directory("", fallback), str(fallback.resolve()))
 
     def test_alignment_report_has_no_flags_for_matching_order(self) -> None:
         case = self._tmpdir()

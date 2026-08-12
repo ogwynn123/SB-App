@@ -328,6 +328,43 @@ class SurveyConvertJSONTests(unittest.TestCase):
             ],
         )
 
+    def test_wrapped_paired_statements_stay_with_their_labeled_items(self) -> None:
+        elements = parse_question_block(
+            "15",
+            "Which of the following statements is closer to your view? Choose one, even if neither is exactly right.",
+            [
+                "[RANDOMIZE ORDER, RANDOMIZE PAIRS]",
+                "a. The cryptocurrency industry is a vital new part of our economy. It breaks the stranglehold of the big",
+                "banks and gives all of us more financial freedom ........................................................ 1",
+                "Cryptocurrency is how criminals, scammers, terrorists, and drug cartels operate. It needs strong new",
+                "regulations ....................................................................................................................... 2",
+                "(Don't know) ................................................................................................................... 3",
+                "b. [SPLIT C] Israel is our most important ally in the Middle East. We should continue to sell them the",
+                "weapons they need to defend themselves ....................................................................................... 1",
+                "We should stop selling them weapons because we are contributing to atrocities ................................. 2",
+                "(Don't know) ................................................................................................................... 3",
+            ],
+        )
+
+        self.assertEqual([element["qid"] for element in elements], ["15a", "15b"])
+        self.assertEqual([len(element["response_options"]) for element in elements], [3, 3])
+        self.assertEqual(
+            [option["text"] for option in elements[0]["response_options"]],
+            [
+                "The cryptocurrency industry is a vital new part of our economy.  It breaks the stranglehold of the big banks and gives all of us more financial freedom",
+                "Cryptocurrency is how criminals, scammers, terrorists, and drug cartels operate.  It needs strong new regulations",
+                "(Don't know)",
+            ],
+        )
+        self.assertEqual(
+            [option["value"] for option in elements[1]["response_options"]],
+            ["1", "2", "3"],
+        )
+        self.assertEqual(
+            elements[1]["response_options"][0]["text"],
+            "Israel is our most important ally in the Middle East.  We should continue to sell them the weapons they need to defend themselves",
+        )
+
     def test_labeled_items_without_terminal_punctuation_do_not_absorb_first_option(self) -> None:
         elements = parse_question_block(
             "7",
@@ -535,6 +572,40 @@ class SurveyConvertJSONTests(unittest.TestCase):
                 "(Don't know)",
             ],
         )
+
+    def test_merges_wrapped_focus_item_with_multiple_numeric_facts(self) -> None:
+        elements = parse_question_block(
+            "14",
+            (
+                "Think about the following issues and please tell me how important you think it is "
+                "for Rosa DeLauro to focus on that issue in Congress. Use a 0 to 10 scale, where a 0 "
+                "means she should NOT focus on that issue at all and a 10 means that it should be the "
+                "issue she focuses on the most. You may use any number from 0 to 10."
+            ),
+            [
+                "NOT AT FOCUS",
+                "[RANDOMIZE] ALL IMP THE MOST [DK]",
+                "n. Passing a monthly child tax credit again that gives parents 360 dollars a month for each",
+                "child under 6 and 300 dollars for each child",
+                "aged 6 to 17 ........................................ 0 1 2 3 4 5 6 7 8 9 10 11",
+                "o. Passing the Paycheck Fairness Act ................ 0 1 2 3 4 5 6 7 8 9 10 11",
+            ],
+        )
+
+        self.assertEqual(len(elements), 2)
+        self.assertEqual(elements[0]["qid"], "14n")
+        self.assertEqual(
+            elements[0]["item_text"],
+            (
+                "n. Passing a monthly child tax credit again that gives parents 360 dollars a month "
+                "for each child under 6 and 300 dollars for each child aged 6 to 17"
+            ),
+        )
+        self.assertEqual(
+            [option["value"] for option in elements[0]["response_options"]],
+            [str(value) for value in range(12)],
+        )
+        self.assertEqual(elements[1]["qid"], "14o")
 
     def test_merges_wrapped_long_option_text_in_single_choice_question(self) -> None:
         elements = parse_question_block(

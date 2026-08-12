@@ -21,7 +21,9 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from sheet_merge_core import (
     DEFAULT_CONFIG,
+    DEFAULT_ROW_ORDER,
     MergeOptions,
+    apply_ab_dependent_mapping,
     apply_oth1_dependent_mapping,
     analyze_merge,
     build_mapping,
@@ -48,6 +50,45 @@ OE_PREFIXED_QCOL_RE = re.compile(
 )
 ITEM_PREFIX_RE = re.compile(r"^\s*([a-zA-Z])\s*[\.\)\:]\s*(.*)$")
 APP_BUILD_TAG = "sheet-merge-2026-03-10-1605"
+
+
+def _launch_directory(variable: str) -> Path | None:
+    raw = os.environ.get(variable, "").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser().resolve(strict=False)
+    return path if path.is_dir() else None
+
+
+def _path_is_within(raw_path: str, root: Path) -> bool:
+    if not raw_path.strip():
+        return False
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    try:
+        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+    except ValueError:
+        return False
+    return True
+
+
+def _scoped_launch_path(raw_path: str, project_root: Path | None) -> str:
+    """Keep global saved paths only when they belong to the launched project."""
+    value = str(raw_path or "").strip()
+    if project_root is None or not value:
+        return value
+    return value if _path_is_within(value, project_root) else ""
+
+
+def _dialog_initial_directory(current_path: str, fallback: Path | None) -> str | None:
+    value = str(current_path or "").strip()
+    if value:
+        current = Path(value).expanduser()
+        candidate = current if current.is_dir() else current.parent
+        if candidate.is_dir():
+            return str(candidate.resolve())
+    return str(fallback) if fallback is not None else None
 
 
 @dataclass(frozen=True)
@@ -109,10 +150,18 @@ class SheetMergeGUI:
 
         self.cfg_path = Path(DEFAULT_CONFIG)
         self.cfg = load_config(self.cfg_path)
+        self.launch_work_dir = _launch_directory("SURVEY_PLATFORM_WORK_DIR")
+        self.launch_project_root = _launch_directory("SURVEY_PLATFORM_PROJECT_ROOT")
 
-        self.primary_path_var = tk.StringVar(value=self.cfg.get("primary_path", ""))
-        self.secondary_path_var = tk.StringVar(value=self.cfg.get("secondary_path", ""))
-        self.output_path_var = tk.StringVar(value=self.cfg.get("output_path", ""))
+        self.primary_path_var = tk.StringVar(
+            value=_scoped_launch_path(self.cfg.get("primary_path", ""), self.launch_project_root)
+        )
+        self.secondary_path_var = tk.StringVar(
+            value=_scoped_launch_path(self.cfg.get("secondary_path", ""), self.launch_project_root)
+        )
+        self.output_path_var = tk.StringVar(
+            value=_scoped_launch_path(self.cfg.get("output_path", ""), self.launch_project_root)
+        )
         self.primary_sheet_var = tk.StringVar()
         self.secondary_sheet_var = tk.StringVar()
         self.primary_join_var = tk.StringVar()
@@ -125,13 +174,19 @@ class SheetMergeGUI:
         self.secondary_dupe_policy_var = tk.StringVar(value="continue")
         self.conflict_policy_var = tk.StringVar(value="append")
         self.output_mode_var = tk.StringVar(value=self.cfg.get("output_mode", "new_file"))
-        self.row_order_var = tk.StringVar(value=self.cfg.get("row_order", "primary_first"))
+        self.row_order_var = tk.StringVar(value=self.cfg.get("row_order", DEFAULT_ROW_ORDER))
         self.xlsx_write_mode_var = tk.StringVar(
             value=self.cfg.get("xlsx_write_mode", "preserve_sheets")
         )
-        self.primary_survey_json_var = tk.StringVar(value=self.cfg.get("primary_survey_json", ""))
+        self.primary_survey_json_var = tk.StringVar(
+            value=_scoped_launch_path(
+                self.cfg.get("primary_survey_json", ""), self.launch_project_root
+            )
+        )
         self.secondary_survey_json_var = tk.StringVar(
-            value=self.cfg.get("secondary_survey_json", "")
+            value=_scoped_launch_path(
+                self.cfg.get("secondary_survey_json", ""), self.launch_project_root
+            )
         )
         self.question_similarity_threshold_var = tk.StringVar(
             value=str(self.cfg.get("question_similarity_threshold", 60))
@@ -376,7 +431,9 @@ class SheetMergeGUI:
             self.log("Output mode is overwrite; output path field disabled.")
 
     def _browse_file(self, target_var: tk.StringVar) -> None:
+        initial_dir = _dialog_initial_directory(target_var.get(), self.launch_work_dir)
         path = filedialog.askopenfilename(
+            initialdir=initial_dir,
             filetypes=[("CSV or XLSX", "*.csv *.xlsx"), ("CSV", "*.csv"), ("XLSX", "*.xlsx"), ("All files", "*.*")]
         )
         if path:
@@ -384,7 +441,9 @@ class SheetMergeGUI:
             self.refresh_inputs()
 
     def _browse_save(self, target_var: tk.StringVar) -> None:
+        initial_dir = _dialog_initial_directory(target_var.get(), self.launch_work_dir)
         path = filedialog.asksaveasfilename(
+            initialdir=initial_dir,
             defaultextension=".xlsx",
             filetypes=[("XLSX", "*.xlsx"), ("CSV", "*.csv"), ("All files", "*.*")],
         )
@@ -392,7 +451,11 @@ class SheetMergeGUI:
             target_var.set(path)
 
     def _browse_json(self, target_var: tk.StringVar) -> None:
+        initial_dir = _dialog_initial_directory(
+            target_var.get(), self.launch_project_root or self.launch_work_dir
+        )
         path = filedialog.askopenfilename(
+            initialdir=initial_dir,
             filetypes=[("JSON", "*.json"), ("All files", "*.*")],
         )
         if path:
@@ -769,6 +832,72 @@ class SheetMergeGUI:
                 blocked.add(p)
         return blocked
 
+    def _run_blocked_primary_columns(self) -> set[str]:
+        """Treat the visible mapping table as authoritative for preflight/merge."""
+        blocked = self._blocked_primary_columns()
+        if self.mapping_tree is None:
+            return blocked
+
+        join_primary = self.primary_join_var.get()
+        for item_id in self.mapping_tree.get_children(""):
+            pcol, scol, _method = self.mapping_tree.item(item_id, "values")
+            pcol = str(pcol).strip()
+            scol = str(scol).strip()
+            if pcol and pcol != join_primary and not scol:
+                blocked.add(pcol)
+        return blocked
+
+    def _apply_ab_dependent_mapping_to_table(self) -> int:
+        if self.mapping_tree is None:
+            return 0
+
+        mapping = self._table_mapping()
+        existing_mapping = dict(mapping)
+        methods: dict[str, str] = {}
+        protected_primary: set[str] = set()
+        for row_id in self.mapping_tree.get_children(""):
+            pcol, scol, method = self.mapping_tree.item(row_id, "values")
+            pcol = str(pcol).strip()
+            scol = str(scol).strip()
+            method = str(method).strip()
+            if not pcol or not scol:
+                continue
+            methods[pcol] = method
+            if method != "auto_ab_follow":
+                protected_primary.add(pcol)
+        scores: dict[str, int | None] = {pcol: None for pcol in mapping}
+        apply_ab_dependent_mapping(
+            primary_cols=self.primary_cols,
+            secondary_cols=self.secondary_cols,
+            primary_join=self.primary_join_var.get(),
+            mapping=mapping,
+            method=methods,
+            score=scores,
+            blocked_primary_columns=self._blocked_primary_columns(),
+            replace_existing=True,
+            protected_primary_columns=protected_primary,
+        )
+        updates = {
+            pcol: scol
+            for pcol, scol in mapping.items()
+            if existing_mapping.get(pcol) != scol
+            and methods.get(pcol) == "auto_ab_follow"
+        }
+        if not updates:
+            return 0
+
+        for row_id in self.mapping_tree.get_children(""):
+            pcol, scol, current_method = self.mapping_tree.item(row_id, "values")
+            pcol = str(pcol)
+            if pcol in updates and (
+                not str(scol).strip() or str(current_method) == "auto_ab_follow"
+            ):
+                self.mapping_tree.item(
+                    row_id,
+                    values=(pcol, updates[pcol], "auto_ab_follow"),
+                )
+        return len(updates)
+
     def _refresh_mapping_table(self, preserve_existing: bool = True) -> None:
         if self.mapping_tree is None:
             return
@@ -824,6 +953,9 @@ class SheetMergeGUI:
             if str(rs) == scol and str(rm) != "join":
                 self.mapping_tree.item(row_id, values=(str(rp), "", "blocked"))
         self.mapping_tree.item(item_id, values=(pcol, scol, "manual"))
+        companion_count = self._apply_ab_dependent_mapping_to_table()
+        if companion_count:
+            self.log(f"Mapped {companion_count} qNa/qNb companion column(s).")
 
     def clear_selected_mapping(self) -> None:
         item_id, pcol, scol, _m = self._selected_row()
@@ -889,6 +1021,7 @@ class SheetMergeGUI:
         self._mark_autofill_step(f"semantic enabled={semantic.enabled}")
         blocked_primary = self._blocked_primary_columns()
         self._mark_autofill_step("calling build_mapping")
+        manual_mapping = self._table_mapping()
         mapping, methods, scores = build_mapping(
             primary_cols=self.primary_cols,
             secondary_cols=self.secondary_cols,
@@ -897,7 +1030,7 @@ class SheetMergeGUI:
             mode="auto",
             threshold=threshold,
             top_n=top_n,
-            manual_mapping=self._table_mapping(),
+            manual_mapping=manual_mapping,
             blocked_primary_columns=blocked_primary,
         )
         self._mark_autofill_step(f"build_mapping complete: mapped={len(mapping)}")
@@ -1033,7 +1166,21 @@ class SheetMergeGUI:
                     f"Auto-fill skipped {dropped} q-column mapping(s): set both survey JSON files to enable semantic matching."
                 )
 
-        # Ensure qNoth1 follows any resolved qN -> qM mapping, including semantic remaps.
+        # Ensure dependent columns follow any resolved qN -> qM mapping, including semantic remaps.
+        self._mark_autofill_step("applying a/b dependent mapping")
+        apply_ab_dependent_mapping(
+            primary_cols=self.primary_cols,
+            secondary_cols=self.secondary_cols,
+            primary_join=self.primary_join_var.get(),
+            mapping=mapping,
+            method=methods,
+            score=scores,
+            blocked_primary_columns=blocked_primary,
+            replace_existing=True,
+            protected_primary_columns=set(manual_mapping),
+        )
+        self._mark_autofill_step("a/b dependent mapping applied")
+
         self._mark_autofill_step("applying oth1 dependent mapping")
         apply_oth1_dependent_mapping(
             primary_cols=self.primary_cols,
@@ -1812,7 +1959,7 @@ class SheetMergeGUI:
             report_enabled=bool(self.report_enabled_var.get()),
             archive_secondary=bool(self.archive_secondary_var.get()),
             manual_mapping=self._table_mapping(),
-            blocked_primary_columns=self._blocked_primary_columns(),
+            blocked_primary_columns=self._run_blocked_primary_columns(),
         )
 
     def _collect_semantic_settings(self) -> SemanticMergeSettings:

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import csv
 import contextlib
 import io
@@ -96,13 +97,19 @@ class SurveyJob:
     message: str = ""
 
 
-def discover_pairs_recursive(root: Path) -> List[SurveyJob]:
+def discover_pairs_recursive(root: Path, output_root: Path | None = None) -> List[SurveyJob]:
     pairs = pipeline.find_docx_pdf_pairs_recursive(root)
     jobs: List[SurveyJob] = []
     for idx, (docx, pdf) in enumerate(pairs, start=1):
         raw_out, json_out, tables_out = pipeline.default_output_paths(docx)
         banners_out = pipeline.default_banners_output_path(docx)
         cover_out = pipeline.cover_output_path_for_tables(tables_out)
+        if output_root is not None:
+            raw_out = output_root / raw_out.name
+            json_out = output_root / json_out.name
+            tables_out = output_root / tables_out.name
+            banners_out = output_root / banners_out.name
+            cover_out = output_root / cover_out.name
         jobs.append(
             SurveyJob(
                 job_id=f"job_{idx:04d}",
@@ -347,16 +354,27 @@ class RunWorker(threading.Thread):
 
 
 class SurveyPipelineGui:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(
+        self,
+        root: tk.Tk,
+        *,
+        start_root: Path | None = None,
+        output_root: Path | None = None,
+        survey_id: str = "",
+    ) -> None:
         self.root = root
-        self.root.title("Survey Pipeline")
+        title = "Survey Pipeline"
+        if survey_id.strip():
+            title = f"{title} - {survey_id.strip()}"
+        self.root.title(title)
         self.root.geometry("1320x840")
         self.root.minsize(1100, 700)
 
         settings = self.load_settings()
-        start_root = APP_BASE_DIR
+        initial_root = start_root or APP_BASE_DIR
 
-        self.root_var = tk.StringVar(value=str(start_root))
+        self.root_var = tk.StringVar(value=str(initial_root))
+        self.output_root_var = tk.StringVar(value=str(output_root) if output_root is not None else "")
         self.overwrite_var = tk.BooleanVar(value=bool(settings.get("overwrite_existing", True)))
         saved_mode = str(settings.get("backend_mode", BACKEND_MODE_AUTO)).strip().lower()
         if saved_mode not in BACKEND_MODE_VALUES:
@@ -388,11 +406,23 @@ class SurveyPipelineGui:
         top = ttk.Frame(self.root, padding=10)
         top.pack(fill=tk.X)
 
-        ttk.Label(top, text="Survey Root:").pack(side=tk.LEFT)
-        ttk.Entry(top, textvariable=self.root_var, width=96).pack(side=tk.LEFT, padx=(8, 8), fill=tk.X, expand=True)
-        ttk.Button(top, text="Browse", command=self.browse_root).pack(side=tk.LEFT)
-        ttk.Button(top, text="Discover", command=self.discover).pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(top, text="Validate", command=self.validate_jobs).pack(side=tk.LEFT, padx=(8, 0))
+        source_row = ttk.Frame(top)
+        source_row.pack(fill=tk.X)
+        ttk.Label(source_row, text="Survey Root:", width=14).pack(side=tk.LEFT)
+        ttk.Entry(source_row, textvariable=self.root_var, width=96).pack(
+            side=tk.LEFT, padx=(8, 8), fill=tk.X, expand=True
+        )
+        ttk.Button(source_row, text="Browse", command=self.browse_root).pack(side=tk.LEFT)
+        ttk.Button(source_row, text="Discover", command=self.discover).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(source_row, text="Validate", command=self.validate_jobs).pack(side=tk.LEFT, padx=(8, 0))
+
+        output_row = ttk.Frame(top)
+        output_row.pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(output_row, text="Output Folder:", width=14).pack(side=tk.LEFT)
+        ttk.Entry(output_row, textvariable=self.output_root_var, width=96).pack(
+            side=tk.LEFT, padx=(8, 8), fill=tk.X, expand=True
+        )
+        ttk.Button(output_row, text="Browse", command=self.browse_output_root).pack(side=tk.LEFT)
 
         actions = ttk.Frame(self.root, padding=(10, 0, 10, 8))
         actions.pack(fill=tk.X)
@@ -513,13 +543,28 @@ class SurveyPipelineGui:
             self.root_var.set(chosen)
             self.discover()
 
+    def browse_output_root(self) -> None:
+        initial = self.output_root_var.get() or self.root_var.get() or str(Path.cwd())
+        chosen = filedialog.askdirectory(initialdir=initial)
+        if chosen:
+            self.output_root_var.set(chosen)
+            self.discover()
+
     def discover(self) -> None:
         root = Path(self.root_var.get()).expanduser()
         if not root.exists() or not root.is_dir():
             messagebox.showerror("Invalid Root", f"Root directory not found:\n{root}")
             return
 
-        jobs = discover_pairs_recursive(root)
+        output_root: Path | None = None
+        output_raw = self.output_root_var.get().strip()
+        if output_raw:
+            output_root = Path(output_raw).expanduser()
+            if not output_root.exists() or not output_root.is_dir():
+                messagebox.showerror("Invalid Output Folder", f"Output folder not found:\n{output_root}")
+                return
+
+        jobs = discover_pairs_recursive(root, output_root=output_root)
         jobs = sorted(jobs, key=lambda j: (j.folder.as_posix().lower(), j.stem.lower()))
 
         self.jobs.clear()
@@ -940,9 +985,34 @@ class SurveyPipelineGui:
             self._open_path(job.cover_out)
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Open the WinCross survey pipeline GUI.")
+    parser.add_argument("--survey-id", default="")
+    parser.add_argument("--project-root", default="")
+    parser.add_argument("--work-dir", default="")
+    parser.add_argument("--source-root", default="")
+    return parser
+
+
+def main(argv: List[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
+    project_root = Path(args.project_root).expanduser() if args.project_root else None
+    if args.source_root:
+        start_root = Path(args.source_root).expanduser()
+    elif project_root is not None:
+        qst_root = project_root / "Qst"
+        start_root = qst_root if qst_root.exists() else project_root
+    else:
+        start_root = None
+    output_root = Path(args.work_dir).expanduser() if args.work_dir else None
+
     root = tk.Tk()
-    SurveyPipelineGui(root)
+    SurveyPipelineGui(
+        root,
+        start_root=start_root,
+        output_root=output_root,
+        survey_id=args.survey_id,
+    )
     root.mainloop()
 
 

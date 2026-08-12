@@ -2,11 +2,39 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 import unittest
 import uuid
 
-from sheetMerging_gui import SheetMergeGUI
+from sheetMerging_gui import (
+    SheetMergeGUI,
+    _dialog_initial_directory,
+    _scoped_launch_path,
+)
 from sheet_merge_core import MergeOptions
+
+
+class _FakeVar:
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    def get(self) -> str:
+        return self.value
+
+
+class _FakeMappingTree:
+    def __init__(self, rows: dict[str, tuple[str, str, str]]) -> None:
+        self.rows = dict(rows)
+
+    def get_children(self, _item: str = "") -> tuple[str, ...]:
+        return tuple(self.rows)
+
+    def item(self, row_id: str, option: str | None = None, **kwargs):
+        if "values" in kwargs:
+            self.rows[row_id] = tuple(kwargs["values"])
+        if option == "values":
+            return self.rows[row_id]
+        return {"values": self.rows[row_id]}
 
 
 class SheetMergingGuiTests(unittest.TestCase):
@@ -20,6 +48,77 @@ class SheetMergingGuiTests(unittest.TestCase):
     def _parse(self, lines: list[str]) -> dict[str, str]:
         gui = SheetMergeGUI.__new__(SheetMergeGUI)
         return gui._parse_repo_link_write_summary(lines)
+
+    def test_launcher_context_discards_saved_paths_from_another_project(self) -> None:
+        project = self._tmpdir()
+        data = project / "Data"
+        data.mkdir()
+        current = data / "current.csv"
+        outside = project.parent / "other-project.csv"
+
+        self.assertEqual(_scoped_launch_path(str(current), project), str(current))
+        self.assertEqual(_scoped_launch_path(str(outside), project), "")
+        self.assertEqual(_dialog_initial_directory("", data), str(data.resolve()))
+
+    def test_ab_companions_update_after_base_mapping_changes(self) -> None:
+        gui = SheetMergeGUI.__new__(SheetMergeGUI)
+        gui.primary_cols = ["id", "q14a", "q14b", "q14"]
+        gui.secondary_cols = ["sid", "q7a", "q7b", "q7", "q8a", "q8b", "q8"]
+        gui.primary_join_var = _FakeVar("id")
+        gui.secondary_join_var = _FakeVar("sid")
+        gui.mapping_tree = _FakeMappingTree(
+            {
+                "join": ("id", "sid", "join"),
+                "a": ("q14a", "q7a", "auto_ab_follow"),
+                "b": ("q14b", "", "blocked"),
+                "base": ("q14", "q8", "manual"),
+            }
+        )
+
+        changed = gui._apply_ab_dependent_mapping_to_table()
+
+        self.assertEqual(changed, 1)
+        self.assertEqual(gui.mapping_tree.rows["a"], ("q14a", "q8a", "auto_ab_follow"))
+        self.assertEqual(gui.mapping_tree.rows["b"], ("q14b", "", "blocked"))
+
+    def test_ab_companions_preserve_manual_gui_mapping(self) -> None:
+        gui = SheetMergeGUI.__new__(SheetMergeGUI)
+        gui.primary_cols = ["id", "q14a", "q14b", "q14"]
+        gui.secondary_cols = ["sid", "q7a", "q7b", "q7", "q8a", "q8b", "q8"]
+        gui.primary_join_var = _FakeVar("id")
+        gui.secondary_join_var = _FakeVar("sid")
+        gui.mapping_tree = _FakeMappingTree(
+            {
+                "join": ("id", "sid", "join"),
+                "a": ("q14a", "q7a", "manual"),
+                "b": ("q14b", "", ""),
+                "base": ("q14", "q8", "manual"),
+            }
+        )
+
+        changed = gui._apply_ab_dependent_mapping_to_table()
+
+        self.assertEqual(changed, 1)
+        self.assertEqual(gui.mapping_tree.rows["a"], ("q14a", "q7a", "manual"))
+        self.assertEqual(gui.mapping_tree.rows["b"], ("q14b", "q8b", "auto_ab_follow"))
+
+    def test_run_blocks_every_visible_unmapped_primary_column(self) -> None:
+        gui = SheetMergeGUI.__new__(SheetMergeGUI)
+        gui.primary_join_var = _FakeVar("id")
+        gui.secondary_join_var = _FakeVar("sid")
+        gui.mapping_tree = _FakeMappingTree(
+            {
+                "join": ("id", "sid", "join"),
+                "q9": ("q9", "", ""),
+                "q10": ("q10", "", "blocked"),
+                "q11": ("q11", "q8", "semantic(100)"),
+                "q12": ("q12", "", ""),
+            }
+        )
+
+        blocked = gui._run_blocked_primary_columns()
+
+        self.assertEqual(blocked, {"q9", "q10", "q12"})
 
     def test_parse_repo_link_write_summary_full_block(self) -> None:
         lines = [
@@ -109,6 +208,64 @@ class SheetMergingGuiTests(unittest.TestCase):
         preview = gui._load_question_preview_map(path, needed_qids={"2"})
         self.assertIn("2", preview)
         self.assertNotIn("1", preview)
+
+    def test_semantic_matching_requires_battery_item_similarity(self) -> None:
+        platform_root = Path(__file__).resolve().parents[2]
+        if str(platform_root) not in sys.path:
+            sys.path.insert(0, str(platform_root))
+        import survey_tool_cli as semantic
+
+        prompt = (
+            "now i would like to tell you what critics say for each statement "
+            "tell me if it makes you much less likely"
+        )
+        options = ("1", "2", "3", "4", "5", "6")
+        primary_sigs = {
+            "16a": semantic.QuestionSignature(
+                qid="16a",
+                question_text=prompt,
+                item_text=(
+                    "morales is proposing millions of dollars of new spending "
+                    "which will increase property taxes"
+                ),
+                option_texts=options,
+            ),
+            "16b": semantic.QuestionSignature(
+                qid="16b",
+                question_text=prompt,
+                item_text="morales was deeply involved in the defund the police movement",
+                option_texts=options,
+            ),
+        }
+        secondary_sigs = {
+            "23a": semantic.QuestionSignature(
+                qid="23a",
+                question_text=prompt,
+                item_text="morales has never worked in city government",
+                option_texts=options,
+            ),
+            "23d": semantic.QuestionSignature(
+                qid="23d",
+                question_text=prompt,
+                item_text="morales was deeply involved in the defund the police movement",
+                option_texts=options,
+            ),
+        }
+
+        filtered, low_pairs, _additions = semantic.evaluate_mapping_with_json(
+            mapping={"id": "id", "q16a": "q23a", "q16b": "q23d"},
+            primary_cols=["id", "q16a", "q16b"],
+            secondary_cols=["id", "q23a", "q23d"],
+            primary_join="id",
+            secondary_join="id",
+            primary_sigs=primary_sigs,
+            secondary_sigs=secondary_sigs,
+            threshold=60,
+        )
+
+        self.assertNotIn("q16a", filtered)
+        self.assertEqual(filtered["q16b"], "q23d")
+        self.assertTrue(any(primary == "q16a" for primary, _secondary, _score in low_pairs))
 
     def test_build_preview_export_text(self) -> None:
         gui = SheetMergeGUI.__new__(SheetMergeGUI)

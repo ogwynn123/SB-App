@@ -243,10 +243,14 @@ def check_exe_freshness(report: Report) -> None:
             ),
         ),
         (
-            "OE Codebook GUI",
+            "OE Record Coder GUI",
             BASE_DIR / "pipelines" / "open_end_coder",
-            BASE_DIR / "pipelines" / "open_end_coder" / "dist" / "oe_codebook_gui.exe",
-            ("oe_codebook_gui.py", "oe_codebook_tool.py", "oe_codebook_gui.spec"),
+            BASE_DIR / "pipelines" / "open_end_coder" / "dist" / "oe_record_coder_gui.exe",
+            (
+                "oe_record_coder_gui.py",
+                "oe_record_coder_core.py",
+                "oe_record_coder_gui.spec",
+            ),
         ),
         (
             "Auto Results GUI",

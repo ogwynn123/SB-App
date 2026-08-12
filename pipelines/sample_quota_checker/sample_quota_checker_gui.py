@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import sys
 import tkinter as tk
@@ -28,11 +29,30 @@ from sample_quota_checker_settings import (
 )
 
 
+def _launch_work_directory() -> Path | None:
+    raw = os.environ.get("SURVEY_PLATFORM_WORK_DIR", "").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser().resolve(strict=False)
+    return path if path.is_dir() else None
+
+
+def _dialog_initial_directory(current_path: str, fallback: Path | None) -> str | None:
+    value = str(current_path or "").strip()
+    if value:
+        current = Path(value).expanduser()
+        candidate = current if current.is_dir() else current.parent
+        if candidate.is_dir():
+            return str(candidate.resolve())
+    return str(fallback) if fallback is not None else None
+
+
 class QuotaCheckerApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Sample Quota Checker")
         self.root.geometry("1180x820")
+        self.launch_work_dir = _launch_work_directory()
 
         self.quota_var = tk.StringVar()
         self.sample_var = tk.StringVar()
@@ -139,7 +159,10 @@ class QuotaCheckerApp:
         ttk.Button(parent, text="Browse", command=command).grid(row=row, column=2, sticky="e", padx=(8, 0), pady=4)
 
     def _browse_quota(self) -> None:
-        path = filedialog.askopenfilename(filetypes=[("Excel Workbooks", "*.xlsx *.xlsm"), ("All Files", "*.*")])
+        path = filedialog.askopenfilename(
+            initialdir=_dialog_initial_directory(self.quota_var.get(), self.launch_work_dir),
+            filetypes=[("Excel Workbooks", "*.xlsx *.xlsm"), ("All Files", "*.*")],
+        )
         if path:
             self.quota_var.set(path)
             self.load_quota_definition(show_errors=True)
@@ -147,7 +170,10 @@ class QuotaCheckerApp:
                 self.refresh_columns(show_errors=False)
 
     def _browse_sample(self) -> None:
-        path = filedialog.askopenfilename(filetypes=[("Sample Data", "*.csv *.xlsx *.xlsm"), ("All Files", "*.*")])
+        path = filedialog.askopenfilename(
+            initialdir=_dialog_initial_directory(self.sample_var.get(), self.launch_work_dir),
+            filetypes=[("Sample Data", "*.csv *.xlsx *.xlsm"), ("All Files", "*.*")],
+        )
         if path:
             self.sample_var.set(path)
             self._autoload_quota_for_sample(path)
@@ -379,6 +405,7 @@ class QuotaCheckerApp:
             messagebox.showinfo("No Result", "Run a check first.")
             return
         path = filedialog.asksaveasfilename(
+            initialdir=_dialog_initial_directory(self.sample_var.get(), self.launch_work_dir),
             defaultextension=".csv",
             filetypes=[("CSV", "*.csv"), ("All Files", "*.*")],
             initialfile="quota_check_report.csv",

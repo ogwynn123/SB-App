@@ -35,6 +35,16 @@ package's local `repository/` folder. `repo materialize` is the separate copy
 step when you want curated local working files. That split is intentional so
 read-only archive discovery stays separate from local metadata and copies.
 
+To refresh both repository metadata and the Question Browser from PowerShell,
+pass the resolved repository path to both `--root` and `--db` so an older
+machine-specific database setting cannot redirect the rebuild:
+
+```powershell
+$repo = (Resolve-Path .\repository).Path
+py -3 .\survey_tool_cli.py repo scan --root $repo --source-root "C:\path\to\NPA Archive - Documents" --discovery-mode archive
+py -3 .\survey_tool_cli.py repo questions-rebuild --root $repo --db (Join-Path $repo "questions.sqlite")
+```
+
 For direct stage commands, either pass an explicit `--root` or use the
 survey-aware platform flows (`survey show`, `survey detect`, `survey run`)
 that derive paths from repository metadata.
@@ -64,7 +74,22 @@ and temp folders:
 
 ## GUI Entry Point
 
-Launch the first unified dashboard with:
+For daily work in an existing client survey folder, use the lightweight Survey
+Launcher:
+
+```powershell
+.\run_survey_ops_lite.bat
+```
+
+Select the survey ID and project root, then open a specialist workflow. The
+`Project Startup` workflow creates the standard `Job`, `Data`, `Data\Partial`,
+and `Job\Table Gen` paths without replacing existing folders, then copies the
+newest `Qst` DOCX ending in `Final` into Table Gen. WinCross uses that output
+folder and receives the selected survey context. See `LITE_PLATFORM.md` for the
+folder and manifest contract.
+
+For repository cataloging, question search, and the full workspace dashboard,
+use:
 
 ```powershell
 .\run_survey_platform_gui.bat
@@ -214,7 +239,10 @@ source script for troubleshooting.
 
 - WinCross: `pipelines\wincross_table_generator\open_survey_pipeline_gui.bat`
 - Table Merge: `pipelines\table_merger\open_sheet_merge_gui.bat`
-- OE Codebook: `pipelines\open_end_coder\Launch_OE_Codebook_GUI.bat`
+- Open-End Coder: `pipelines\open_end_coder\Launch_OE_Codebook_GUI.bat`
+  - Primary output: a row-specific `*.OE-coded.csv`
+  - Session state: project-local `*.oe_session.sqlite`
+  - Legacy codebook editor: `pipelines\open_end_coder\Launch_OE_Codebook_Legacy_GUI.bat`
 - Auto Results: `pipelines\auto_results\open_autoResults_gui.bat`
 - TOMAS: `pipelines\thomas_in_a_box\open_tomas_pipeline_gui.bat`
 

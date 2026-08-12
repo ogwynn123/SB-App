@@ -6948,6 +6948,8 @@ class RepositoryDashboardGUI:
             "questions-rebuild",
             "--root",
             str(self._repo_root()),
+            "--db",
+            str(self._questions_db_path()),
         ]
         if survey_codes:
             for code in sorted(survey_codes, key=int):

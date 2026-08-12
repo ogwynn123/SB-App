@@ -10,10 +10,10 @@ if %ERRORLEVEL%==0 set "PYEXE=py -3"
 %PYEXE% -m pip install pyinstaller openpyxl
 if errorlevel 1 exit /b 1
 
-%PYEXE% -m PyInstaller --noconfirm --clean oe_codebook_gui.spec
+%PYEXE% -m PyInstaller --noconfirm --clean oe_record_coder_gui.spec
 if errorlevel 1 exit /b 1
 
 echo.
 echo Build complete.
-echo EXE: %~dp0dist\oe_codebook_gui.exe
+echo EXE: %~dp0dist\oe_record_coder_gui.exe
 endlocal

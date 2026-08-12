@@ -31,6 +31,14 @@ Launcher behavior:
 6. Optional: adjust mapping rows manually.
 7. Click **Run Merge**.
 
+When a base question such as `q14` is mapped to `q7`, matching `q14a` and
+`q14b` columns automatically follow to `q7a` and `q7b`. A companion row that
+you map manually or clear remains under your control.
+
+The mapping table is authoritative when you run Preflight or Merge. Any row
+left blank stays unmapped; its secondary column is preserved separately using
+the secondary survey prefix instead of filling the blank primary column.
+
 ## 3. JSON/Semantic Matching (Optional but Recommended)
 
 For question-aware mapping and JSON previews, set:
@@ -43,14 +51,18 @@ Then:
 - Use **Auto Fill** for semantic mapping
 - Use **Preview Selected JSON** or **Preview All JSON**
 
+For battery questions, semantic matching is item-focused. A shared lead-in and
+response scale can support a match, but cannot make different battery
+statements map to one another.
+
 If JSON files are not set, Auto Fill still works in non-semantic mode.
 
 ## 4. Output Behavior
 
 - **new_file** mode: writes a new merged file.
 - **overwrite** mode: writes back to the primary file.
-- **Row order**: use `secondary_first` for trend/daily workflows where older
-  secondary rows should appear above the current primary delivery.
+- **Row order**: defaults to `secondary_first`, so older secondary rows appear
+  above the current primary delivery. Select `primary_first` when needed.
 
 You can change these in Basic/Advanced settings before running.
 

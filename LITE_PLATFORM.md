@@ -1,8 +1,8 @@
-# Survey Ops Lite
+# Survey Launcher
 
-Survey Ops Lite is a small daily-work shell for active survey jobs. It keeps a
-simple project folder under `lite_workspace\NPA####` and delegates heavy work to
-the existing WinCross table generator, table merger, and open-end coder.
+The Survey Launcher is the lightweight daily entry point for active projects.
+It selects an existing survey folder and opens each workflow in its own
+specialist application. Processing logic remains inside those applications.
 
 ## Launch
 
@@ -12,18 +12,74 @@ Run:
 SurveyPlatform\run_survey_ops_lite.bat
 ```
 
-## What It Owns
+An initial project can also be supplied from the command line:
 
-- One `project.json` per survey.
-- Phone and SMS DOCX/PDF paths for WinCross generation.
-- Current delivery data, timeseries data, and day-specific codelists.
-- Header checking for current data so a new delivery with different columns is
-  blocked instead of replacing the tracked file silently.
-- Output folders for generated WinCross RAW, JSON, and TABLES files.
-- Buttons to open the existing merge GUI, OE coder, and WinCross GUI.
+```powershell
+py -3 .\survey_ops_lite.py --survey-id NPA3827 --project-root "C:\path\to\NPA3827 Benchmark"
+```
 
-## Current Boundary
+## Project Model
 
-This first version is deliberately barebones. It organizes daily job state and
-runs the common WinCross path, but detailed merge mapping and OE codebook work
-still happen in the specialist apps.
+The selected archive survey folder is the operational project root. The
+launcher does not copy files into `workspace` or `lite_workspace`.
+
+Run `Project Startup` once after selecting a new project. It creates only the
+missing folders in this layout:
+
+```text
+<project root>\
+  Data\
+    Partial\
+  Job\
+    Table Gen\
+```
+
+Existing folders and their contents are preserved. Project Startup recursively
+searches `Qst` for DOCX filenames whose stem ends in `Final`, selects the most
+recently modified match, and copies it into `Job\Table Gen`. It updates an older
+copy, leaves an identical copy alone, and does not overwrite a newer differing
+Table Gen copy.
+
+The launcher searches `<project root>\Qst` for questionnaire DOCX/PDF pairs
+and preloads WinCross to write RAW, JSON, TABLES, BANNERS, and COVER outputs to
+`Job\Table Gen`. Standalone WinCross launches retain the legacy behavior of
+writing outputs beside the questionnaire. WinCross and the Data-based tools no
+longer create the shared project folders themselves; they prompt for Project
+Startup when a required folder is missing.
+
+Other tools reuse existing archive conventions when present:
+
+- Auto Results prefers `Data\Partial\Results` or `Data\Partial Data\Results`.
+- Open-End Coder prefers existing `Open Ends` or `OEs` folders. It creates a
+  project-local `*.oe_session.sqlite` database there, preserves assignments by
+  `Survnum` (or another confirmed unique key), and exports a new
+  `*.OE-coded.csv` without modifying the imported datafile.
+- Table Merger and Quota Checker use `Data` as their working location.
+- Trend Table Updater uses `Job\Table Gen`.
+- TOMAS uses `Qst\Spanish Ver`.
+
+Every launched tool receives the survey ID, project root, and selected work
+folder through a small environment contract. File dialogs begin in that work
+folder, but the launcher does not guess input files. Explicit selections and
+tool-specific saved pairings remain authoritative. When Table Merger is opened
+from the launcher, globally saved input paths from another project are cleared
+so they cannot be merged accidentally.
+
+## State
+
+A portable project manifest is written only after a tool is launched:
+
+```text
+<project root>\Job\.surveyplatform\project.json
+```
+
+It stores relative tool folders and launch timestamps. Recent-project history
+and window state stay in the machine-local ignored file
+`survey_launcher_settings.json`.
+
+## Boundary
+
+The launcher owns survey identity, project-root validation, project startup,
+recent projects, and process launching. Merge mapping, table
+generation, quota editing, result alignment, open-end coding, and translation
+remain in separate GUIs.

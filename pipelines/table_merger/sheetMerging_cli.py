@@ -11,6 +11,7 @@ from pathlib import Path
 
 from sheet_merge_core import (
     DEFAULT_CONFIG,
+    DEFAULT_ROW_ORDER,
     MergeOptions,
     analyze_merge,
     expand_path,
@@ -247,7 +248,7 @@ def main() -> int:
             duplicate_policy_secondary="continue",
             conflict_policy="append",
             output_mode=output_mode,
-            row_order=_choose(args.row_order, cfg, "row_order", "primary_first"),
+            row_order=_choose(args.row_order, cfg, "row_order", DEFAULT_ROW_ORDER),
             output_path=output_path,
             xlsx_write_mode=_choose(args.xlsx_write_mode, cfg, "xlsx_write_mode", "preserve_sheets"),
             report_enabled=bool(_choose(args.report_enabled, cfg, "report_enabled", True)),

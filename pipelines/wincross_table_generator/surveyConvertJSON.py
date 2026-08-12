@@ -1859,7 +1859,11 @@ def has_unambiguous_item_code_suffix(line: str) -> bool:
     return tokens[0] == "TERMINATE" or _has_dot_leader_before_suffix(line)
 
 
-def merge_wrapped_item_lines(block_lines: List[str], qnum: str) -> List[str]:
+def merge_wrapped_item_lines(
+    block_lines: List[str],
+    qnum: str,
+    question_text: str = "",
+) -> List[str]:
     """
     Merge wrapped battery item rows into a single logical line.
     Example:
@@ -1870,6 +1874,12 @@ def merge_wrapped_item_lines(block_lines: List[str], qnum: str) -> List[str]:
     """
     merged: List[str] = []
     current_item: Optional[str] = None
+    paired_text = normalize_text(" ".join([question_text, *block_lines])).casefold()
+    paired_statement_battery = (
+        "randomize pairs" in paired_text
+        or "closer to your view" in paired_text
+        or "choose one, even if neither" in paired_text
+    )
 
     for raw in block_lines:
         line = normalize_text(raw)
@@ -1901,6 +1911,26 @@ def merge_wrapped_item_lines(block_lines: List[str], qnum: str) -> List[str]:
                 continue
             if opt_pairs:
                 line_tokens = _extract_trailing_code_tokens(line)
+                if (
+                    paired_statement_battery
+                    and not has_unambiguous_item_code_suffix(current_item)
+                    and line_tokens == ["1"]
+                    and has_unambiguous_item_code_suffix(line)
+                ):
+                    current_item = normalize_text(f"{current_item} {line}")
+                    merged.append(current_item)
+                    current_item = None
+                    continue
+                # Numeric facts inside wrapped item prose can resemble an option
+                # row even though the actual response codes arrive later.
+                if (
+                    not line_tokens
+                    and len(re.findall(r"[A-Za-z']+", line)) >= 3
+                    and not is_scale_label_line(line)
+                    and not looks_like_scale_label_fragment(line)
+                ):
+                    current_item = normalize_text(f"{current_item} {line}")
+                    continue
                 # Wrapped battery item prose can end with a numeric fact
                 # ("more than 35") before the final coded line arrives.
                 # Keep accumulating that prose instead of treating it as an option row.
@@ -2118,8 +2148,12 @@ def repair_question_text(question_text: str, response_options: List[Dict[str, st
 def strip_item_prefix_label(item_text: str) -> str:
     m = ITEM_RE.match(normalize_text(item_text))
     if m:
-        return normalize_text(m.group(3))
-    return normalize_text(item_text)
+        text = normalize_text(m.group(3))
+    else:
+        text = normalize_text(item_text)
+    return normalize_text(
+        re.sub(r"^\[\s*SPLIT\s+[A-Z0-9]+\s*\]\s*", "", text, flags=re.IGNORECASE)
+    )
 
 
 def build_item_options_with_continuations(
@@ -2132,13 +2166,18 @@ def build_item_options_with_continuations(
         options.append(
             {
                 "value": normalize_text(inline_codes[0]).upper(),
-                "text": strip_item_prefix_label(item_text),
+                "text": ensure_sentence_double_spacing(strip_item_prefix_label(item_text)),
             }
         )
     for opt in flatten_option_rows(option_rows):
         if any(existing["value"] == opt["value"] for existing in options):
             continue
-        options.append(opt)
+        options.append(
+            {
+                **opt,
+                "text": ensure_sentence_double_spacing(opt.get("text", "")),
+            }
+        )
     return options
 
 
@@ -2460,7 +2499,7 @@ def parse_question_block(qnum: str, qtext: str, block_lines: List[str]) -> List[
         stem_parts.append(qt)
     instructions.extend(qinstr)
 
-    logical_lines = merge_wrapped_item_lines(block_lines, qnum)
+    logical_lines = merge_wrapped_item_lines(block_lines, qnum, qtext)
     logical_lines = merge_unclosed_bracket_lines(logical_lines)
     logical_lines = merge_wrapped_option_lines(logical_lines)
     leading_stem_lines, leading_stem_instr, logical_lines = consume_leading_stem_lines(logical_lines, qnum)

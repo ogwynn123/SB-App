@@ -7,6 +7,8 @@ This directory now contains the production project pipelines:
 - `table_merger`
 - `thomas_in_a_box`
 - `auto_results`
+- `sample_quota_checker`
+- `trend_table_updater`
 - `catalogger`
 
 `survey_writer` is also included as a source-launched drafting/helper app.
@@ -22,6 +24,7 @@ Key entrypoints:
   - `pipelines/table_merger/open_sheet_merge_gui.bat`
   - `pipelines/open_end_coder/Launch_OE_Codebook_GUI.bat`
   - `pipelines/auto_results/open_autoResults_gui.bat`
+  - `pipelines/trend_table_updater/trend_table_updater_gui.py`
   - `pipelines/thomas_in_a_box/open_tomas_pipeline_gui.bat`
 
 Launcher behavior:
@@ -38,7 +41,11 @@ Launcher behavior:
   - `py -3 -m pip install pandas openpyxl rapidfuzz pyinstaller`
 - OE GUI EXE:
   - `py -3 -m pip install pyinstaller openpyxl`
+  - The production app is `oe_record_coder_gui.py`; the former aggregated
+    codebook editor remains available through `Launch_OE_Codebook_Legacy_GUI.bat`.
 - Auto Results GUI EXE:
   - `py -3 -m pip install pyinstaller python-docx`
+- Trend Table Updater GUI EXE:
+  - `py -3 -m pip install pyinstaller`
 - TOMAS pipeline dependencies:
   - `py -3 -m pip install -r pipelines/thomas_in_a_box/requirements.txt`

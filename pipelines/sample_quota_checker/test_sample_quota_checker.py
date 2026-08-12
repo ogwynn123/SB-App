@@ -30,9 +30,15 @@ from sample_quota_checker_settings import (  # noqa: E402
     save_mapping,
     save_quota_override,
 )
+from sample_quota_checker_gui import _dialog_initial_directory  # noqa: E402
 
 
 class SampleQuotaCheckerTests(unittest.TestCase):
+    def test_launcher_work_directory_is_used_as_dialog_fallback(self) -> None:
+        fallback = THIS_DIR / ".tmp_tests"
+        fallback.mkdir(exist_ok=True)
+        self.assertEqual(_dialog_initial_directory("", fallback), str(fallback.resolve()))
+
     def test_parse_quota_workbook_and_check_sample(self) -> None:
         tmp_dir = THIS_DIR / ".tmp_tests"
         tmp_dir.mkdir(exist_ok=True)

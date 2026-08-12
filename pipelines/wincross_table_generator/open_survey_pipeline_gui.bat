@@ -4,14 +4,14 @@ set "SCRIPT_DIR=%~dp0"
 cd /d "%SCRIPT_DIR%"
 
 if exist "%SCRIPT_DIR%dist\survey_pipeline_gui.exe" (
-  start "" "%SCRIPT_DIR%dist\survey_pipeline_gui.exe"
+  start "" "%SCRIPT_DIR%dist\survey_pipeline_gui.exe" %*
   endlocal
   exit /b 0
 )
 
 where py >nul 2>nul
 if %ERRORLEVEL%==0 (
-  py -3 "%SCRIPT_DIR%survey_pipeline_gui.py"
+  py -3 "%SCRIPT_DIR%survey_pipeline_gui.py" %*
   set "RC=%ERRORLEVEL%"
   if not "%RC%"=="0" (
     echo.
@@ -23,7 +23,7 @@ if %ERRORLEVEL%==0 (
 
 where python >nul 2>nul
 if %ERRORLEVEL%==0 (
-  python "%SCRIPT_DIR%survey_pipeline_gui.py"
+  python "%SCRIPT_DIR%survey_pipeline_gui.py" %*
   set "RC=%ERRORLEVEL%"
   if not "%RC%"=="0" (
     echo.

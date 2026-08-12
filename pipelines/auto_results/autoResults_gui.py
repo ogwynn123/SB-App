@@ -43,6 +43,24 @@ else:
     DOCX_IMPORT_ERROR = None
 
 
+def _launch_work_directory() -> Path | None:
+    raw = os.environ.get("SURVEY_PLATFORM_WORK_DIR", "").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser().resolve(strict=False)
+    return path if path.is_dir() else None
+
+
+def _dialog_initial_directory(current_path: str, fallback: Path | None) -> str | None:
+    value = str(current_path or "").strip()
+    if value:
+        current = Path(value).expanduser()
+        candidate = current if current.is_dir() else current.parent
+        if candidate.is_dir():
+            return str(candidate.resolve())
+    return str(fallback) if fallback is not None else None
+
+
 PERCENT_RE = re.compile(r"(\d+)\s*%")
 STAR_PERCENT_RE = re.compile(r"\*%\s*")
 ZERO_RE = re.compile(r"[^-]-\s*$")
@@ -953,6 +971,7 @@ class AutoResultsGUI:
         self.root = root
         self.root.title("AutoResults Runner")
         self.root.geometry("960x540")
+        self.launch_work_dir = _launch_work_directory()
 
         self.marginals_var = tk.StringVar()
         self.xlsx_var = tk.StringVar()
@@ -1033,6 +1052,7 @@ class AutoResultsGUI:
 
     def _browse_input(self, var: tk.StringVar) -> None:
         path = filedialog.askopenfilename(
+            initialdir=_dialog_initial_directory(var.get(), self.launch_work_dir),
             filetypes=[("Word Document", "*.docx"), ("All Files", "*.*")]
         )
         if path:
@@ -1041,6 +1061,7 @@ class AutoResultsGUI:
 
     def _browse_xlsx(self, var: tk.StringVar) -> None:
         path = filedialog.askopenfilename(
+            initialdir=_dialog_initial_directory(var.get(), self.launch_work_dir),
             filetypes=[("Excel Workbook", "*.xlsx"), ("All Files", "*.*")]
         )
         if path:
@@ -1048,6 +1069,7 @@ class AutoResultsGUI:
 
     def _browse_output(self, var: tk.StringVar) -> None:
         path = filedialog.asksaveasfilename(
+            initialdir=_dialog_initial_directory(var.get(), self.launch_work_dir),
             defaultextension=".docx",
             filetypes=[("Word Document", "*.docx"), ("All Files", "*.*")],
         )

@@ -45,6 +45,7 @@ MappingMode = Literal["auto", "manual_only"]
 OutputMode = Literal["new_file", "overwrite"]
 RowOrder = Literal["primary_first", "secondary_first"]
 XlsxWriteMode = Literal["replace_workbook", "preserve_sheets"]
+DEFAULT_ROW_ORDER: RowOrder = "secondary_first"
 
 
 @dataclass
@@ -62,7 +63,7 @@ class MergeOptions:
     duplicate_policy_secondary: DuplicatePolicy = "continue"
     conflict_policy: ConflictPolicy = "append"
     output_mode: OutputMode = "new_file"
-    row_order: RowOrder = "primary_first"
+    row_order: RowOrder = DEFAULT_ROW_ORDER
     output_path: Path | None = None
     xlsx_write_mode: XlsxWriteMode = "preserve_sheets"
     report_enabled: bool = True
@@ -412,6 +413,130 @@ def apply_oth1_dependent_mapping(
         used_secondary.add(matched_secondary)
 
 
+def _secondary_ab_candidates(
+    secondary_cols: list[str],
+) -> list[tuple[int, str, tuple[str | None, str, str]]]:
+    out: list[tuple[int, str, tuple[str | None, str, str]]] = []
+    for idx, col in enumerate(secondary_cols):
+        if is_oth1_col_name(col):
+            continue
+        parsed = parse_question_identity(col)
+        if parsed is not None and parsed[2] in {"a", "b"}:
+            out.append((idx, col, parsed))
+    return out
+
+
+def _find_dependent_ab_match(
+    *,
+    secondary_ab: list[tuple[int, str, tuple[str | None, str, str]]],
+    used_secondary: set[str],
+    secondary_base_col: str,
+    suffix: str,
+) -> str | None:
+    base_id = parse_question_identity(secondary_base_col)
+    if base_id is None or base_id[2]:
+        return None
+    base_code, base_num, _base_suffix = base_id
+
+    candidates: list[tuple[int, int, str]] = []
+    for idx, col, (code, num, candidate_suffix) in secondary_ab:
+        if col in used_secondary or num != base_num or candidate_suffix != suffix:
+            continue
+        if base_code and code == base_code:
+            rank = 0
+        elif not base_code and not code:
+            rank = 0
+        elif not code:
+            rank = 1
+        else:
+            rank = 2
+        candidates.append((rank, idx, col))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return candidates[0][2]
+
+
+def apply_ab_dependent_mapping(
+    *,
+    primary_cols: list[str],
+    secondary_cols: list[str],
+    primary_join: str,
+    mapping: dict[str, str],
+    method: dict[str, str],
+    score: dict[str, int | None],
+    blocked_primary_columns: set[str] | None = None,
+    replace_existing: bool = False,
+    protected_primary_columns: set[str] | None = None,
+) -> None:
+    """Map qNa/qNb companions by following an existing qN base mapping."""
+    secondary_ab = _secondary_ab_candidates(secondary_cols)
+    if not secondary_ab:
+        return
+
+    blocked_casefold = {col.casefold() for col in (blocked_primary_columns or set())}
+    protected_casefold = {
+        col.casefold() for col in (protected_primary_columns or set())
+    }
+
+    for primary_col in primary_cols:
+        if primary_col == primary_join or is_oth1_col_name(primary_col):
+            continue
+        primary_casefold = primary_col.casefold()
+        if primary_casefold in blocked_casefold:
+            continue
+        existing_secondary = mapping.get(primary_col)
+        if existing_secondary is not None and (
+            not replace_existing or primary_casefold in protected_casefold
+        ):
+            continue
+        primary_identity = parse_question_identity(primary_col)
+        if primary_identity is None or primary_identity[2] not in {"a", "b"}:
+            continue
+        primary_code, primary_num, primary_suffix = primary_identity
+
+        base_options: list[tuple[int, str]] = []
+        for mapped_primary, mapped_secondary in mapping.items():
+            if mapped_primary == primary_join:
+                continue
+            mapped_primary_identity = parse_question_identity(mapped_primary)
+            if mapped_primary_identity is None:
+                continue
+            base_code, base_num, base_suffix = mapped_primary_identity
+            if base_num != primary_num or base_suffix:
+                continue
+            if primary_code and base_code == primary_code:
+                rank = 0
+            elif not primary_code and not base_code:
+                rank = 0
+            else:
+                rank = 1
+            base_options.append((rank, mapped_secondary))
+
+        base_options.sort(key=lambda item: item[0])
+        matched_secondary = None
+        used_secondary = {
+            scol for pcol, scol in mapping.items() if pcol != primary_col
+        }
+        for _rank, mapped_secondary in base_options:
+            matched_secondary = _find_dependent_ab_match(
+                secondary_ab=secondary_ab,
+                used_secondary=used_secondary,
+                secondary_base_col=mapped_secondary,
+                suffix=primary_suffix,
+            )
+            if matched_secondary:
+                break
+        if not matched_secondary:
+            continue
+
+        mapping[primary_col] = matched_secondary
+        method[primary_col] = "auto_ab_follow"
+        score[primary_col] = 100
+        used_secondary.add(matched_secondary)
+
+
 def build_mapping(
     primary_cols: list[str],
     secondary_cols: list[str],
@@ -572,6 +697,15 @@ def build_mapping(
                 fuzz.QRatio(primary_col.casefold(), secondary_col.casefold())
             )
             forced_used_secondary.add(secondary_col)
+        apply_ab_dependent_mapping(
+            primary_cols=primary_cols,
+            secondary_cols=secondary_cols,
+            primary_join=primary_join,
+            mapping=forced,
+            method=forced_method,
+            score=forced_score,
+            blocked_primary_columns=blocked_primary_columns,
+        )
         apply_oth1_dependent_mapping(
             primary_cols=primary_cols,
             secondary_cols=secondary_cols,
@@ -583,6 +717,17 @@ def build_mapping(
         )
         return forced, forced_method, forced_score
 
+    apply_ab_dependent_mapping(
+        primary_cols=primary_cols,
+        secondary_cols=secondary_cols,
+        primary_join=primary_join,
+        mapping=mapping,
+        method=method,
+        score=score,
+        blocked_primary_columns=blocked_primary_columns,
+        replace_existing=True,
+        protected_primary_columns=set(manual_mapping),
+    )
     apply_oth1_dependent_mapping(
         primary_cols=primary_cols,
         secondary_cols=secondary_cols,

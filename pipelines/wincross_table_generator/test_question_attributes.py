@@ -133,6 +133,22 @@ class QuestionAttributesTests(unittest.TestCase):
         self.assertEqual(attrs["question_type"], "country_mood_4pt")
         self.assertEqual(attrs["question_group"], "directional_mood")
 
+    def test_infer_question_attributes_recognizes_vote_certainty_variant(self) -> None:
+        attrs = infer_question_attributes(
+            question_text="How certain are you to support your choice?",
+            item_text=None,
+            response_options=[
+                {"value": "1", "text": "Absolutely certain"},
+                {"value": "2", "text": "Somewhat certain"},
+                {"value": "3", "text": "Not certain at all"},
+                {"value": "4", "text": "(Don't know)"},
+            ],
+        )
+
+        self.assertEqual(attrs["question_type"], "vote_certainty_3pt")
+        self.assertEqual(attrs["question_family"], "vote_likelihood")
+        self.assertIn("vote", attrs["classification_groups"])
+
     def test_infer_question_attributes_recognizes_job_rating_placeholders(self) -> None:
         attrs = infer_question_attributes(
             question_text="How would you rate the job being done by - EXCELLENT, GOOD, NOT SO GOOD or POOR?",

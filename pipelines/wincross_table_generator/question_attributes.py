@@ -818,7 +818,13 @@ def _is_vote_certainty_3pt(labels: list[str], qtext_norm: str) -> bool:
         return False
     if labels[1] != "somewhat certain":
         return False
-    if labels[2] != "not really certain":
+    if labels[2] not in {
+        "not really certain",
+        "not really certain at all",
+        "not certain at all",
+        "not at all certain",
+        "not very certain",
+    }:
         return False
     return "certain" in qtext_norm
 

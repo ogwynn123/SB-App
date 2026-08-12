@@ -56,8 +56,9 @@ Rule = Callable[[Table, Question], None]
 
 BANNER = "OV,OI,O%,BR,RV,S2,P0,SA,SP"
 SUMMARY_BANNER_OI2 = "OV,OI2,O%,BR,RV,S2,P0,SA,SP"
-FAVORABILITY_SUMMARY_BANNER = "OV,OD,OI2,O%,R%,BR,RV,S2,P0,SA,SP"
-LIKELY_SUMMARY_BANNER = "OV,OD,OI,O%,R%,BR,RV,S2,P0,SA,SP"
+RANKED_SUMMARY_BANNER = "OV,OD,OI,O%,R%,BR,RV,S2,P0,SA,SP"
+FAVORABILITY_SUMMARY_BANNER = RANKED_SUMMARY_BANNER
+LIKELY_SUMMARY_BANNER = RANKED_SUMMARY_BANNER
 SKIP_LABEL_RE = re.compile(r"\b(refused)\b", re.IGNORECASE)
 ITEM_PREFIX_RE = re.compile(r"^\s*([a-zA-Z])\s*[\.\)\:]\s*(.*)$")
 INT_RE = re.compile(r"^-?\d+$")
@@ -250,6 +251,12 @@ def bracket_tag(text: str) -> str:
             continue
         return tag
     return ""
+
+
+def leading_bracket_tag(text: str) -> str:
+    remainder = item_remainder(text)
+    match = re.match(r"^\[([^\]]+)\]", remainder)
+    return bracket_tag(match.group(0)) if match else ""
 
 def make_table_id(qid: str, idx: int) -> str:
     return f"TQ{qid}^{idx}"
@@ -682,6 +689,117 @@ def vote_stack_undecided_option(q: Question) -> Optional[ResponseOption]:
         if is_undecided_label(opt.text):
             return opt
     return None
+
+
+def vote_certainty_response_rows(q: Question) -> Optional[List[Tuple[str, str]]]:
+    qtype = normalize_classification_token(q.question_type)
+    question_text = normalize_apostrophes(
+        clean_text(" ".join([q.title, *q.instructions]))
+    ).lower()
+    if qtype != "vote_certainty_3pt" and "certain" not in question_text:
+        return None
+    if len(q.options) not in {3, 4}:
+        return None
+
+    labels = [normalized_label(opt.text) for opt in q.options]
+    if labels[0] != "absolutely certain" or labels[1] != "somewhat certain":
+        return None
+    if labels[2] not in {
+        "not really certain",
+        "not really certain at all",
+        "not certain at all",
+        "not at all certain",
+        "not very certain",
+    }:
+        return None
+    if len(q.options) == 4 and not is_dont_know_label(q.options[3].text):
+        return None
+
+    display_labels = ["Absolutely certain", "Somewhat certain", "Not really certain"]
+    if len(q.options) == 4:
+        display_labels.append("(Don't know)")
+
+    rows: List[Tuple[str, str]] = []
+    for index, label in enumerate(display_labels):
+        value, _flags = encoded_option_value_and_flags(q, index, honor_skip_labels=False)
+        rows.append((label, value))
+    return rows
+
+
+def vote_certainty_candidate_groups(
+    vote_q: Question,
+) -> Optional[Tuple[List[Tuple[str, str]], str]]:
+    undecided = vote_stack_undecided_option(vote_q)
+    if undecided is None:
+        return None
+    undecided_index = next(index for index, option in enumerate(vote_q.options) if option is undecided)
+    undecided_value, _flags = encoded_option_value_and_flags(
+        vote_q,
+        undecided_index,
+        honor_skip_labels=False,
+    )
+
+    pairs = get_leans_pairs(vote_q)
+    groups: List[Tuple[str, str]] = []
+    if pairs:
+        for candidate, lean in pairs:
+            label = norm_spaces(strip_parens(candidate.text))
+            if not label:
+                return None
+            groups.append((label.upper(), f"{candidate.value},{lean.value}"))
+    else:
+        if any(is_lean_label(option.text) for option in vote_q.options):
+            return None
+        for index, option in enumerate(vote_q.options):
+            if option is undecided:
+                continue
+            label = norm_spaces(strip_parens(option.text))
+            if (
+                not label
+                or is_undecided_label(label)
+                or is_other_label(label)
+                or is_dont_know_label(label)
+                or SKIP_LABEL_RE.search(label)
+            ):
+                continue
+            value, _flags = encoded_option_value_and_flags(vote_q, index, honor_skip_labels=False)
+            groups.append((label.upper(), value))
+
+    if len(groups) < 2:
+        return None
+    return groups, undecided_value
+
+
+def is_vote_certainty_pair(vote_q: Question, certainty_q: Question) -> bool:
+    if vote_certainty_response_rows(certainty_q) is None:
+        return False
+    vote_text = vote_question_text(vote_q).casefold()
+    if not is_vote_table_question(vote_q) and not (get_leans_pairs(vote_q) and "vote" in vote_text):
+        return False
+    return vote_certainty_candidate_groups(vote_q) is not None
+
+
+def apply_vote_certainty_table(table: Table, vote_q: Question, certainty_q: Question) -> None:
+    responses = vote_certainty_response_rows(certainty_q)
+    candidate_info = vote_certainty_candidate_groups(vote_q)
+    if responses is None or candidate_info is None:
+        return
+    groups, undecided_value = candidate_info
+
+    table.header = format_generated_header(f"Q{certainty_q.qid}. Vote Certainty")
+    lines = [" TOTAL ANSWERING^TN^1"]
+    for group_index, (candidate_label, vote_selector) in enumerate(groups):
+        vote_ref = q_selector_ref(vote_q, vote_selector)
+        lines.append(f" {candidate_label}^{vote_ref}^NS")
+        for response_label, response_value in responses:
+            certainty_ref = q_selector_ref(certainty_q, response_value)
+            lines.append(f" {response_label}^{certainty_ref} And {vote_ref}^NS,SK")
+        blank_flags = "NS,RL,DV" if group_index == len(groups) - 1 else "NS"
+        lines.append(f" ^ ^{blank_flags}")
+
+    undecided_ref = q_selector_ref(vote_q, undecided_value)
+    lines.append(f" UNDECIDED^{undecided_ref}^NS,RL")
+    table.lines = lines
 
 def vote_stack_signature(q: Question) -> Optional[Tuple[str, ...]]:
     pairs = get_leans_pairs(q)
@@ -1308,6 +1426,41 @@ def mark_common_stems(questions: List[Question]) -> None:
         for q in items:
             setattr(q, "_stem_common", True)
 
+
+def is_focus_importance_0_10_question(q: Question) -> bool:
+    values: List[int] = []
+    for opt in q.options:
+        if not is_int_value(opt.value):
+            return False
+        values.append(int(opt.value))
+    if values != list(range(0, 12)):
+        return False
+    title = clean_text(q.title).casefold()
+    return (
+        bool(q.item_text)
+        and "how important" in title
+        and "focus" in title
+        and "0 to 10" in title
+    )
+
+
+def rule_focus_importance_0_10(table: Table, q: Question) -> None:
+    if not is_focus_importance_0_10_question(q):
+        return
+    table.lines = [
+        " TOTAL ANSWERING^TN^1",
+        f" Extremely focused^Q{q.qid}(9-10)^NS",
+        " Very focused^(6-8)^NS",
+        " Neutral^(5)^NS",
+        " Slightly focused^(2-4)^NS",
+        " Not at all focused^(0-1)^NS",
+        " (Don't know)^(11)^NS",
+        " ^ ^NS",
+        " TOTAL IMPORTANT FOCUS^(6-10)^NS",
+        " TOTAL UNIMPORTANT FOCUS^(0-4)^NS",
+    ]
+
+
 def rule_favorability_0_10(table: Table, q: Question) -> None:
     if not is_favorability_question(q):
         return
@@ -1814,8 +1967,15 @@ def rule_tv_viewing_mix(table: Table, q: Question) -> None:
 def rule_party_on_file(table: Table, q: Question) -> None:
     if q.qnum != "1":
         return
+    if getattr(q, "_party_registration_has_followups", False):
+        return
     title = q.title.lower()
-    if "registered to vote" not in title and "how are you registered" not in title:
+    if (
+        normalize_classification_token(q.question_type) != "party_registration"
+        and "registered to vote" not in title
+        and "how are you registered" not in title
+        and "party registration" not in title
+    ):
         return
     labels = [normalize_apostrophes(norm_spaces(strip_parens(o.text))).lower() for o in q.options]
     expected = [
@@ -1833,11 +1993,23 @@ def rule_party_on_file(table: Table, q: Question) -> None:
     if not all(is_int_value(o.value) or o.value.strip().upper() == "TERMINATE" for o in q.options):
         return
     table.header = format_generated_header(f"Q{q.qid}. Party registration")
-    table.lines.append(" ^ ^NS,DV")
-    table.lines.append(" PARTY ON FILE^ ^NS")
-    table.lines.append(" Democrat^PARTY (DEMOCRAT)^NS")
-    table.lines.append(" Republican^(REPUBLICAN)^NS")
-    table.lines.append(" Independent^NOT PARTY (democrat,republican)^NS")
+    values = [
+        encoded_option_value_and_flags(q, index, honor_skip_labels=False)[0]
+        for index in range(len(q.options))
+    ]
+    table.lines = [
+        " TOTAL ANSWERING^TN^1",
+        f" Democrat^Q{q.qid}({values[0]})^NS",
+        f" Republican^({values[1]})^NS",
+        f" Independent^({values[2]})^NS",
+        f" Another party^({values[3]})^NS",
+        f" (Don't know)^({values[4]})^NS,SK",
+        " ^ ^NS,DV",
+        " PARTY ON FILE^ ^NS,DV",
+        " Democrat^party(Democrat)^NS",
+        " Republican^(Republican)^NS",
+        " Independent^(Unaffiliated,Other)^NS",
+    ]
 
 def rule_motivation_to_vote(table: Table, q: Question) -> None:
     if "motivation to vote" not in q.title.lower():
@@ -2050,7 +2222,7 @@ def build_communication_summary(digital_q: Question, mail_q: Question, idx: int)
     subject = communication_subject(digital_q) or communication_subject(mail_q) or "Candidate"
     t = Table(
         table_id=table_id,
-        banner=SUMMARY_BANNER_OI2,
+        banner=RANKED_SUMMARY_BANNER,
         header=format_generated_header(f"Summary Table - {subject} Communication"),
         lines=[],
     )
@@ -2677,6 +2849,80 @@ def rule_persuasion_summary(table: Table, q: Question) -> None:
     table.lines.append(" ^ ^NS,DV")
     table.lines.append(f" {pattern}^({first.value}-{second.value})^NS")
 
+
+def is_convincing_placeholder_battery(q: Question) -> bool:
+    if not q.item_text or not (
+        is_numeric_placeholder_scale(q, 5) or is_numeric_placeholder_scale(q, 6)
+    ):
+        return False
+    title = clean_text(q.title).casefold()
+    has_convincing_scale = all(
+        phrase in title
+        for phrase in (
+            "very convincing",
+            "somewhat convincing",
+            "not very convincing",
+            "not at all convincing",
+        )
+    )
+    if not has_convincing_scale:
+        return False
+    if len(q.options) == 6:
+        return "less likely" in title or "more likely" in title
+    return True
+
+
+def convincing_reversal_label(q: Question) -> Optional[str]:
+    if len(q.options) != 6:
+        return None
+    title = clean_text(q.title).casefold()
+    if "less likely" in title:
+        return "Less likely"
+    if "more likely" in title:
+        return "More likely"
+    return None
+
+
+def convincing_placeholder_profile(q: Question) -> Optional[BatterySummaryProfile]:
+    if not is_convincing_placeholder_battery(q):
+        return None
+    return BatterySummaryProfile(
+        first_label="Very convincing",
+        total_label="Total convincing",
+        opposite_label="Not convincing",
+        first_selector="1",
+        total_selector="1,2",
+        opposite_selector="3,4",
+        span_selector="1-4",
+    )
+
+
+def rule_convincing_placeholder(table: Table, q: Question) -> None:
+    if not is_convincing_placeholder_battery(q):
+        return
+    table.lines = [
+        " TOTAL ANSWERING^TN^1",
+        f" Very convincing^Q{q.qid}(1)^NS",
+        " Somewhat convincing^(2)^NS",
+        " Not very convincing^(3)^NS",
+        " Not at all convincing^(4)^NS",
+    ]
+    reversal_label = convincing_reversal_label(q)
+    if reversal_label:
+        table.lines.append(f" {reversal_label}^(5)^NS")
+        table.lines.append(" (Don't know)^(6)^NS")
+    else:
+        table.lines.append(" (Don't know)^(5)^NS")
+    table.lines.extend(
+        [
+            " ^ ^NS,DV",
+            " TOTAL CONVINCING^(1,2)^NS",
+        ]
+    )
+    if not reversal_label:
+        table.lines.append(" TOTAL NOT CONVINCING^(3,4)^NS")
+
+
 def battery_direction(q: Question) -> Optional[str]:
     if len(q.options) < 2:
         return None
@@ -2727,6 +2973,9 @@ def is_non_opposite_terminal_label(label: str) -> bool:
 def battery_summary_profile(q: Question) -> Optional[BatterySummaryProfile]:
     if getattr(q, "_job_approval_battery", False) or is_job_performance_question(q):
         return None
+    convincing_profile = convincing_placeholder_profile(q)
+    if convincing_profile is not None:
+        return convincing_profile
     describes_profile = describes_well_summary_profile(q)
     if describes_profile is not None:
         return describes_profile
@@ -3040,9 +3289,71 @@ def extract_last_name(title: str, item_text: Optional[str]) -> str:
         return m2.group(2).strip()
     return ""
 
+
+def focus_importance_summary_item_label(q: Question) -> str:
+    letter = item_letter(q.item_text)
+    item = item_remainder_without_brackets(q.item_text)
+    if not letter or not item:
+        return ""
+    return f"{letter}. {item}"
+
+
+def build_focus_importance_summary_tables(
+    qnum: str,
+    items: List[Question],
+    idx: int,
+) -> Tuple[List[Table], int]:
+    if len(items) <= 1 or not all(is_focus_importance_0_10_question(q) for q in items):
+        return [], idx
+    labels = [focus_importance_summary_item_label(q) for q in items]
+    if any(not label for label in labels):
+        return [], idx
+
+    tables: List[Table] = []
+    for header, selector in (
+        ("Total Important Focus", "6-10"),
+        ("Total Unimportant Focus", "0-4"),
+    ):
+        idx += 1
+        table = Table(
+            table_id=make_table_id(f"{qnum}sum", idx),
+            banner=RANKED_SUMMARY_BANNER,
+            header=format_generated_header(f"Q{qnum}. Summary Table - {header}"),
+            lines=[" TOTAL^TN^0"],
+        )
+        for q, label in zip(items, labels):
+            table.lines.append(f" {label}^Q{q.qid}({selector})^NS")
+        tables.append(table)
+
+    idx += 1
+    difference = Table(
+        table_id=make_table_id(f"{qnum}sum", idx),
+        banner=RANKED_SUMMARY_BANNER,
+        header=format_generated_header(
+            f"Q{qnum}. Summary Table - Important Focus minus Unimportant Focus"
+        ),
+        lines=[" TOTAL^TN^0"],
+    )
+    for q, label in zip(items, labels):
+        difference.lines.append(f" {label}^Q{q.qid}(6-10)^HR,NS")
+    for q, label in zip(items, labels):
+        difference.lines.append(f" {label}^Q{q.qid}(0-4)^HR,NS")
+    count = len(items)
+    for position, label in enumerate(labels, start=1):
+        difference.lines.append(
+            f" {label}^CALC V{position} - V{count + position}^NS"
+        )
+    difference.lines.append(f" ^Q{items[0].qid}(0-10)^HR,NS")
+    tables.append(difference)
+    return tables, idx
+
+
 def build_battery_summary_tables(qnum: str, items: List[Question], idx: int) -> Tuple[List[Table], int]:
     if len(items) <= 1:
         return [], idx
+    focus_tables, idx = build_focus_importance_summary_tables(qnum, items, idx)
+    if focus_tables:
+        return focus_tables, idx
     favorability_tables, idx = build_favorability_0_10_summary_tables(qnum, items, idx)
     if favorability_tables:
         return favorability_tables, idx
@@ -3061,28 +3372,16 @@ def build_battery_summary_tables(qnum: str, items: List[Question], idx: int) -> 
     if len(header_signature) != 1:
         return [], idx
     sample_profile = profiles[0]
-    banner = (
-        LIKELY_SUMMARY_BANNER
-        if "likely" in " ".join(
-            label
-            for label in (
-                sample_profile.first_label,
-                sample_profile.total_label,
-                sample_profile.opposite_label or "",
-                sample_profile.first_minus_label or "",
-            )
-        ).lower()
-        else BANNER
-    )
+    banner = RANKED_SUMMARY_BANNER
 
     labels: List[str] = []
     for q in items:
         letter = item_letter(q.item_text)
         if not letter:
             return [], idx
-        tag = bracket_tag(q.item_text or "")
+        tag = leading_bracket_tag(q.item_text or "")
         if not tag:
-            tag = bracket_tag(q.title)
+            tag = leading_bracket_tag(q.title)
         if tag:
             preserve_caps = all_caps_tokens_outside_brackets(q.item_text, q.title)
             label = f"{letter}. {sentence_case_summary_tag(tag, preserve_caps)}"
@@ -3362,6 +3661,108 @@ def route_codes_from_instructions(q: Question, source_qid: str) -> List[str]:
     return out
 
 
+def has_routed_party_registration_followup(
+    questions: List[Question],
+    registration_index: int,
+) -> bool:
+    registration_q = questions[registration_index]
+    for followup_q in questions[registration_index + 1 :]:
+        if not (
+            is_party_strength_question(followup_q)
+            or is_party_leaner_question(followup_q)
+        ):
+            continue
+        if route_codes_from_instructions(followup_q, registration_q.qid):
+            return True
+    return False
+
+
+def generic_ballot_party_option_indexes(q: Question) -> Optional[Dict[str, int]]:
+    if len(q.options) != 3:
+        return None
+    indexes: Dict[str, int] = {}
+    for index, option in enumerate(q.options):
+        label = normalized_label(option.text)
+        if label in {"democrat", "democratic", "democratic party"}:
+            key = "democrat"
+        elif label in {"republican", "republican party", "gop"}:
+            key = "republican"
+        elif is_undecided_label(option.text):
+            key = "undecided"
+        else:
+            return None
+        if key in indexes:
+            return None
+        indexes[key] = index
+    return indexes if set(indexes) == {"democrat", "republican", "undecided"} else None
+
+
+def is_generic_ballot_lean_pair(ballot_q: Question, followup_q: Question) -> bool:
+    if normalize_classification_token(ballot_q.question_type) != "generic_ballot_party":
+        return False
+    if normalize_classification_token(followup_q.question_type) != "undecided_followup_party":
+        return False
+    ballot_indexes = generic_ballot_party_option_indexes(ballot_q)
+    followup_indexes = generic_ballot_party_option_indexes(followup_q)
+    if ballot_indexes is None or followup_indexes is None:
+        return False
+
+    ballot_undecided = ballot_q.options[ballot_indexes["undecided"]].value.strip()
+    if ballot_undecided not in route_codes_from_instructions(followup_q, ballot_q.qid):
+        return False
+
+    ballot_office = vote_office_label(ballot_q)
+    followup_office = vote_office_label(followup_q)
+    if (
+        ballot_office != "Office"
+        and followup_office != "Office"
+        and ballot_office != followup_office
+    ):
+        return False
+    return True
+
+
+def apply_combined_generic_ballot_table(
+    table: Table,
+    ballot_q: Question,
+    followup_q: Question,
+) -> None:
+    ballot_indexes = generic_ballot_party_option_indexes(ballot_q)
+    followup_indexes = generic_ballot_party_option_indexes(followup_q)
+    if ballot_indexes is None or followup_indexes is None:
+        return
+
+    ballot_democrat, _ = encoded_option_value_and_flags(
+        ballot_q, ballot_indexes["democrat"], honor_skip_labels=False
+    )
+    ballot_republican, _ = encoded_option_value_and_flags(
+        ballot_q, ballot_indexes["republican"], honor_skip_labels=False
+    )
+    followup_democrat, _ = encoded_option_value_and_flags(
+        followup_q, followup_indexes["democrat"], honor_skip_labels=False
+    )
+    followup_republican, _ = encoded_option_value_and_flags(
+        followup_q, followup_indexes["republican"], honor_skip_labels=False
+    )
+    followup_undecided, _ = encoded_option_value_and_flags(
+        followup_q, followup_indexes["undecided"], honor_skip_labels=False
+    )
+
+    table.lines = [
+        " TOTAL ANSWERING^TN^1",
+        f" Democrat^Q{ballot_q.qid}({ballot_democrat})^NS",
+        f" Lean Democrat^Q{followup_q.qid}({followup_democrat})^NS",
+        f" Republican^Q{ballot_q.qid}({ballot_republican})^NS",
+        f" Lean Republican^Q{followup_q.qid}({followup_republican})^NS",
+        f" (Undecided)^Q{followup_q.qid}({followup_undecided})^NS",
+        " ^ ^NS,DV",
+        f" TOTAL DEMOCRAT^Q{ballot_q.qid}({ballot_democrat}) OR "
+        f"Q{followup_q.qid}({followup_democrat})^NS",
+        f" TOTAL REPUBLICAN^Q{ballot_q.qid}({ballot_republican}) OR "
+        f"Q{followup_q.qid}({followup_republican})^NS",
+    ]
+
+
 def encoded_option_value_and_flags(
     q: Question,
     option_index: int,
@@ -3603,7 +4004,11 @@ def is_branch_pid_sequence_partial(q1: Question, q2: Question, q3: Question) -> 
 
 
 def is_standard_pid_sequence(q1: Question, q2: Question, q3: Question) -> bool:
-    if (q1.qnum, q2.qnum, q3.qnum) != ("1", "2", "3"):
+    qnums = (q1.qnum, q2.qnum, q3.qnum)
+    if not all(re.fullmatch(r"\d+", qnum) for qnum in qnums):
+        return False
+    qnum_values = tuple(int(qnum) for qnum in qnums)
+    if qnum_values != tuple(range(qnum_values[0], qnum_values[0] + 3)):
         return False
     if q1.item_text or q2.item_text or q3.item_text:
         return False
@@ -3627,10 +4032,10 @@ def is_standard_pid_sequence(q1: Question, q2: Question, q3: Question) -> bool:
     return True
 
 
-def build_pid_summary(q1: Question, idx: int) -> Tuple[Table, int]:
+def build_pid_summary(q1: Question, q3: Question, idx: int) -> Tuple[Table, int]:
     idx += 1
     t = Table(
-        table_id=make_table_id("1-3", idx),
+        table_id=make_table_id(f"{q1.qid}-{q3.qid}", idx),
         banner=BANNER,
         header=format_generated_header(f"Q{q1.qid}. Party Identification"),
         lines=[],
@@ -4152,6 +4557,16 @@ def build_tables(questions: List[Question], rules: List[Rule]) -> List[Table]:
     tables: List[Table] = []
     idx = 9000
     assign_standard_vote_headers(questions)
+    if (
+        questions
+        and questions[0].qnum == "1"
+        and is_party_registration_question(questions[0])
+    ):
+        setattr(
+            questions[0],
+            "_party_registration_has_followups",
+            has_routed_party_registration_followup(questions, 0),
+        )
     groups: Dict[str, List[int]] = {}
     for i, q in enumerate(questions):
         groups.setdefault(q.qnum, []).append(i)
@@ -4203,6 +4618,16 @@ def build_tables(questions: List[Question], rules: List[Rule]) -> List[Table]:
         first_choice_index = find_second_choice_first_question_index(questions, i)
         if first_choice_index is not None:
             second_choice_pair_indices[i] = first_choice_index
+    vote_certainty_pair_indices: Dict[int, int] = {}
+    for i in range(1, len(questions)):
+        if is_vote_certainty_pair(questions[i - 1], questions[i]):
+            vote_certainty_pair_indices[i] = i - 1
+    generic_ballot_pair_indices: Dict[int, int] = {}
+    generic_ballot_followup_indices: set[int] = set()
+    for i in range(len(questions) - 1):
+        if is_generic_ballot_lean_pair(questions[i], questions[i + 1]):
+            generic_ballot_pair_indices[i] = i + 1
+            generic_ballot_followup_indices.add(i + 1)
     for i in range(len(questions) - 2):
         if is_standard_pid_sequence(questions[i], questions[i + 1], questions[i + 2]):
             pid_q1_idx = i
@@ -4254,13 +4679,21 @@ def build_tables(questions: List[Question], rules: List[Rule]) -> List[Table]:
         if len(indexes) >= 2
     ]
     for i, q in enumerate(questions):
-        if i not in pid_component_indices:
+        if i not in pid_component_indices and i not in generic_ballot_followup_indices:
             idx += 1
             table_id = make_table_id(q.qid, idx)
             t = default_table(q, table_id)
 
             for r in rules:
                 r(t, q)
+            if i in generic_ballot_pair_indices:
+                apply_combined_generic_ballot_table(
+                    t,
+                    q,
+                    questions[generic_ballot_pair_indices[i]],
+                )
+            if i in vote_certainty_pair_indices:
+                apply_vote_certainty_table(t, questions[vote_certainty_pair_indices[i]], q)
             if i in second_choice_pair_indices:
                 append_second_choice_combo_lines(t, questions[second_choice_pair_indices[i]], q)
 
@@ -4287,7 +4720,8 @@ def build_tables(questions: List[Question], rules: List[Rule]) -> List[Table]:
             and i == pid_q3_idx
         ):
             q1 = questions[pid_q1_idx]
-            extra, idx = build_pid_summary(q1, idx)
+            q3 = questions[pid_q3_idx]
+            extra, idx = build_pid_summary(q1, q3, idx)
             tables.append(extra)
         if (
             branch_pid_q4_idx is not None
@@ -4361,6 +4795,7 @@ def main(infile: str, outfile: str) -> None:
     mark_common_stems(questions)
 
     rules: List[Rule] = [
+        rule_focus_importance_0_10,
         rule_favorability_0_10,
         rule_favorability_4pt,
         rule_more_less_favorability_4pt,
@@ -4386,6 +4821,7 @@ def main(infile: str, outfile: str) -> None:
         rule_vote_choice_with_leans,
         rule_age_q102,
         rule_education_q101,
+        rule_convincing_placeholder,
         rule_persuasion_summary,
         # add new rules here without rewriting core rendering
     ]

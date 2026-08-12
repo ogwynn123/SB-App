@@ -10,6 +10,7 @@ import uuid
 import pandas as pd
 
 from sheet_merge_core import (
+    DEFAULT_ROW_ORDER,
     MergeOptions,
     analyze_merge,
     build_mapping,
@@ -36,6 +37,14 @@ class SheetMergeCoreTests(unittest.TestCase):
         self.assertTrue(is_timeseries_stem("NPA3696sbts"))
         self.assertTrue(is_timeseries_stem("NPA3777ts"))
         self.assertTrue(is_timeseries_stem("NPA3777tsSB"))
+
+    def test_secondary_rows_are_first_by_default(self) -> None:
+        options = MergeOptions(
+            primary_path=Path("primary.csv"),
+            secondary_path=Path("secondary.csv"),
+        )
+        self.assertEqual(DEFAULT_ROW_ORDER, "secondary_first")
+        self.assertEqual(options.row_order, "secondary_first")
 
     def test_generate_sample_files_csv(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -290,6 +299,89 @@ class SheetMergeCoreTests(unittest.TestCase):
             manual_mapping={},
         )
         self.assertNotIn("q108oth1", mapping)
+
+    def test_ab_companions_follow_base_question_mapping(self) -> None:
+        mapping, methods, _scores = build_mapping(
+            primary_cols=["id", "q14a", "q14b", "q14"],
+            secondary_cols=["sid", "q7a", "q7b", "q7"],
+            primary_join="id",
+            secondary_join="sid",
+            mode="manual_only",
+            threshold=85,
+            top_n=5,
+            manual_mapping={"q14": "q7"},
+        )
+
+        self.assertEqual(mapping.get("q14"), "q7")
+        self.assertEqual(mapping.get("q14a"), "q7a")
+        self.assertEqual(mapping.get("q14b"), "q7b")
+        self.assertEqual(methods.get("q14a"), "auto_ab_follow")
+        self.assertEqual(methods.get("q14b"), "auto_ab_follow")
+
+    def test_ab_companions_respect_missing_and_blocked_columns(self) -> None:
+        mapping, methods, _scores = build_mapping(
+            primary_cols=["id", "q14a", "q14b", "q14"],
+            secondary_cols=["sid", "q7a", "q7"],
+            primary_join="id",
+            secondary_join="sid",
+            mode="manual_only",
+            threshold=85,
+            top_n=5,
+            manual_mapping={"q14": "q7"},
+            blocked_primary_columns={"q14a"},
+        )
+
+        self.assertNotIn("q14a", mapping)
+        self.assertNotIn("q14b", mapping)
+        self.assertNotIn("q14a", methods)
+
+    def test_ab_companions_follow_prefixed_base_question_mapping(self) -> None:
+        mapping, methods, _scores = build_mapping(
+            primary_cols=["id", "3827_q14a", "3827_q14b", "3827_q14"],
+            secondary_cols=["sid", "3815_q7a", "3815_q7b", "3815_q7"],
+            primary_join="id",
+            secondary_join="sid",
+            mode="manual_only",
+            threshold=85,
+            top_n=5,
+            manual_mapping={"3827_q14": "3815_q7"},
+        )
+
+        self.assertEqual(mapping.get("3827_q14a"), "3815_q7a")
+        self.assertEqual(mapping.get("3827_q14b"), "3815_q7b")
+        self.assertEqual(methods.get("3827_q14a"), "auto_ab_follow")
+
+    def test_ab_companions_override_inferred_matches_after_base_remap(self) -> None:
+        mapping, methods, _scores = build_mapping(
+            primary_cols=["id", "q14a", "q14b", "q14"],
+            secondary_cols=["sid", "q14a", "q14b", "q7a", "q7b", "q7"],
+            primary_join="id",
+            secondary_join="sid",
+            mode="auto",
+            threshold=85,
+            top_n=5,
+            manual_mapping={"q14": "q7"},
+        )
+
+        self.assertEqual(mapping.get("q14a"), "q7a")
+        self.assertEqual(mapping.get("q14b"), "q7b")
+        self.assertEqual(methods.get("q14a"), "auto_ab_follow")
+
+    def test_ab_companions_preserve_explicit_manual_mapping(self) -> None:
+        mapping, methods, _scores = build_mapping(
+            primary_cols=["id", "q14a", "q14b", "q14"],
+            secondary_cols=["sid", "q14a", "q14b", "q7a", "q7b", "q7"],
+            primary_join="id",
+            secondary_join="sid",
+            mode="auto",
+            threshold=85,
+            top_n=5,
+            manual_mapping={"q14": "q7", "q14a": "q14a"},
+        )
+
+        self.assertEqual(mapping.get("q14a"), "q14a")
+        self.assertEqual(methods.get("q14a"), "manual")
+        self.assertEqual(mapping.get("q14b"), "q7b")
 
     def test_auto_mapping_excludes_split_assignment_columns(self) -> None:
         mapping, _methods, _scores = build_mapping(
@@ -588,6 +680,7 @@ class SheetMergeCoreTests(unittest.TestCase):
                 # secondary file stores _survnum.
                 secondary_join="survnum",
                 conflict_policy="skip",
+                row_order="primary_first",
                 output_mode="new_file",
                 output_path=out_path,
                 report_enabled=False,
