@@ -1,0 +1,15 @@
+{
+  "elements": [
+    {
+      "type": "question",
+      "qnum": "1",
+      "qid": "1",
+      "text": "Do you approve or disapprove of the job the mayor is doing?",
+      "response_options": [
+        {"value": "1", "text": "Approve"},
+        {"value": "2", "text": "Disapprove"},
+        {"value": "3", "text": "(Don't know)"}
+      ]
+    }
+  ]
+}

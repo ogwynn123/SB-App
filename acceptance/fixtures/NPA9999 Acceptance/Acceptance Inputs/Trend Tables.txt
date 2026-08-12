@@ -1,0 +1,11 @@
+TTREND2^9901
+ OV,OI,FU,O%,BR,RV,S2,P0,SA,SP
+ Trend Table - Acceptance Approval
+ TOTAL^TN^0
+ JULY 2026^TIMESERIES (2)^NS,DV
+ Approve^TIMESERIES (2) AND Q1(1)^1,NS
+ Disapprove^TIMESERIES (2) AND Q1(2)^1,NS
+  ^ ^NS,DV
+ NET CHANGE^ ^NS,DV
+ Approve^CALC V2 - V2^NS
+ Disapprove^CALC V3 - V3^NS

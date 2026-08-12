@@ -259,6 +259,28 @@ def check_exe_freshness(report: Report) -> None:
             ("autoResults_gui.py", "empty_results_generator.py", "autoResults_gui.spec"),
         ),
         (
+            "Sample Quota Checker GUI",
+            BASE_DIR / "pipelines" / "sample_quota_checker",
+            BASE_DIR / "pipelines" / "sample_quota_checker" / "dist" / "sample_quota_checker.exe",
+            (
+                "sample_quota_checker_gui.py",
+                "sample_quota_checker_core.py",
+                "sample_quota_checker_settings.py",
+                "quota_editor.py",
+                "sample_quota_checker.spec",
+            ),
+        ),
+        (
+            "Trend Table Updater GUI",
+            BASE_DIR / "pipelines" / "trend_table_updater",
+            BASE_DIR / "pipelines" / "trend_table_updater" / "dist" / "trend_table_updater.exe",
+            (
+                "trend_table_updater_gui.py",
+                "trend_table_updater_core.py",
+                "trend_table_updater.spec",
+            ),
+        ),
+        (
             "TOMAS GUI",
             BASE_DIR / "pipelines" / "thomas_in_a_box",
             BASE_DIR / "pipelines" / "thomas_in_a_box" / "dist" / "tomas_pipeline_gui.exe",
@@ -394,6 +416,35 @@ def check_temp_dirs(report: Report) -> None:
         report.warn("temp", "encountered folder scan errors", "; ".join(errors[:3]))
 
 
+def check_latest_acceptance(report: Report) -> None:
+    root = BASE_DIR / "acceptance_runs"
+    reports = sorted(
+        root.glob("*/acceptance_report.json") if root.exists() else (),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if not reports:
+        report.info("acceptance", "no acceptance run has been recorded")
+        return
+    latest = reports[0]
+    try:
+        payload = read_json(latest)
+        summary = payload.get("summary", {})
+        passed = int(summary.get("passed", 0))
+        failed = int(summary.get("failed", 0))
+        total = int(summary.get("total", 0))
+    except Exception as exc:
+        report.fail("acceptance", "latest acceptance report could not be parsed", str(exc))
+        return
+    detail = f"{rel(latest)}; finished {payload.get('finished_at', '(unknown time)')}"
+    if failed:
+        report.fail("acceptance", f"latest run failed: {passed} passed, {failed} failed", detail)
+    elif total and passed == total:
+        report.ok("acceptance", f"latest run passed all {total} checks", detail)
+    else:
+        report.warn("acceptance", "latest run has an incomplete summary", detail)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run read-only SurveyPlatform suite health checks.")
     parser.add_argument("--workspace", help="Only inspect one workspace, e.g. NPA3804 or 3804.")
@@ -406,6 +457,7 @@ def main() -> int:
     check_dashboard_geometry(report)
     check_build_recipes(report)
     check_exe_freshness(report)
+    check_latest_acceptance(report)
     check_workspaces(report, workspace_filter=args.workspace)
     check_temp_dirs(report)
     report.print(show_ok=not args.warnings_only)

@@ -72,6 +72,22 @@ and temp folders:
 .\run_suite_health_check.bat --workspace NPA3804
 ```
 
+## Acceptance Smoke Test
+
+Run the synthetic end-to-end workflow after cross-pipeline changes or an EXE
+rebuild:
+
+```powershell
+.\run_acceptance_smoke.bat
+```
+
+It stages an ignored `NPA9999 Acceptance` project and checks Project Startup,
+launcher context, WinCross generation, merging, trend tables, quotas, Auto
+Results, and open-end recoding. Reports and inspectable outputs are retained in
+`acceptance_runs`. Add `--gui-smoke` to briefly start and close all packaged
+specialist applications after the data checks. See
+`acceptance\README.md` for the exact contract.
+
 ## GUI Entry Point
 
 For daily work in an existing client survey folder, use the lightweight Survey

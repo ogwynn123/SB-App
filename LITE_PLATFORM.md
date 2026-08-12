@@ -83,3 +83,11 @@ The launcher owns survey identity, project-root validation, project startup,
 recent projects, and process launching. Merge mapping, table
 generation, quota editing, result alignment, open-end coding, and translation
 remain in separate GUIs.
+
+## Acceptance Check
+
+`run_acceptance_smoke.bat` exercises the launcher and major data contracts with
+the repo-owned synthetic `NPA9999 Acceptance` fixture. The default run never
+opens GUIs or touches archive projects. Use `--gui-smoke` after rebuilding EXEs
+to add a packaged-startup check. Timestamped outputs and both text and JSON
+reports are written under the ignored `acceptance_runs` folder.

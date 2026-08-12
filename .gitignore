@@ -28,6 +28,7 @@ htmlcov/
 # Local logs and reports
 *.log
 /compilingReports/
+/acceptance_runs/
 
 # Survey data, generated workspaces, and local catalog databases
 /repository/
@@ -48,4 +49,3 @@ htmlcov/
 .DS_Store
 Thumbs.db
 Desktop.ini
-
