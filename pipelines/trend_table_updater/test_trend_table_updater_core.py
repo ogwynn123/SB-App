@@ -107,6 +107,20 @@ class TrendTableUpdaterCoreTests(unittest.TestCase):
         self.assertIn("TTrend1^9001", result.text)
         self.assertIn("TQ5^9002", result.text)
 
+    def test_accepts_legacy_ttrend_id_without_numeric_suffix(self) -> None:
+        legacy = ACTIVE_TABLE.replace("TTREND2^9001", "TTREND^9001")
+
+        result = update_trend_tables(
+            legacy,
+            prior_series=10,
+            new_series=11,
+            new_label="JULY 2026",
+        )
+
+        self.assertEqual(result.updated_tables, 1)
+        self.assertIn("TTREND^9001", result.text)
+        self.assertIn(" JULY 2026^TIMESERIES (11)^NS,DV", result.text)
+
     def test_adds_wave_to_table_without_net_change_section(self) -> None:
         result = update_trend_tables(
             NO_NET_TABLE,

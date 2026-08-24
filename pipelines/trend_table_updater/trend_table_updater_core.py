@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 
 
-TABLE_HEADER_PATTERN = r"(?:TTREND\d+|TQ[^\r\n^]*)\^\d+[ \t]*(?:\r?$)"
+TABLE_HEADER_PATTERN = r"(?:TTREND\d*|TQ[^\r\n^]*)\^\d+[ \t]*(?:\r?$)"
 TABLE_HEADER_RE = re.compile(
     rf"^{TABLE_HEADER_PATTERN}",
     re.MULTILINE | re.IGNORECASE,
