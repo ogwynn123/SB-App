@@ -99,6 +99,122 @@ class XlsxSlot:
     value: str
 
 
+class SelectedFileError(ValueError):
+    def __init__(self, role: str, path: Path, detail: str) -> None:
+        self.role = role
+        self.path = path
+        self.detail = detail
+        super().__init__(f"{role} {detail}: {path}")
+
+
+class EmptySelectedFileError(SelectedFileError):
+    pass
+
+
+class InvalidSelectedFileError(SelectedFileError):
+    pass
+
+
+def _validate_office_input(path: Path, role: str) -> None:
+    if not path.exists():
+        raise FileNotFoundError(f"{role} not found: {path}")
+    if not path.is_file():
+        raise InvalidSelectedFileError(role, path, "is not a file")
+    if path.stat().st_size == 0:
+        raise EmptySelectedFileError(role, path, "is empty (0 bytes)")
+    if not zipfile.is_zipfile(path):
+        raise InvalidSelectedFileError(
+            role,
+            path,
+            "is not a readable Office document",
+        )
+
+
+def _exception_chain(exc: BaseException):
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
+def _is_open_or_locked_error(exc: BaseException) -> bool:
+    for current in _exception_chain(exc):
+        if isinstance(current, PermissionError):
+            return True
+        if isinstance(current, OSError) and getattr(current, "winerror", None) in {5, 32, 33}:
+            return True
+        message = str(current).casefold()
+        if any(
+            phrase in message
+            for phrase in (
+                "permission denied",
+                "access is denied",
+                "being used by another process",
+                "used by another process",
+                "sharing violation",
+            )
+        ):
+            return True
+    return False
+
+
+def friendly_run_error(
+    exc: BaseException,
+    *,
+    marginals_path: Path | None,
+    template_path: Path | None,
+    output_path: Path | None,
+    xlsx_path: Path | None,
+) -> tuple[str, str, bool]:
+    if isinstance(exc, EmptySelectedFileError):
+        return (
+            "Empty Input File",
+            (
+                f"The selected {exc.role} is empty (0 bytes):\n{exc.path}\n\n"
+                "Choose or export a populated file and run Auto Results again. "
+                "If it is stored in OneDrive, make sure it has finished downloading."
+            ),
+            False,
+        )
+    if isinstance(exc, InvalidSelectedFileError):
+        return (
+            "Invalid Input File",
+            (
+                f"The selected {exc.role} is not a readable Office document:\n{exc.path}\n\n"
+                "The file may be incomplete, corrupt, or not fully downloaded from OneDrive."
+            ),
+            False,
+        )
+    if _is_open_or_locked_error(exc):
+        selected = [
+            f"Marginals: {marginals_path}" if marginals_path is not None else "",
+            f"Marginal XLSX: {xlsx_path}" if xlsx_path is not None else "",
+            f"Template: {template_path}" if template_path is not None else "",
+            f"Output: {output_path}" if output_path is not None else "",
+        ]
+        selected_text = "\n".join(line for line in selected if line)
+        return (
+            "Word Document Open or Locked",
+            (
+                "Auto Results could not read or save a selected file because it is open, locked, "
+                "or access is blocked.\n\n"
+                "Close the selected documents in Word, especially an existing output document. "
+                "Also close the File Explorer preview pane if it is displaying one of them, then run again."
+                f"\n\n{selected_text}"
+            ),
+            False,
+        )
+    if isinstance(exc, FileNotFoundError):
+        return (
+            "Selected File Not Found",
+            f"Auto Results could not find a selected file:\n{exc}",
+            False,
+        )
+    return "Run Failed", str(exc), True
+
+
 def xlsx_slots_to_alignment(slots: list[XlsxSlot]) -> list[AlignmentSlot]:
     return [
         AlignmentSlot(
@@ -873,14 +989,15 @@ def run_autoresults(
         raise ValueError("Placeholder cannot be empty.")
     if source_mode not in {"docx", "xlsx"}:
         raise ValueError(f"Unsupported source mode: {source_mode}")
-    if source_mode == "docx" and (marginals_path is None or not marginals_path.exists()):
-        raise FileNotFoundError(f"Marginals file not found: {marginals_path}")
-    if not template_path.exists():
-        raise FileNotFoundError(f"Template file not found: {template_path}")
-    if xlsx_path is not None and not xlsx_path.exists():
-        raise FileNotFoundError(f"Marginal XLSX file not found: {xlsx_path}")
+    if source_mode == "docx" and marginals_path is None:
+        raise FileNotFoundError("Marginals DOCX was not selected.")
     if source_mode == "xlsx" and xlsx_path is None:
         raise ValueError("Marginal XLSX is required when using XLSX as the primary value source.")
+    if marginals_path is not None:
+        _validate_office_input(marginals_path, "Marginals DOCX")
+    _validate_office_input(template_path, "Template DOCX")
+    if xlsx_path is not None:
+        _validate_office_input(xlsx_path, "Marginal XLSX")
 
     docx_slots: list[AlignmentSlot] = []
     if marginals_path is not None and marginals_path.exists():
@@ -1092,6 +1209,10 @@ class AutoResultsGUI:
         self.output_var.set(str(p.with_name(f"{stem}{p.suffix}")))
 
     def run_click(self) -> None:
+        marginals: Path | None = None
+        template: Path | None = None
+        output: Path | None = None
+        xlsx: Path | None = None
         try:
             marginals_raw = self.marginals_var.get().strip()
             marginals = Path(marginals_raw) if marginals_raw else None
@@ -1144,9 +1265,17 @@ class AutoResultsGUI:
                 ),
             )
         except Exception as exc:
-            self.status_var.set(f"Error: {exc}")
-            detail = traceback.format_exc()
-            messagebox.showerror("Run Failed", f"{exc}\n\n{detail}")
+            title, message, include_traceback = friendly_run_error(
+                exc,
+                marginals_path=marginals,
+                template_path=template,
+                output_path=output,
+                xlsx_path=xlsx,
+            )
+            self.status_var.set(f"Error: {message.splitlines()[0]}")
+            if include_traceback:
+                message = f"{message}\n\nTechnical details:\n{traceback.format_exc()}"
+            messagebox.showerror(title, message)
 
 
 def main() -> None:

@@ -15,7 +15,12 @@ APP_ROOT = Path(__file__).resolve().parent
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
-from autoResults_gui import _dialog_initial_directory, run_autoresults
+from autoResults_gui import (
+    EmptySelectedFileError,
+    _dialog_initial_directory,
+    friendly_run_error,
+    run_autoresults,
+)
 
 
 class AutoResultsAlignmentTests(unittest.TestCase):
@@ -44,6 +49,43 @@ class AutoResultsAlignmentTests(unittest.TestCase):
     def test_launcher_work_directory_is_used_as_dialog_fallback(self) -> None:
         fallback = self._tmpdir()
         self.assertEqual(_dialog_initial_directory("", fallback), str(fallback.resolve()))
+
+    def test_empty_marginals_has_specific_error(self) -> None:
+        case = self._tmpdir()
+        marginals = case / "marg.docx"
+        marginals.touch()
+        template = self._docx(case / "empty.docx", ["Red !!%"])
+
+        with self.assertRaisesRegex(EmptySelectedFileError, "Marginals DOCX is empty"):
+            run_autoresults(marginals, template, case / "filled.docx")
+
+    def test_empty_template_has_specific_error(self) -> None:
+        case = self._tmpdir()
+        marginals = self._docx(case / "marg.docx", ["Red 60%"])
+        template = case / "empty.docx"
+        template.touch()
+
+        with self.assertRaisesRegex(EmptySelectedFileError, "Template DOCX is empty"):
+            run_autoresults(marginals, template, case / "filled.docx")
+
+    def test_permission_error_has_open_or_locked_message(self) -> None:
+        case = self._tmpdir()
+        marginals = case / "marg.docx"
+        template = case / "empty.docx"
+        output = case / "filled.docx"
+
+        title, message, include_traceback = friendly_run_error(
+            PermissionError(13, "Permission denied", str(output)),
+            marginals_path=marginals,
+            template_path=template,
+            output_path=output,
+            xlsx_path=None,
+        )
+
+        self.assertEqual(title, "Word Document Open or Locked")
+        self.assertIn("Close the selected documents in Word", message)
+        self.assertIn(str(output), message)
+        self.assertFalse(include_traceback)
 
     def test_alignment_report_has_no_flags_for_matching_order(self) -> None:
         case = self._tmpdir()
