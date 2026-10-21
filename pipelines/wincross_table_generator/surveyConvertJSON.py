@@ -153,6 +153,10 @@ SCALE_LABEL_FRAGMENT_HINT_WORDS = {
     "unlikely",
     "very",
 }
+# Words that bind to the following word in a two-row grid header such as
+# "Democrats Democrats Don't" over "much more somewhat more know".
+SCALE_HEADER_MODIFIER_WORDS = {"much", "somewhat", "very", "strongly", "slightly", "extremely", "fairly", "not"}
+COLUMN_HEADER_STOP_WORDS = {"a", "an", "and", "are", "do", "each", "for", "in", "is", "of", "or", "the", "to", "you", "your"}
 
 SCALE_LABEL_ALIASES = {
     "MUCH MORE": "Much more likely",
@@ -161,6 +165,8 @@ SCALE_LABEL_ALIASES = {
 }
 CODE_SUFFIX_RE = re.compile(rf"\s(({CODE_TOKEN_PATTERN})(?:\s+{CODE_TOKEN_PATTERN})*)\s*$", re.IGNORECASE)
 SCALE_TOKEN_RE = re.compile(r"\[[^\]]+\]|[A-Za-z']+")
+# Keeps a trailing hyphen so a word split across grid header rows can rejoin.
+SCALE_HYPHEN_TOKEN_RE = re.compile(r"\[[^\]]+\]|[A-Za-z']+-?")
 APPROVE_STEM_RE = re.compile(
     r"\bstrong(?:ly)?\s+approve\b.*"
     r"\bsome(?:what)?\s+approve\b.*"
@@ -1656,6 +1662,27 @@ def should_prefer_inferred_labels(
     return False
 
 
+def join_scale_header_cell(top: str, bottom: str) -> str:
+    # A word hyphenated across the two header rows ("Nei-" / "ther") rejoins.
+    if top.endswith("-") and len(top) > 1:
+        return f"{top[:-1]}{bottom}"
+    return f"{top} {bottom}"
+
+
+def group_scale_header_words(tokens: List[str]) -> List[str]:
+    """Group a header row's words per column: "much more somewhat more know" -> 3 cells."""
+    groups: List[str] = []
+    i = 0
+    while i < len(tokens):
+        if tokens[i].lower() in SCALE_HEADER_MODIFIER_WORDS and i + 1 < len(tokens):
+            groups.append(f"{tokens[i]} {tokens[i + 1]}")
+            i += 2
+        else:
+            groups.append(tokens[i])
+            i += 1
+    return groups
+
+
 def expand_scale_labels(scale_labels: List[str], expected_count: int) -> List[str]:
     """
     Expand scale labels from instrument-style batteries.
@@ -1667,20 +1694,26 @@ def expand_scale_labels(scale_labels: List[str], expected_count: int) -> List[st
     if len(base) == expected_count:
         return base
 
-    rows = [tokenize_scale_line(x) for x in scale_labels if x]
-    rows = [r for r in rows if r]
+    raw_rows = [x for x in scale_labels if x and tokenize_scale_line(x)]
+    rows = [tokenize_scale_line(x) for x in raw_rows]
     if len(rows) == 2 and rows[0] and len(rows[1]) >= len(rows[0]):
         top = rows[0]
+        hyphen_top = [normalize_text(tok) for tok in SCALE_HYPHEN_TOKEN_RE.findall(raw_rows[0])]
+        if len(hyphen_top) == len(top):
+            top = hyphen_top
         bottom = rows[1]
         combined: List[str] = []
         for i in range(len(top)):
             if i < len(bottom):
-                combined.append(f"{top[i]} {bottom[i]}")
+                combined.append(join_scale_header_cell(top[i], bottom[i]))
         if len(bottom) > len(top):
             combined.extend(bottom[len(top):])
         candidate = [normalize_scale_label(x) for x in combined if x]
         if len(candidate) == expected_count:
             return candidate
+        grouped = group_scale_header_words(bottom)
+        if len(grouped) == len(top) == expected_count:
+            return [normalize_scale_label(join_scale_header_cell(t, b)) for t, b in zip(top, grouped)]
 
     flattened_tokens: List[str] = []
     for row in rows:
@@ -1729,11 +1762,45 @@ def looks_like_scale_label_fragment(line: str) -> bool:
         return False
 
     words = re.findall(r"[A-Za-z']+", candidate)
-    if not (2 <= len(words) <= 9):
+    # Six-column grid headers reach ten or more words ("much more somewhat more ther ...").
+    if not (2 <= len(words) <= 12):
         return False
 
     hint_hits = sum(1 for word in words if word.lower() in SCALE_LABEL_FRAGMENT_HINT_WORDS)
     return hint_hits >= max(2, len(words) - 1)
+
+
+def looks_like_column_header_top_row(
+    logical_lines: List[str],
+    idx: int,
+    qnum: str,
+    candidate: str,
+) -> bool:
+    """
+    Detect the top row of a two-row grid header whose words are not scale words,
+    e.g. "Democrats Democrats Republicans Republicans Don't" above
+    "much more somewhat more somewhat more much more know".
+    """
+    candidate = normalize_text(candidate)
+    if not candidate or any(ch.isdigit() for ch in candidate):
+        return False
+    if any(ch in candidate for ch in ".?!:;_,"):
+        return False
+    words = candidate.split()
+    if not (2 <= len(words) <= 9):
+        return False
+    if not all(word[0].isupper() for word in words):
+        return False
+    if any(word.lower() in COLUMN_HEADER_STOP_WORDS for word in words):
+        return False
+    for next_idx in range(idx + 1, min(len(logical_lines), idx + 3)):
+        nxt = normalize_text(logical_lines[next_idx])
+        if not nxt:
+            continue
+        nxt_cleaned, _ = split_instructions(nxt)
+        nxt_candidate = normalize_text(nxt_cleaned)
+        return bool(nxt_candidate) and looks_like_contextual_scale_label(logical_lines, next_idx, qnum, nxt_candidate)
+    return False
 
 
 def looks_like_contextual_scale_label(
@@ -2404,6 +2471,12 @@ def consume_leading_stem_lines(
             i += 1
             continue
 
+        if candidate and looks_like_column_header_top_row(logical_lines, i, qnum, candidate):
+            remainder.append(raw)
+            consumed_any = True
+            i += 1
+            continue
+
         if candidate and looks_like_question_continuation_line(candidate):
             stem_lines.append(candidate)
             stem_instructions.extend(line_instr)
@@ -2602,7 +2675,10 @@ def parse_question_block(qnum: str, qtext: str, block_lines: List[str]) -> List[
             continue
 
         scale_candidate = normalize_text(cleaned)
-        if scale_candidate and looks_like_contextual_scale_label(logical_lines, idx, qnum, scale_candidate):
+        if scale_candidate and (
+            looks_like_contextual_scale_label(logical_lines, idx, qnum, scale_candidate)
+            or (not item_entries and looks_like_column_header_top_row(logical_lines, idx, qnum, scale_candidate))
+        ):
             scale_labels.append(scale_candidate)
             for token in line_instr:
                 up = token.upper()

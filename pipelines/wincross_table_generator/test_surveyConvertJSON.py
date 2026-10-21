@@ -693,6 +693,60 @@ class SurveyConvertJSONTests(unittest.TestCase):
             ],
         )
 
+    def test_two_row_grid_header_with_party_columns_becomes_option_labels(self) -> None:
+        elements = parse_question_block(
+            "13",
+            "Please select whether you trust [RANDOMIZE] the Democrats in Congress or the",
+            [
+                "Republicans in Congress more to handle each one?",
+                "Democrats Democrats Republicans Republicans Don't",
+                "[RANDOMIZE, GRID] much more somewhat more somewhat more much more know",
+                "a. The economy ..........................................1 2 3 4 5",
+                "b. Health care .............................................1 2 3 4 5",
+            ],
+        )
+
+        self.assertEqual(len(elements), 2)
+        self.assertEqual(
+            elements[0]["text"],
+            "Please select whether you trust the Democrats in Congress or the Republicans in Congress more to handle each one?",
+        )
+        self.assertEqual(
+            [option["text"] for option in elements[0]["response_options"]],
+            [
+                "Democrats much more",
+                "Democrats somewhat more",
+                "Republicans somewhat more",
+                "Republicans much more",
+                "Don't know",
+            ],
+        )
+
+    def test_two_row_grid_header_rejoins_word_hyphenated_across_rows(self) -> None:
+        elements = parse_question_block(
+            "11",
+            "Please select whether you trust [RANDOMIZE] Democrats or Republicans more to handle each one?",
+            [
+                "Democrats Democrats Nei- Republicans Republicans Don't",
+                "[RANDOMIZE, GRID] much more somewhat more ther somewhat more much more know",
+                "a. The economy .................................. 1 2 3 4 5 6",
+                "b. Inflation ........................................... 1 2 3 4 5 6",
+            ],
+        )
+
+        self.assertEqual(
+            [option["text"] for option in elements[0]["response_options"]],
+            [
+                "Democrats much more",
+                "Democrats somewhat more",
+                "Neither",
+                "Republicans somewhat more",
+                "Republicans much more",
+                "Don't know",
+            ],
+        )
+        self.assertNotIn("Nei-", elements[0]["text"])
+
 
 if __name__ == "__main__":
     unittest.main()
