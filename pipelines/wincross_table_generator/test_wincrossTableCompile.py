@@ -400,6 +400,16 @@ class WincrossTableCompileTests(unittest.TestCase):
             "Q20e. [VETS] He worked with DOGE after [PAUSE] the announcement.",
         )
 
+    def test_question_title_drops_all_caps_syllable_pronouncer(self) -> None:
+        self.assertEqual(
+            format_question_title("Q12b. Job Approval - MICHELLE LUJAN [LOO-HAHN] GRISHAM as GOVERNOR"),
+            "Q12b. Job Approval - MICHELLE LUJAN GRISHAM as GOVERNOR",
+        )
+        self.assertEqual(
+            format_question_title("Q7. [SPLIT-A] Support for the plan"),
+            "Q7. [SPLIT-A] Support for the plan",
+        )
+
     def test_pronunciation_cleanup_is_title_only(self) -> None:
         q = Question(
             qid="8d",

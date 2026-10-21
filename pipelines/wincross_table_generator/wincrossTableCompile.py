@@ -389,6 +389,14 @@ def is_title_pronunciation_guide(text: str, match: re.Match[str]) -> bool:
     has_stress_case = bool(re.search(r"[A-Z]", body) and re.search(r"[a-z]", body))
     if has_hyphenated_syllables and (has_stress_case or body.islower()):
         return True
+    # All-caps syllable guides such as LUJAN [LOO-HAHN] follow a proper name.
+    if (
+        has_hyphenated_syllables
+        and body.isupper()
+        and all(1 <= len(part) <= 6 for part in re.findall(r"[A-Z]+", body))
+        and preceding[:1].isupper()
+    ):
+        return True
 
     # Some acronym guides are rendered as one all-caps phonetic token, such
     # as DOGE [DOHJ]. Placement after an all-caps source term distinguishes
