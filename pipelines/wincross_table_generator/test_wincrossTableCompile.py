@@ -19,6 +19,8 @@ from wincrossTableCompile import (  # noqa: E402
     build_tables,
     clean_text,
     default_table,
+    format_question_title,
+    format_question_title_numbers,
     is_age_bucket_10,
     parse_survey,
     rule_describes_well_5pt,
@@ -86,7 +88,7 @@ class WincrossTableCompileTests(unittest.TestCase):
         self.assertEqual(len(tables), 3)
         self.assertTrue(
             all(
-                table.banner == "OV,OD,OI,O%,R%,BR,RV,S2,P0,SA,SP"
+                table.banner == "OV,OD,OI2,O%,R%,BR,RV,S2,P0,SA,SP"
                 for table in tables
             )
         )
@@ -110,6 +112,194 @@ class WincrossTableCompileTests(unittest.TestCase):
         self.assertIn(" a. Lowering health care costs^CALC V1 - V3^NS", tables[2].lines)
         self.assertIn(" b. Protecting Social Security^CALC V2 - V4^NS", tables[2].lines)
         self.assertEqual(tables[2].lines[-1], " ^Q14a(0-10)^HR,NS")
+
+    def test_describes_better_battery_gets_candidate_and_difference_summaries(self) -> None:
+        def item(qid: str, item_text: str) -> Question:
+            return Question(
+                qid=qid,
+                qnum="14",
+                title="Describes Better",
+                item_text=item_text,
+                options=[
+                    ResponseOption("1", "Miller-Meeks"),
+                    ResponseOption("2", "Bohannan"),
+                    ResponseOption("3", "(Both)"),
+                    ResponseOption("4", "(None)"),
+                    ResponseOption("5", "(Don't know)"),
+                ],
+            )
+
+        items = [
+            item("14a", "a. Is on the side of the middle class"),
+            item("14b", "b. Sides with the special interests"),
+            item("14c", "c. Wants to change the way Congress works"),
+            item("14d", "d. Shares my values"),
+            item("14e", "e. Will work to keep us safe"),
+            item("14f", "f. Sides with the health insurance companies"),
+        ]
+
+        tables, next_idx = build_battery_summary_tables("14", items, 9034)
+
+        self.assertEqual(next_idx, 9037)
+        self.assertEqual(len(tables), 3)
+        self.assertTrue(all(table.banner == RANKED_SUMMARY_BANNER for table in tables))
+        self.assertEqual(tables[0].table_id, "TQ14sum^9035")
+        self.assertEqual(tables[0].header, "Q14. Summary Table - Describes Miller-Meeks")
+        self.assertEqual(
+            tables[0].lines,
+            [
+                " TOTAL^TN^0",
+                " a. Is on the side of the middle class^Q14a(1)^NS",
+                " b. Sides with the special interests^Q14b(1)^NS",
+                " c. Wants to change the way Congress works^Q14c(1)^NS",
+                " d. Shares my values^Q14d(1)^NS",
+                " e. Will work to keep us safe^Q14e(1)^NS",
+                " f. Sides with the health insurance companies^Q14f(1)^NS",
+            ],
+        )
+        self.assertEqual(tables[1].header, "Q14. Summary Table - Describes Bohannan")
+        self.assertIn(" b. Sides with the special interests^Q14b(2)^NS", tables[1].lines)
+        self.assertEqual(
+            tables[2].header,
+            "Q14. Summary Table - Describes Miller-Meeks minus Bohannan",
+        )
+        self.assertIn(
+            " a. Is on the side of the middle class^Q14a(1)^HR,NS",
+            tables[2].lines,
+        )
+        self.assertIn(
+            " f. Sides with the health insurance companies^Q14f(2)^HR,NS",
+            tables[2].lines,
+        )
+        self.assertIn(
+            " a. Is on the side of the middle class^CALC V1 - V7^NS",
+            tables[2].lines,
+        )
+        self.assertIn(
+            " f. Sides with the health insurance companies^CALC V6 - V12^NS",
+            tables[2].lines,
+        )
+        self.assertEqual(tables[2].lines[-1], " ^Q14a(1-5)^HR,NS")
+
+        workflow_tables = build_tables(items, [])
+        self.assertEqual(
+            [table.header for table in workflow_tables if table.table_id.startswith("TQ14sum^")],
+            [
+                "Q14. Summary Table - Describes Miller-Meeks",
+                "Q14. Summary Table - Describes Bohannan",
+                "Q14. Summary Table - Describes Miller-Meeks minus Bohannan",
+            ],
+        )
+
+    def test_describes_better_summary_uses_title_items_when_item_text_is_missing(self) -> None:
+        options = [
+            ResponseOption("1", "Miller-Meeks"),
+            ResponseOption("2", "Bohannan"),
+            ResponseOption("3", "(Both)"),
+            ResponseOption("4", "(None)"),
+            ResponseOption("5", "(Don't know)"),
+        ]
+        items = [
+            Question(
+                qid="14a",
+                qnum="14",
+                title="Q14a. Describes Better - Is on the side of the middle class",
+                options=options,
+            ),
+            Question(
+                qid="14b",
+                qnum="14",
+                title="Q14b. Describes Better - Shares my values",
+                options=options,
+            ),
+        ]
+
+        tables, _ = build_battery_summary_tables("14", items, 9034)
+
+        self.assertEqual(len(tables), 3)
+        self.assertIn(" a. Is on the side of the middle class^Q14a(1)^NS", tables[0].lines)
+        self.assertIn(" b. Shares my values^Q14b(2)^NS", tables[1].lines)
+
+    def test_forced_choice_best_describe_battery_accepts_bracketed_terminal_labels(self) -> None:
+        def item(qid: str, item_text: str) -> Question:
+            return Question(
+                qid=qid,
+                qnum="20",
+                title=(
+                    "Now I'm going to read you some descriptions. Keeping in mind everything you know, "
+                    "which of the candidates for Congress fits that description the best. "
+                    "Does that best describe Susie Lee or Marty O'Donnell?"
+                ),
+                item_text=item_text,
+                options=[
+                    ResponseOption("1", "LEE"),
+                    ResponseOption("2", "MOD"),
+                    ResponseOption("3", "[BOTH]"),
+                    ResponseOption("4", "[NONE]"),
+                    ResponseOption("5", "[DK]"),
+                ],
+                question_type="candidate_trait_forced_choice",
+                question_family="candidate_evaluation",
+                question_group="candidate_traits",
+            )
+
+        items = [
+            item("20a", "a. Is on the side of the middle class"),
+            item("20b", "b. Shares my values"),
+        ]
+
+        tables, _ = build_battery_summary_tables("20", items, 9033)
+
+        self.assertEqual(
+            [table.header for table in tables],
+            [
+                "Q20. Summary Table - Describes LEE",
+                "Q20. Summary Table - Describes MOD",
+                "Q20. Summary Table - Describes LEE minus MOD",
+            ],
+        )
+        self.assertIn(
+            " a. Is on the side of the middle class^Q20a(1)^NS",
+            tables[0].lines,
+        )
+        self.assertIn(" b. Shares my values^Q20b(2)^NS", tables[1].lines)
+        self.assertIn(
+            " a. Is on the side of the middle class^CALC V1 - V3^NS",
+            tables[2].lines,
+        )
+
+    def test_describes_better_summary_rejects_inconsistent_candidate_codes(self) -> None:
+        first = Question(
+            qid="14a",
+            qnum="14",
+            title="Describes Better",
+            item_text="a. Shares my values",
+            options=[
+                ResponseOption("1", "Miller-Meeks"),
+                ResponseOption("2", "Bohannan"),
+                ResponseOption("3", "(Both)"),
+                ResponseOption("4", "(None)"),
+                ResponseOption("5", "(Don't know)"),
+            ],
+        )
+        second = Question(
+            qid="14b",
+            qnum="14",
+            title="Describes Better",
+            item_text="b. Will work to keep us safe",
+            options=[
+                ResponseOption("1", "Bohannan"),
+                ResponseOption("2", "Miller-Meeks"),
+                ResponseOption("3", "(Both)"),
+                ResponseOption("4", "(None)"),
+                ResponseOption("5", "(Don't know)"),
+            ],
+        )
+
+        tables, next_idx = build_battery_summary_tables("14", [first, second], 9034)
+
+        self.assertEqual(tables, [])
+        self.assertEqual(next_idx, 9034)
 
     def test_clean_text_preserves_sentence_double_spaces(self) -> None:
         self.assertEqual(
@@ -140,6 +330,89 @@ class WincrossTableCompileTests(unittest.TestCase):
         )
         self.assertNotIn("U.S.  Congress", table.header)
         self.assertNotIn("Dr.  Smith", table.header)
+
+    def test_question_title_formats_spoken_numeric_quantities(self) -> None:
+        self.assertEqual(
+            format_question_title_numbers(
+                "The plan provides 50 thousand dollars to 200 thousand residents, "
+                "and 3 percent qualify for 1.5 million dollars."
+            ),
+            "The plan provides $50,000 to 200,000 residents, and 3% qualify for $1.5M.",
+        )
+
+    def test_question_title_compacts_explicit_million_and_billion_dollars(self) -> None:
+        self.assertEqual(
+            format_question_title_numbers(
+                "Two billion dollars, twenty-five billion dollars, sixty-two million dollars, "
+                "500 million dollars, a million dollars, and three-point-three million dollars."
+            ),
+            "$2B, $25B, $62M, $500M, $1M, and $3.3M.",
+        )
+
+    def test_question_title_leaves_approximate_dollar_phrases_unchanged(self) -> None:
+        self.assertEqual(
+            format_question_title_numbers(
+                "They spent thousands of dollars, millions of dollars, and hundreds of millions of dollars."
+            ),
+            "They spent thousands of dollars, millions of dollars, and hundreds of millions of dollars.",
+        )
+
+    def test_title_number_formatting_does_not_change_answer_labels(self) -> None:
+        q = Question(
+            qid="5",
+            qnum="5",
+            title="Would you support spending 50 thousand dollars if taxes rose 3 percent?",
+            options=[
+                ResponseOption("1", "50 thousand dollars"),
+                ResponseOption("2", "3 percent"),
+            ],
+        )
+
+        table = default_table(q, "TQ5^9005")
+
+        self.assertEqual(
+            table.header,
+            "Q5. Would you support spending $50,000 if taxes rose 3%?",
+        )
+        self.assertEqual(table.lines[1], " 50 thousand dollars^Q5(1)^NS")
+        self.assertEqual(table.lines[2], " 3 percent^(2)^NS")
+
+    def test_question_title_drops_pronunciation_guides_but_keeps_item_tags(self) -> None:
+        source = (
+            "Q20c. Ciscomani Less Likely - [FARM] Ciscomani supported tariffs.  "
+            "A lobbyist helped the Kingdom of Saudi Arabia [SOW-dee uh-RAY-bee-uh] "
+            "get a deal from Doug Ducey [DOO-see]."
+        )
+
+        self.assertEqual(
+            format_question_title(source),
+            (
+                "Q20c. Ciscomani Less Likely - [FARM] Ciscomani supported tariffs.  "
+                "A lobbyist helped the Kingdom of Saudi Arabia get a deal from Doug Ducey."
+            ),
+        )
+
+    def test_question_title_drops_all_caps_acronym_pronouncer(self) -> None:
+        self.assertEqual(
+            format_question_title(
+                "Q20e. [VETS] He worked with DOGE [DOHJ] after [PAUSE] the announcement."
+            ),
+            "Q20e. [VETS] He worked with DOGE after [PAUSE] the announcement.",
+        )
+
+    def test_pronunciation_cleanup_is_title_only(self) -> None:
+        q = Question(
+            qid="8d",
+            qnum="8",
+            title="Please rate each person.",
+            item_text="d. Juan Ciscomani [SISS-koh-MAH-nee]",
+            options=[ResponseOption("1", "AIPAC [AY-pack]")],
+        )
+
+        table = default_table(q, "TQ8d^9005")
+
+        self.assertEqual(table.header, "Q8d. Please rate each person. - Juan Ciscomani")
+        self.assertEqual(table.lines[1], " AIPAC [AY-pack]^Q8d(1)^NS")
 
     def test_vote_certainty_follows_vote_candidates_and_lean_codes(self) -> None:
         vote = Question(
@@ -233,6 +506,114 @@ class WincrossTableCompileTests(unittest.TestCase):
         self.assertIn(" Not really certain^Q7(3) And Q6(1)^NS,SK", certainty_table.lines)
         self.assertEqual(certainty_table.lines[-1], " UNDECIDED^Q6(3)^NS,RL")
 
+    def test_vote_certainty_accepts_and_preserves_very_certain_wording(self) -> None:
+        vote = Question(
+            qid="9",
+            qnum="9",
+            title="If the general election for Congress was held today, for whom would you vote?",
+            options=[
+                ResponseOption("1", "Lee"),
+                ResponseOption("2", "(Lean Lee)"),
+                ResponseOption("3", "O'Donnell"),
+                ResponseOption("4", "(Lean O'Donnell)"),
+                ResponseOption("5", "Kamerath"),
+                ResponseOption("6", "(Lean Kamerath)"),
+                ResponseOption("11", "(Undecided)"),
+            ],
+            question_type="head_to_head_ballot",
+        )
+        certainty = Question(
+            qid="10",
+            qnum="10",
+            title=(
+                "How certain are you to support? Are you very certain, somewhat certain, "
+                "or not really certain at all?"
+            ),
+            instructions=["[IF Q9=1-6]", "[CHOICE ON Q9]"],
+            options=[
+                ResponseOption("1", "Very certain"),
+                ResponseOption("2", "Somewhat certain"),
+                ResponseOption("3", "Not really certain at all"),
+                ResponseOption("4", "(Don't know)"),
+            ],
+        )
+
+        tables = build_tables([vote, certainty], [rule_vote_choice_with_leans])
+        certainty_table = next(table for table in tables if table.table_id.startswith("TQ10^"))
+
+        self.assertEqual(certainty_table.header, "Q10. Vote Certainty")
+        self.assertIn(" Very certain^Q10(1) And Q9(1,2)^NS,SK", certainty_table.lines)
+        self.assertIn(" Very certain^Q10(1) And Q9(5,6)^NS,SK", certainty_table.lines)
+        self.assertEqual(certainty_table.lines[-1], " UNDECIDED^Q9(11)^NS,RL")
+
+    def test_candidate_consideration_adds_vote_and_combined_rows(self) -> None:
+        vote = Question(
+            qid="7",
+            qnum="7",
+            title="If the election for Congress was held today, for whom would you vote?",
+            options=[
+                ResponseOption("1", "Mendoza"),
+                ResponseOption("2", "(Lean Mendoza)"),
+                ResponseOption("3", "Ciscomani"),
+                ResponseOption("4", "(Lean Ciscomani)"),
+                ResponseOption("5", "(Undecided)"),
+            ],
+            question_type="head_to_head_ballot",
+        )
+        consider_ciscomani = Question(
+            qid="9",
+            qnum="9",
+            title=(
+                "Is there a chance you might consider voting for Republican Juan Ciscomani "
+                "or would you say there is no chance you would consider voting for him?"
+            ),
+            instructions=["[IF Q7=1,2,5]"],
+            options=[
+                ResponseOption("1", "Might consider"),
+                ResponseOption("2", "No chance"),
+                ResponseOption("3", "(Don't know)"),
+            ],
+            question_type="candidate_consideration",
+        )
+        consider_mendoza = Question(
+            qid="10",
+            qnum="10",
+            title=(
+                "Is there a chance you might consider voting for Democrat JoAnna Mendoza "
+                "or would you say there is no chance you would consider voting for her?"
+            ),
+            instructions=["[IF Q7=3-5]"],
+            options=[
+                ResponseOption("1", "Might consider"),
+                ResponseOption("2", "No chance"),
+                ResponseOption("3", "(Don't know)"),
+            ],
+            question_type="candidate_consideration",
+        )
+
+        tables = build_tables([vote, consider_ciscomani, consider_mendoza], [])
+        q9_table = next(table for table in tables if table.table_id.startswith("TQ9^"))
+        q10_table = next(table for table in tables if table.table_id.startswith("TQ10^"))
+
+        self.assertEqual(
+            q9_table.lines[-4:],
+            [
+                " ^ ^NS,DV",
+                " VOTING CISCOMANI^Q7(3,4)^NS",
+                " VOTING FOR/WOULD CONSIDER^Q7(3,4) OR Q9(1)^NS",
+                " not CISCOMANI^Q7(1,2,5)^HR,NS",
+            ],
+        )
+        self.assertEqual(
+            q10_table.lines[-4:],
+            [
+                " ^ ^NS,DV",
+                " VOTING MENDOZA^Q7(1,2)^NS",
+                " VOTING FOR/WOULD CONSIDER^Q7(1,2) OR Q10(1)^NS",
+                " not MENDOZA^Q7(3-5)^HR,NS",
+            ],
+        )
+
     def test_candidate_battery_header_gets_double_spaces_between_sentences(self) -> None:
         q = Question(
             qid="16a",
@@ -309,7 +690,7 @@ class WincrossTableCompileTests(unittest.TestCase):
         summary = next(t for t in tables if t.header == "Summary Table - Smiley Communication")
 
         self.assertTrue(summary.table_id.startswith("TQ15sum^"))
-        self.assertEqual(summary.banner, "OV,OD,OI,O%,R%,BR,RV,S2,P0,SA,SP")
+        self.assertEqual(summary.banner, "OV,OI2,O%,BR,RV,S2,P0,SA,SP")
         self.assertEqual(
             summary.lines,
             [
@@ -319,6 +700,96 @@ class WincrossTableCompileTests(unittest.TestCase):
                 " Any^Q14(1) OR Q15(1)^NS",
                 " None^NOT Q14(1) AND NOT Q15(1)^NS",
             ],
+        )
+
+    def test_four_support_attack_questions_get_candidate_communication_summary(self) -> None:
+        def communication_question(qid: str, direction: str, candidate: str) -> Question:
+            return Question(
+                qid=qid,
+                qnum=qid,
+                title=(
+                    "In the last few weeks, have you seen any ads on television, gotten "
+                    "anything in the mail, or seen an ad on your computer or phone "
+                    f"{direction} {candidate}?"
+                ),
+                options=[
+                    ResponseOption("1", "Yes"),
+                    ResponseOption("2", "No"),
+                    ResponseOption("3", "(Don't know)"),
+                ],
+            )
+
+        questions = [
+            communication_question("19", "supporting", "Johnny Garcia"),
+            communication_question("20", "attacking", "Johnny Garcia"),
+            communication_question("21", "supporting", "Carlos De La Cruz"),
+            communication_question("22", "attacking", "Carlos De La Cruz"),
+        ]
+
+        tables = build_tables(questions, [])
+        summary = next(
+            table
+            for table in tables
+            if table.header == "Q19-Q22. Summary Table - Candidate Communication"
+        )
+
+        self.assertTrue(summary.table_id.startswith("TQ19-Q22^"))
+        self.assertEqual(summary.banner, "OV,OI2,O%,BR,RV,S2,P0,SA,SP")
+        self.assertEqual(
+            summary.lines,
+            [
+                " TOTAL ANSWERING^TN^1",
+                " GARCIA^ ^NS,DV",
+                " Supporting^Q19(1)^NS",
+                " Attacking^Q20(1)^NS",
+                " Both^Q19(1) AND Q20(1)^NS",
+                " Either^Q19(1) OR Q20(1)^NS",
+                " Neither^Q19(2,3) AND Q20(2,3)^NS",
+                " ^ ^NS,DV",
+                " DE LA CRUZ^ ^NS,DV",
+                " Supporting^Q21(1)^NS",
+                " Attacking^Q22(1)^NS",
+                " Both^Q21(1) AND Q22(1)^NS",
+                " Either^Q21(1) OR Q22(1)^NS",
+                " Neither^Q21(2,3) AND Q22(2,3)^NS",
+                " ^ ^NS,DV",
+                " BOTH CANDIDATES^ ^NS,DV",
+                " Supporting^Q21(1) AND Q19(1)^NS",
+                " Attacking^Q22(1) AND Q20(1)^NS",
+                " Both^{Q21(1) AND Q22(1)} AND {Q19(1) AND Q20(1)}^NS",
+                " Any^Q21(1) OR Q22(1) OR Q19(1) OR Q20(1)^NS",
+                " None^Q19(2,3) AND Q20(2,3) AND Q21(2,3) AND Q22(2,3)^NS",
+                " hide^Q21(1-3)^HR,NS",
+            ],
+        )
+
+    def test_candidate_communication_summary_requires_two_complete_candidate_pairs(self) -> None:
+        def q(qid: str, direction: str, target: str) -> Question:
+            return Question(
+                qid=qid,
+                qnum=qid,
+                title=f"Have you seen any ads supporting {target}?".replace(
+                    "supporting", direction
+                ),
+                options=[
+                    ResponseOption("1", "Yes"),
+                    ResponseOption("2", "No"),
+                    ResponseOption("3", "(Don't know)"),
+                ],
+            )
+
+        tables = build_tables(
+            [
+                q("19", "supporting", "Johnny Garcia"),
+                q("20", "attacking", "Johnny Garcia"),
+                q("21", "supporting", "Johnny Garcia"),
+                q("22", "attacking", "Carlos De La Cruz"),
+            ],
+            [],
+        )
+
+        self.assertFalse(
+            any("Candidate Communication" in table.header for table in tables)
         )
 
     def test_second_choice_question_appends_first_choice_combo_sections(self) -> None:
@@ -702,7 +1173,7 @@ class WincrossTableCompileTests(unittest.TestCase):
         self.assertEqual(len(tables), 1)
         table = tables[0]
         self.assertEqual(table.table_id, "TQ7^9129")
-        self.assertEqual(table.banner, "OV,OD,OI,O%,R%,BR,RV,S2,P0,SA,SP")
+        self.assertEqual(table.banner, "OV,OD,OI2,O%,R%,BR,RV,S2,P0,SA,SP")
         self.assertEqual(table.header, "Q7. Summary Table - Extremely Unfavorable (0)")
         self.assertEqual(table.lines[0], " TOTAL ANSWERING^TN^1")
         self.assertIn(" a. Donald Trump^Q7a(0)^NS", table.lines)
@@ -967,6 +1438,91 @@ class WincrossTableCompileTests(unittest.TestCase):
         self.assertIn(" a. Infrastructure^Q19a(4)^HR,NS", tables[2].lines)
         self.assertEqual(tables[2].lines[-1], " ^Q19a(1-4)^HR,NS")
 
+    def test_symmetric_six_code_more_less_likely_battery_gets_tables_and_summaries(self) -> None:
+        def item(qid: str, item_text: str) -> Question:
+            return Question(
+                qid=qid,
+                qnum="16",
+                title=(
+                    "For each one, tell me if that statement makes you much more likely, "
+                    "somewhat more likely, somewhat less likely, or much less likely to vote for Bridgford.  "
+                    "MUCH SMWT MORE MORE DIFF] LESS LESS"
+                ),
+                item_text=item_text,
+                options=[ResponseOption(str(i), str(i)) for i in range(1, 7)],
+                question_type="numeric_scale_placeholder",
+            )
+
+        items = [
+            item("16a", "a. [INDY] Bridgford is independent"),
+            item("16b", "b. [GAZA] Bridgford opposes the war"),
+        ]
+        table = default_table(items[0], "TQ16a^9024")
+
+        rule_persuasion_summary(table, items[0])
+        summaries, _ = build_battery_summary_tables("16", items, 9025)
+
+        self.assertEqual(
+            table.lines,
+            [
+                " TOTAL ANSWERING^TN^1",
+                " Much more likely^Q16a(1)^NS",
+                " Somewhat more likely^(2)^NS",
+                " No difference^(3)^NS",
+                " Somewhat less likely^(4)^NS",
+                " Much less likely^(5)^NS",
+                " (Don't know)^(6)^NS",
+                " ^ ^NS,DV",
+                " TOTAL MORE LIKELY^(1-2)^NS",
+                " TOTAL LESS LIKELY^(4-5)^NS",
+            ],
+        )
+        self.assertEqual(len(summaries), 3)
+        self.assertTrue(all(table.banner == RANKED_SUMMARY_BANNER for table in summaries))
+        self.assertEqual(summaries[0].header, "Q16. Summary Table - Bridgford Much More Likely")
+        self.assertEqual(summaries[1].header, "Q16. Summary Table - Bridgford Total More Likely")
+        self.assertEqual(
+            summaries[2].header,
+            "Q16. Summary Table - Bridgford Total More Likely minus Less Likely",
+        )
+        self.assertIn(" a. Indy^Q16a(4,5)^HR,NS", summaries[2].lines)
+
+    def test_bracketed_placeholder_no_difference_uses_parentheses(self) -> None:
+        bracketed = Question(
+            qid="16a",
+            qnum="16",
+            title=(
+                "For each one, tell me if that statement makes you much more likely, "
+                "somewhat more likely, somewhat less likely, or much less likely to vote for "
+                "Bridgford. MUCH SMWT MORE MORE DIFF] LESS LESS"
+            ),
+            instructions=["[IF REG DEM]", "[NO SMWT MUCH [RANDOMIZE]", "[DK]"],
+            item_text="a. [INDY] Bridgford is independent",
+            options=[ResponseOption(str(i), str(i)) for i in range(1, 7)],
+            question_type="numeric_scale_placeholder",
+        )
+        unbracketed = Question(
+            qid="17a",
+            qnum="17",
+            title=(
+                "For each one, tell me if that statement makes you much more likely, "
+                "somewhat more likely, somewhat less likely, or much less likely to vote for "
+                "Bridgford. MUCH SMWT MORE MORE NO DIFF LESS LESS"
+            ),
+            instructions=["[IF NOT REG DEM]", "[RANDOMIZE]"],
+            item_text="a. [INDY] Bridgford is independent",
+            options=[ResponseOption(str(i), str(i)) for i in range(1, 7)],
+            question_type="numeric_scale_placeholder",
+        )
+
+        bracketed_table = default_table(bracketed, "TQ16a^9024")
+        unbracketed_table = default_table(unbracketed, "TQ17a^9031")
+        rule_persuasion_summary(bracketed_table, bracketed)
+        rule_persuasion_summary(unbracketed_table, unbracketed)
+
+        self.assertIn(" (No difference)^(3)^NS", bracketed_table.lines)
+        self.assertIn(" No difference^(3)^NS", unbracketed_table.lines)
+
     def test_battery_summary_bracket_tags_use_sentence_case(self) -> None:
         def item(qid: str, item_text: str, title_extra: str = "") -> Question:
             return Question(
@@ -1095,6 +1651,84 @@ class WincrossTableCompileTests(unittest.TestCase):
             " a/b. Combo^{Q16a(1,2) and num_cd(1)} OR {Q16b(1,2) and num_cd(2)}^NS",
             tables[1].lines,
         )
+        self.assertIn(
+            " a/b. Combo^{Q16a(1,2) and num_cd(1)} OR {Q16b(1,2) and num_cd(2)}^HR,NS",
+            tables[2].lines,
+        )
+        self.assertIn(" a. Trump - C^Q16a(1,2) and num_cd(1)^HR,NS,11", tables[2].lines)
+        self.assertIn(" b. GOP - D^Q16b(1,2) and num_cd(2)^HR,NS,12", tables[2].lines)
+        self.assertIn(" HIDE^num_cd(1)^hr", tables[2].lines)
+        self.assertIn(" HIDE^num_cd(2)^hr", tables[2].lines)
+        self.assertIn(
+            " a/b. Combo^{Q16a(4) and num_cd(1)} OR {Q16b(4) and num_cd(2)}^HR,NS",
+            tables[2].lines,
+        )
+        self.assertIn(" a. Trump - C^Q16a(4) and num_cd(1)^HR,NS,11", tables[2].lines)
+        self.assertIn(" b. GOP - D^Q16b(4) and num_cd(2)^HR,NS,12", tables[2].lines)
+        self.assertIn(" a. Trump - C^CALC V1 - V14^NS", tables[2].lines)
+        self.assertIn(" a/b. Combo^CALC V13 - V24^NS", tables[2].lines)
+        self.assertIn(
+            " a/b. Combo^{Q16a(1) and num_cd(1)} OR {Q16b(1) and num_cd(2)}^HR,NS",
+            tables[3].lines,
+        )
+        self.assertIn(" a. Trump - C^Q16a(1) and num_cd(1)^HR,NS,11", tables[3].lines)
+        self.assertIn(
+            " a/b. Combo^{Q16a(4,5) and num_cd(1)} OR {Q16b(4,5) and num_cd(2)}^HR,NS",
+            tables[3].lines,
+        )
+        self.assertIn(" a. Trump - C^Q16a(4,5) and num_cd(1)^HR,NS,11", tables[3].lines)
+        self.assertIn(" a/b. Combo^CALC V13 - V24^NS", tables[3].lines)
+
+    def test_repeated_split_cycles_create_separate_combo_rows(self) -> None:
+        def item(qid: str, item_text: str) -> Question:
+            return Question(
+                qid=qid,
+                qnum="17",
+                title=(
+                    "For each one, tell me if that statement makes you much more likely, "
+                    "somewhat more likely, somewhat less likely, or much less likely to vote for Bridgford."
+                ),
+                item_text=item_text,
+                options=[ResponseOption(str(i), str(i)) for i in range(1, 7)],
+                question_type="numeric_scale_placeholder",
+            )
+
+        tables, _ = build_battery_summary_tables(
+            "17",
+            [
+                item("17c", "c. [FARM - SPLIT A] Farm message A"),
+                item("17d", "d. [FARM - SPLIT B] Farm message B"),
+                item("17e", "e. [IRAN - SPLIT A] Iran message A"),
+                item("17f", "f. [IRAN - SPLIT B] Iran message B"),
+            ],
+            9041,
+        )
+
+        self.assertIn(
+            " c/d. Farm - Combo^{Q17c(1) and num_ab(1)} OR {Q17d(1) and num_ab(2)}^NS",
+            tables[0].lines,
+        )
+        self.assertIn(
+            " e/f. Iran - Combo^{Q17e(1) and num_ab(1)} OR {Q17f(1) and num_ab(2)}^NS",
+            tables[0].lines,
+        )
+        self.assertFalse(any("c/d/e/f. Combo" in line for line in tables[0].lines))
+        self.assertIn(
+            " c/d. Farm - Combo^{Q17c(1,2) and num_ab(1)} OR {Q17d(1,2) and num_ab(2)}^HR,NS",
+            tables[2].lines,
+        )
+        self.assertIn(" c. Farm - A^Q17c(1,2) and num_ab(1)^HR,NS,5", tables[2].lines)
+        self.assertIn(" d. Farm - B^Q17d(1,2) and num_ab(2)^HR,NS,6", tables[2].lines)
+        self.assertIn(" HIDE^num_ab(1)^hr", tables[2].lines)
+        self.assertIn(" HIDE^num_ab(2)^hr", tables[2].lines)
+        self.assertIn(
+            " c/d. Farm - Combo^{Q17c(4,5) and num_ab(1)} OR {Q17d(4,5) and num_ab(2)}^HR,NS",
+            tables[2].lines,
+        )
+        self.assertIn(" c. Farm - A^Q17c(4,5) and num_ab(1)^HR,NS,5", tables[2].lines)
+        self.assertIn(" d. Farm - B^Q17d(4,5) and num_ab(2)^HR,NS,6", tables[2].lines)
+        self.assertIn(" c/d. Farm - Combo^CALC V7 - V13^NS", tables[2].lines)
+        self.assertIn(" e/f. Iran - Combo^CALC V8 - V14^NS", tables[2].lines)
 
     def test_vote_against_title_names_less_likely_battery_from_target_last_name(self) -> None:
         q = Question(
@@ -1517,20 +2151,57 @@ class WincrossTableCompileTests(unittest.TestCase):
 
         rule_past_presidential_vote(table, q)
 
+        self.assertEqual(table.banner, "OV,OI2,O%,BR,RV,S2,P0,SA,SP")
         self.assertEqual(table.header, "Q107. 2024 Vote for President")
         self.assertEqual(
             table.lines,
             [
+                " TOTAL ANSWERING^TN^1",
                 " Trump^Q107 (1)^NS",
                 " Harris^(2)^NS",
                 " Other^(3)^NS",
-                " Didn't vote^(4)^NS",
+                " I did not vote in 2024^(4)^NS",
                 " (Refused)^(5)^NS,SK",
                 " ^ ^NS,DV",
-                " AMONG 2024 VOTERS^Q107(1-3)^NS,DV",
-                " Trump^Q107 (1)^7,NS",
+                " AMONG 2024 VOTERS^(1-3)^NS,DV",
+                " Trump^(1)^7,NS",
                 " Harris^(2)^7,NS",
                 " Other^(3)^7,NS",
+            ],
+        )
+
+    def test_past_presidential_vote_without_refused_matches_standard_layout(self) -> None:
+        q = Question(
+            qid="39",
+            qnum="39",
+            title="In the 2024 race for President, did you vote for Donald Trump or Kamala Harris?",
+            options=[
+                ResponseOption("1", "Trump"),
+                ResponseOption("2", "Harris"),
+                ResponseOption("3", "Other"),
+                ResponseOption("4", "I did not vote in 2024"),
+            ],
+            question_type="past_vote_recall",
+        )
+        table = default_table(q, "TQ39^9070")
+
+        rule_past_presidential_vote(table, q)
+
+        self.assertEqual(table.banner, "OV,OI2,O%,BR,RV,S2,P0,SA,SP")
+        self.assertEqual(table.header, "Q39. 2024 Vote for President")
+        self.assertEqual(
+            table.lines,
+            [
+                " TOTAL ANSWERING^TN^1",
+                " Trump^Q39 (1)^NS",
+                " Harris^(2)^NS",
+                " Other^(3)^NS",
+                " I did not vote in 2024^(4)^NS",
+                " ^ ^NS,DV",
+                " AMONG 2024 VOTERS^(1-3)^NS,DV",
+                " Trump^(1)^6,NS",
+                " Harris^(2)^6,NS",
+                " Other^(3)^6,NS",
             ],
         )
 

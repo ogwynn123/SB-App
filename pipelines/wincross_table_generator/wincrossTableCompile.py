@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 import json
 import re
@@ -52,11 +53,25 @@ class SplitSummaryContext:
     groups: List[List[int]]
 
 
+@dataclass(frozen=True)
+class CandidateCommunicationPair:
+    label: str
+    supporting: Question
+    attacking: Question
+
+
+@dataclass(frozen=True)
+class CandidateCommunicationGroup:
+    first_qid: str
+    last_qid: str
+    candidates: Tuple[CandidateCommunicationPair, CandidateCommunicationPair]
+
+
 Rule = Callable[[Table, Question], None]
 
 BANNER = "OV,OI,O%,BR,RV,S2,P0,SA,SP"
 SUMMARY_BANNER_OI2 = "OV,OI2,O%,BR,RV,S2,P0,SA,SP"
-RANKED_SUMMARY_BANNER = "OV,OD,OI,O%,R%,BR,RV,S2,P0,SA,SP"
+RANKED_SUMMARY_BANNER = "OV,OD,OI2,O%,R%,BR,RV,S2,P0,SA,SP"
 FAVORABILITY_SUMMARY_BANNER = RANKED_SUMMARY_BANNER
 LIKELY_SUMMARY_BANNER = RANKED_SUMMARY_BANNER
 SKIP_LABEL_RE = re.compile(r"\b(refused)\b", re.IGNORECASE)
@@ -93,6 +108,88 @@ SUMMARY_TOKEN_REPLACEMENTS = {
 }
 SENTENCE_DOUBLE_SPACE_RE = re.compile(r"([.!?][\"')\]]?)  (?=(?:[\"'(\[]?[A-Z0-9]))")
 SENTENCE_BOUNDARY_SPACE_RE = re.compile(r"([.!?][\"')\]]?)[ \t]+(?=(?:[\"'(\[]?[A-Z0-9]))")
+TITLE_MAGNITUDE_RE = re.compile(
+    r"(?<![\w.])(?P<currency>\$)?"
+    r"(?P<number>\d+(?:,\d{3})*(?:\.\d+)?)\s+"
+    r"(?P<magnitude>thousand|million|billion)"
+    r"(?:\s+(?P<dollars>dollars?))?\b",
+    re.IGNORECASE,
+)
+SPOKEN_NUMBER_UNITS = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+}
+SPOKEN_NUMBER_TENS = {
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
+SPOKEN_NUMBER_TOKEN_PATTERN = "|".join(
+    [
+        "a",
+        "half",
+        "quarter",
+        "hundred",
+        "point",
+        "and",
+        *SPOKEN_NUMBER_UNITS,
+        *SPOKEN_NUMBER_TENS,
+    ]
+)
+SPOKEN_NUMBER_START_PATTERN = "|".join(
+    [
+        "a",
+        "half",
+        "quarter",
+        "hundred",
+        *SPOKEN_NUMBER_UNITS,
+        *SPOKEN_NUMBER_TENS,
+    ]
+)
+TITLE_COMPACT_DOLLAR_RE = re.compile(
+    rf"(?<![\w.])(?P<currency>\$)?(?P<number>"
+    rf"\d+(?:,\d{{3}})*(?:\.\d+)?|"
+    rf"(?:{SPOKEN_NUMBER_START_PATTERN})"
+    rf"(?:(?:[ -]+)(?:{SPOKEN_NUMBER_TOKEN_PATTERN})){{0,8}}"
+    rf")\s+(?P<magnitude>million|billion)\s+dollars?\b",
+    re.IGNORECASE,
+)
+TITLE_PERCENT_RE = re.compile(
+    r"(?<![\w.])(?P<number>\d+(?:\.\d+)?)\s+(?:percent|per\s+cent)\b",
+    re.IGNORECASE,
+)
+TITLE_BRACKET_RE = re.compile(r"(?P<gap>[ \t]*)\[(?P<body>[^\]\r\n]{1,80})\]")
+NON_PRONUNCIATION_TAG_RE = re.compile(
+    r"^(?:"
+    r"IF\b|RANDOMI[ZS]E\b|ROTATE\b|READ\b|SPLIT\b|ANCHOR\b|PAUSE\b|"
+    r"CHOICE\b|INSERT\b|ASK\b|SKIP\b|FIXED\b|PROGRAMMER\b|RESPONDENT\b|"
+    r"DK\b|DON'T KNOW\b|DONT KNOW\b|BOTH\b|NONE\b|NO DIFF\b"
+    r")",
+    re.IGNORECASE,
+)
 SENTENCE_ABBREVIATIONS = {
     "adm",
     "capt",
@@ -181,6 +278,141 @@ def ensure_sentence_double_spacing(text: str) -> str:
         return f"{marker}  "
 
     return SENTENCE_BOUNDARY_SPACE_RE.sub(replace_boundary, text)
+
+
+def format_question_title_numbers(text: str) -> str:
+    """Format spoken numeric quantities for display in table titles only."""
+
+    multipliers = {
+        "thousand": Decimal(1_000),
+        "million": Decimal(1_000_000),
+        "billion": Decimal(1_000_000_000),
+    }
+
+    def parse_spoken_number(raw: str) -> Optional[Decimal]:
+        normalized = raw.casefold().replace("-", " ")
+        tokens = [token for token in normalized.split() if token != "and"]
+        if not tokens:
+            return None
+        if tokens in (["a"], ["one"]):
+            return Decimal(1)
+        if tokens in (["half"], ["a", "half"]):
+            return Decimal("0.5")
+        if tokens in (["quarter"], ["a", "quarter"]):
+            return Decimal("0.25")
+
+        if "point" in tokens:
+            point_index = tokens.index("point")
+            whole_tokens = tokens[:point_index]
+            decimal_tokens = tokens[point_index + 1 :]
+            if not whole_tokens or not decimal_tokens:
+                return None
+            whole = parse_spoken_number(" ".join(whole_tokens))
+            digits: List[str] = []
+            for token in decimal_tokens:
+                digit = SPOKEN_NUMBER_UNITS.get(token)
+                if digit is None or digit > 9:
+                    return None
+                digits.append(str(digit))
+            return Decimal(f"{int(whole)}.{''.join(digits)}") if whole is not None else None
+
+        value = 0
+        for token in tokens:
+            if token == "a":
+                value += 1
+            elif token in SPOKEN_NUMBER_UNITS:
+                value += SPOKEN_NUMBER_UNITS[token]
+            elif token in SPOKEN_NUMBER_TENS:
+                value += SPOKEN_NUMBER_TENS[token]
+            elif token == "hundred":
+                value = max(value, 1) * 100
+            else:
+                return None
+        return Decimal(value)
+
+    def compact_decimal(value: Decimal) -> str:
+        formatted = format(value.normalize(), "f")
+        if "." in formatted:
+            formatted = formatted.rstrip("0").rstrip(".")
+        return formatted or "0"
+
+    def replace_compact_dollars(match: re.Match[str]) -> str:
+        raw_number = match.group("number")
+        try:
+            if re.fullmatch(r"\d+(?:,\d{3})*(?:\.\d+)?", raw_number):
+                number = Decimal(raw_number.replace(",", ""))
+            else:
+                number = parse_spoken_number(raw_number)
+        except InvalidOperation:
+            return match.group(0)
+        if number is None:
+            return match.group(0)
+        suffix = "M" if match.group("magnitude").casefold() == "million" else "B"
+        return f"${compact_decimal(number)}{suffix}"
+
+    def replace_magnitude(match: re.Match[str]) -> str:
+        try:
+            number = Decimal(match.group("number").replace(",", ""))
+            expanded = number * multipliers[match.group("magnitude").casefold()]
+        except (InvalidOperation, KeyError):
+            return match.group(0)
+        if expanded != expanded.to_integral_value():
+            return match.group(0)
+        formatted = f"{int(expanded):,}"
+        if match.group("currency") or match.group("dollars"):
+            return f"${formatted}"
+        return formatted
+
+    formatted = TITLE_COMPACT_DOLLAR_RE.sub(replace_compact_dollars, str(text))
+    formatted = TITLE_MAGNITUDE_RE.sub(replace_magnitude, formatted)
+    return TITLE_PERCENT_RE.sub(lambda match: f"{match.group('number')}%", formatted)
+
+
+def is_title_pronunciation_guide(text: str, match: re.Match[str]) -> bool:
+    body = match.group("body").strip()
+    if not body or NON_PRONUNCIATION_TAG_RE.match(body):
+        return False
+    if not re.fullmatch(r"[A-Za-z][A-Za-z .'-]*", body):
+        return False
+
+    prefix = text[: match.start()].rstrip()
+    if not prefix or prefix.endswith(("-", "–", "—", ":")):
+        return False
+    preceding_match = re.search(r"([A-Za-z0-9][A-Za-z0-9().'-]*)$", prefix)
+    if preceding_match is None:
+        return False
+    preceding = preceding_match.group(1).strip("().'\"")
+    if not preceding:
+        return False
+
+    has_hyphenated_syllables = "-" in body and len(re.findall(r"[A-Za-z]+", body)) >= 2
+    has_stress_case = bool(re.search(r"[A-Z]", body) and re.search(r"[a-z]", body))
+    if has_hyphenated_syllables and (has_stress_case or body.islower()):
+        return True
+
+    # Some acronym guides are rendered as one all-caps phonetic token, such
+    # as DOGE [DOHJ]. Placement after an all-caps source term distinguishes
+    # these from leading item tags such as [FARM].
+    if (
+        re.fullmatch(r"[A-Z]{2,8}", body)
+        and preceding.isupper()
+        and body != re.sub(r"[^A-Z]", "", preceding)
+    ):
+        return True
+    return False
+
+
+def drop_title_pronunciation_guides(text: str) -> str:
+    source = str(text)
+
+    def replace_guide(match: re.Match[str]) -> str:
+        return "" if is_title_pronunciation_guide(source, match) else match.group(0)
+
+    return TITLE_BRACKET_RE.sub(replace_guide, source)
+
+
+def format_question_title(text: str) -> str:
+    return drop_title_pronunciation_guides(format_question_title_numbers(text))
 
 
 def clean_text(value: Optional[str]) -> str:
@@ -479,7 +711,9 @@ def format_generated_header(header: str) -> str:
         if label.strip().lower() == "summary table":
             suffix = title_case_summary_title(suffix)
         formatted = f"{formatted} - {suffix}"
-    return f"{prefix}{ensure_sentence_double_spacing(formatted)}"
+    return format_question_title(
+        f"{prefix}{ensure_sentence_double_spacing(formatted)}"
+    )
 
 def is_int_value(value: str) -> bool:
     return bool(INT_RE.match(value.strip()))
@@ -702,7 +936,7 @@ def vote_certainty_response_rows(q: Question) -> Optional[List[Tuple[str, str]]]
         return None
 
     labels = [normalized_label(opt.text) for opt in q.options]
-    if labels[0] != "absolutely certain" or labels[1] != "somewhat certain":
+    if labels[0] not in {"absolutely certain", "very certain"} or labels[1] != "somewhat certain":
         return None
     if labels[2] not in {
         "not really certain",
@@ -715,7 +949,10 @@ def vote_certainty_response_rows(q: Question) -> Optional[List[Tuple[str, str]]]
     if len(q.options) == 4 and not is_dont_know_label(q.options[3].text):
         return None
 
-    display_labels = ["Absolutely certain", "Somewhat certain", "Not really certain"]
+    first_display_label = (
+        "Very certain" if labels[0] == "very certain" else "Absolutely certain"
+    )
+    display_labels = [first_display_label, "Somewhat certain", "Not really certain"]
     if len(q.options) == 4:
         display_labels.append("(Don't know)")
 
@@ -1128,7 +1365,9 @@ def default_table(q: Question, table_id: str) -> Table:
         remainder = item_remainder(q.item_text)
         if remainder:
             header_text = f"{header_text} - {remainder}"
-    header_text = ensure_sentence_double_spacing(header_text)
+    header_text = format_question_title(
+        ensure_sentence_double_spacing(header_text)
+    )
     t = Table(
         table_id=table_id,
         banner=BANNER,
@@ -1268,12 +1507,16 @@ def placeholder_likelihood_direction(q: Question) -> Optional[str]:
     if not all(is_numeric_placeholder_label(opt.text) for opt in q.options):
         return None
     title_l = clean_text(q.title).lower()
-    if not ("no difference" in title_l or "makes no difference" in title_l):
-        return None
     if not ("vote for" in title_l or "support" in title_l):
         return None
     has_more = "much more likely" in title_l and "somewhat more likely" in title_l
     has_less = "much less likely" in title_l and "somewhat less likely" in title_l
+    if len(q.options) == 6 and has_more and has_less:
+        more_position = title_l.find("much more likely")
+        less_position = title_l.find("much less likely")
+        return "more" if more_position < less_position else "less"
+    if not ("no difference" in title_l or "makes no difference" in title_l):
+        return None
     has_truth_clause = (
         "not true" in title_l
         or ("do not think" in title_l and "true" in title_l)
@@ -1289,6 +1532,48 @@ def placeholder_likelihood_direction(q: Question) -> Optional[str]:
     return None
 
 
+def is_symmetric_likelihood_placeholder(q: Question) -> bool:
+    if len(q.options) != 6:
+        return False
+    if [opt.value for opt in q.options] != ["1", "2", "3", "4", "5", "6"]:
+        return False
+    if not all(is_numeric_placeholder_label(opt.text) for opt in q.options):
+        return False
+    title_l = clean_text(q.title).lower()
+    return all(
+        phrase in title_l
+        for phrase in (
+            "much more likely",
+            "somewhat more likely",
+            "somewhat less likely",
+            "much less likely",
+        )
+    )
+
+
+def placeholder_no_difference_label(q: Question) -> str:
+    segments = [clean_text(q.title), *(clean_text(text) for text in q.instructions)]
+    joined = " ".join(segments)
+    explicitly_bracketed = re.search(
+        r"\[\s*NO\s+DIFF(?:ERENCE)?\s*\]",
+        joined,
+        flags=re.IGNORECASE,
+    )
+    # Flattened survey files can split the marker across fields, leaving
+    # "DIFF]" in the title and "[NO ..." in an instruction.
+    split_open = any(
+        re.search(r"\[\s*NO(?:\s|$)", segment, flags=re.IGNORECASE)
+        for segment in segments
+    )
+    split_close = any(
+        re.search(r"\bDIFF(?:ERENCE)?\s*\]", segment, flags=re.IGNORECASE)
+        for segment in segments
+    )
+    if explicitly_bracketed or (split_open and split_close):
+        return "(No difference)"
+    return "No difference"
+
+
 def is_more_likely_placeholder_battery(q: Question) -> bool:
     return placeholder_likelihood_direction(q) == "more"
 
@@ -1299,6 +1584,7 @@ def is_less_likely_placeholder_battery(q: Question) -> bool:
 
 def likelihood_placeholder_profile(q: Question) -> Optional[BatterySummaryProfile]:
     direction = placeholder_likelihood_direction(q)
+    symmetric = is_symmetric_likelihood_placeholder(q)
     if direction == "more":
         return BatterySummaryProfile(
             first_label="Much more likely",
@@ -1306,7 +1592,7 @@ def likelihood_placeholder_profile(q: Question) -> Optional[BatterySummaryProfil
             opposite_label="less likely",
             first_selector="1",
             total_selector="1,2",
-            opposite_selector="4",
+            opposite_selector="4,5" if symmetric else "4",
             span_selector="1-5" if len(q.options) == 6 else "1-4",
         )
     if direction == "less":
@@ -1316,7 +1602,7 @@ def likelihood_placeholder_profile(q: Question) -> Optional[BatterySummaryProfil
             opposite_label="more likely",
             first_selector="1",
             total_selector="1,2",
-            opposite_selector="4",
+            opposite_selector="4,5" if symmetric else "4",
             span_selector="1-5" if len(q.options) == 6 else "1-4",
             first_minus_label="Not True/More Likely" if len(q.options) == 6 else None,
             first_minus_selector="4,5" if len(q.options) == 6 else None,
@@ -2222,7 +2508,7 @@ def build_communication_summary(digital_q: Question, mail_q: Question, idx: int)
     subject = communication_subject(digital_q) or communication_subject(mail_q) or "Candidate"
     t = Table(
         table_id=table_id,
-        banner=RANKED_SUMMARY_BANNER,
+        banner=SUMMARY_BANNER_OI2,
         header=format_generated_header(f"Summary Table - {subject} Communication"),
         lines=[],
     )
@@ -2234,6 +2520,179 @@ def build_communication_summary(digital_q: Question, mail_q: Question, idx: int)
     t.lines.append(f" Any^Q{digital_q.qid}({digital_yes}) OR Q{mail_q.qid}({mail_yes})^NS")
     t.lines.append(f" None^NOT Q{digital_q.qid}({digital_yes}) AND NOT Q{mail_q.qid}({mail_yes})^NS")
     return t, idx
+
+
+CANDIDATE_NAME_PARTICLES = {
+    "da",
+    "de",
+    "del",
+    "den",
+    "der",
+    "di",
+    "dos",
+    "du",
+    "la",
+    "las",
+    "le",
+    "los",
+    "saint",
+    "st",
+    "van",
+    "von",
+}
+CANDIDATE_NAME_SUFFIXES = {"ii", "iii", "iv", "jr", "sr"}
+
+
+def candidate_communication_descriptor(q: Question) -> Optional[Tuple[str, str]]:
+    """Return (direction, candidate target) for support/attack ad exposure items."""
+    if not is_yes_no_dk_question(q):
+        return None
+    title = normalize_apostrophes(clean_text(q.title))
+    lowered = title.lower()
+    if not re.search(r"\bhave\s+you\b", lowered):
+        return None
+    if not re.search(r"\b(?:ad|ads|advertisement|advertisements|advertising)\b", lowered):
+        return None
+    match = re.search(
+        r"\b(?P<direction>supporting|attacking)\s+(?P<target>.+?)\s*[?.!]*$",
+        title,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    target = clean_text(match.group("target")).strip(" ,.-")
+    if not target:
+        return None
+    return match.group("direction").lower(), target
+
+
+def candidate_communication_target_key(target: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", normalize_apostrophes(target).lower()).strip()
+
+
+def candidate_communication_label(target: str) -> str:
+    cleaned = re.sub(
+        r"\s+(?:for|running\s+for)\s+(?:u\.?s\.?\s+)?"
+        r"(?:congress|senate|governor|mayor)\b.*$",
+        "",
+        clean_text(target),
+        flags=re.IGNORECASE,
+    )
+    words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’.-]*", cleaned)
+    while words and words[-1].lower().strip(".") in CANDIDATE_NAME_SUFFIXES:
+        words.pop()
+    if not words:
+        return clean_text(target).upper()
+    start = len(words) - 1
+    while start > 0 and words[start - 1].lower().strip(".") in CANDIDATE_NAME_PARTICLES:
+        start -= 1
+    return " ".join(words[start:]).upper()
+
+
+def candidate_communication_group(items: List[Question]) -> Optional[CandidateCommunicationGroup]:
+    if len(items) != 4:
+        return None
+    buckets: Dict[str, Dict[str, Question]] = {}
+    targets: Dict[str, str] = {}
+    candidate_order: List[str] = []
+    for q in items:
+        descriptor = candidate_communication_descriptor(q)
+        if descriptor is None:
+            return None
+        direction, target = descriptor
+        key = candidate_communication_target_key(target)
+        if not key:
+            return None
+        if key not in buckets:
+            buckets[key] = {}
+            targets[key] = target
+            candidate_order.append(key)
+        if direction in buckets[key]:
+            return None
+        buckets[key][direction] = q
+    if len(candidate_order) != 2:
+        return None
+    if any(set(buckets[key]) != {"supporting", "attacking"} for key in candidate_order):
+        return None
+    pairs = tuple(
+        CandidateCommunicationPair(
+            label=candidate_communication_label(targets[key]),
+            supporting=buckets[key]["supporting"],
+            attacking=buckets[key]["attacking"],
+        )
+        for key in candidate_order
+    )
+    return CandidateCommunicationGroup(
+        first_qid=items[0].qid,
+        last_qid=items[-1].qid,
+        candidates=(pairs[0], pairs[1]),
+    )
+
+
+def build_candidate_communication_summary(
+    group: CandidateCommunicationGroup,
+    idx: int,
+) -> Tuple[Table, int]:
+    idx += 1
+    first, second = group.candidates
+    qid_range = f"{group.first_qid}-Q{group.last_qid}"
+    table = Table(
+        table_id=make_table_id(qid_range, idx),
+        banner=SUMMARY_BANNER_OI2,
+        header=format_generated_header(
+            f"Q{qid_range}. Summary Table - Candidate Communication"
+        ),
+        lines=[" TOTAL ANSWERING^TN^1"],
+    )
+
+    def yes(q: Question) -> str:
+        return q.options[0].value
+
+    def non_yes(q: Question) -> str:
+        return ",".join(option.value for option in q.options[1:])
+
+    def append_candidate(candidate: CandidateCommunicationPair) -> None:
+        supporting = candidate.supporting
+        attacking = candidate.attacking
+        support_yes = yes(supporting)
+        attack_yes = yes(attacking)
+        table.lines.extend(
+            [
+                f" {candidate.label}^ ^NS,DV",
+                f" Supporting^Q{supporting.qid}({support_yes})^NS",
+                f" Attacking^Q{attacking.qid}({attack_yes})^NS",
+                f" Both^Q{supporting.qid}({support_yes}) AND Q{attacking.qid}({attack_yes})^NS",
+                f" Either^Q{supporting.qid}({support_yes}) OR Q{attacking.qid}({attack_yes})^NS",
+                f" Neither^Q{supporting.qid}({non_yes(supporting)}) AND Q{attacking.qid}({non_yes(attacking)})^NS",
+                " ^ ^NS,DV",
+            ]
+        )
+
+    append_candidate(first)
+    append_candidate(second)
+
+    # Match the established WinCross layout: the second displayed candidate is
+    # referenced first in the combined positive rows, while None remains in
+    # questionnaire order.
+    s_support = second.supporting
+    s_attack = second.attacking
+    f_support = first.supporting
+    f_attack = first.attacking
+    table.lines.extend(
+        [
+            " BOTH CANDIDATES^ ^NS,DV",
+            f" Supporting^Q{s_support.qid}({yes(s_support)}) AND Q{f_support.qid}({yes(f_support)})^NS",
+            f" Attacking^Q{s_attack.qid}({yes(s_attack)}) AND Q{f_attack.qid}({yes(f_attack)})^NS",
+            f" Both^{{Q{s_support.qid}({yes(s_support)}) AND Q{s_attack.qid}({yes(s_attack)})}} "
+            f"AND {{Q{f_support.qid}({yes(f_support)}) AND Q{f_attack.qid}({yes(f_attack)})}}^NS",
+            f" Any^Q{s_support.qid}({yes(s_support)}) OR Q{s_attack.qid}({yes(s_attack)}) "
+            f"OR Q{f_support.qid}({yes(f_support)}) OR Q{f_attack.qid}({yes(f_attack)})^NS",
+            f" None^Q{f_support.qid}({non_yes(f_support)}) AND Q{f_attack.qid}({non_yes(f_attack)}) "
+            f"AND Q{s_support.qid}({non_yes(s_support)}) AND Q{s_attack.qid}({non_yes(s_attack)})^NS",
+            f" hide^Q{s_support.qid}({selector_span([option.value for option in s_support.options])})^HR,NS",
+        ]
+    )
+    return table, idx
 
 
 def split_instruction_info(text: str) -> Optional[Tuple[str, str]]:
@@ -2582,7 +3041,7 @@ def past_vote_display_label(opt: ResponseOption) -> str:
     if is_other_label(opt.text):
         return "Other"
     if is_did_not_vote_label(opt.text):
-        return "Didn't vote"
+        return norm_spaces(strip_parens(opt.text))
     if is_refused_label(opt.text):
         return "(Refused)"
     return norm_spaces(strip_parens(opt.text))
@@ -2594,9 +3053,9 @@ def rule_past_presidential_vote(table: Table, q: Question) -> None:
         return
     if "president" not in title_l:
         return
-    if len(q.options) < 5:
+    if len(q.options) < 4:
         return
-    if not all(is_int_value(opt.value) for opt in q.options[:5]):
+    if not all(is_int_value(opt.value) for opt in q.options):
         return
 
     first_two = q.options[:2]
@@ -2604,7 +3063,7 @@ def rule_past_presidential_vote(table: Table, q: Question) -> None:
     other = next((opt for opt in tail if is_other_label(opt.text)), None)
     did_not_vote = next((opt for opt in tail if is_did_not_vote_label(opt.text)), None)
     refused = next((opt for opt in tail if is_refused_label(opt.text)), None)
-    if other is None or did_not_vote is None or refused is None:
+    if other is None or did_not_vote is None:
         return
     if any(
         is_other_label(opt.text) or is_did_not_vote_label(opt.text) or is_refused_label(opt.text)
@@ -2615,10 +3074,13 @@ def rule_past_presidential_vote(table: Table, q: Question) -> None:
     year = past_presidential_vote_year(q)
     header = f"Q{q.qid}. {year} Vote for President" if year else f"Q{q.qid}. Vote for President"
     set_header_rule(table, "past_presidential_vote", header)
+    table.banner = SUMMARY_BANNER_OI2
 
-    full_rows = [*first_two, other, did_not_vote, refused]
+    full_rows = [*first_two, other, did_not_vote]
+    if refused is not None:
+        full_rows.append(refused)
     voter_rows = [*first_two, other]
-    table.lines = []
+    table.lines = [" TOTAL ANSWERING^TN^1"]
     for row_index, opt in enumerate(full_rows):
         label = past_vote_display_label(opt)
         prefix = f"Q{q.qid} ({opt.value})" if row_index == 0 else f"({opt.value})"
@@ -2627,12 +3089,12 @@ def rule_past_presidential_vote(table: Table, q: Question) -> None:
 
     table.lines.append(" ^ ^NS,DV")
     voter_selector = selector_span([opt.value for opt in voter_rows])
-    denominator_row = len(table.lines) + 1
+    denominator_row = len(full_rows) + 2
     year_label = f"{year} " if year else ""
-    table.lines.append(f" AMONG {year_label}VOTERS^Q{q.qid}({voter_selector})^NS,DV")
-    for row_index, opt in enumerate(voter_rows):
+    table.lines.append(f" AMONG {year_label}VOTERS^({voter_selector})^NS,DV")
+    for opt in voter_rows:
         label = past_vote_display_label(opt)
-        prefix = f"Q{q.qid} ({opt.value})" if row_index == 0 else f"({opt.value})"
+        prefix = f"({opt.value})"
         table.lines.append(f" {label}^{prefix}^{denominator_row},NS")
 
 
@@ -2792,11 +3254,26 @@ def is_education_pattern(q: Question) -> bool:
 
 def rule_persuasion_summary(table: Table, q: Question) -> None:
     if is_more_likely_placeholder_battery(q):
+        no_difference_label = placeholder_no_difference_label(q)
+        if is_symmetric_likelihood_placeholder(q):
+            table.lines = [
+                " TOTAL ANSWERING^TN^1",
+                f" Much more likely^Q{q.qid}(1)^NS",
+                " Somewhat more likely^(2)^NS",
+                f" {no_difference_label}^(3)^NS",
+                " Somewhat less likely^(4)^NS",
+                " Much less likely^(5)^NS",
+                " (Don't know)^(6)^NS",
+                " ^ ^NS,DV",
+                " TOTAL MORE LIKELY^(1-2)^NS",
+                " TOTAL LESS LIKELY^(4-5)^NS",
+            ]
+            return
         lines = [
             " TOTAL ANSWERING^TN^1",
             f" Much more likely^Q{q.qid}(1)^NS",
             " Somewhat more likely^(2)^NS",
-            " No difference^(3)^NS",
+            f" {no_difference_label}^(3)^NS",
             " Less likely^(4)^NS",
         ]
         if len(q.options) == 6:
@@ -2811,11 +3288,26 @@ def rule_persuasion_summary(table: Table, q: Question) -> None:
         table.lines = lines
         return
     if is_less_likely_placeholder_battery(q):
+        no_difference_label = placeholder_no_difference_label(q)
+        if is_symmetric_likelihood_placeholder(q):
+            table.lines = [
+                " TOTAL ANSWERING^TN^1",
+                f" Much less likely^Q{q.qid}(1)^NS",
+                " Somewhat less likely^(2)^NS",
+                f" {no_difference_label}^(3)^NS",
+                " Somewhat more likely^(4)^NS",
+                " Much more likely^(5)^NS",
+                " (Don't know)^(6)^NS",
+                " ^ ^NS,DV",
+                " TOTAL LESS LIKELY^(1-2)^NS",
+                " TOTAL MORE LIKELY^(4-5)^NS",
+            ]
+            return
         lines = [
             " TOTAL ANSWERING^TN^1",
             f" Much less likely^Q{q.qid}(1)^NS",
             " Somewhat less likely^(2)^NS",
-            " No difference^(3)^NS",
+            f" {no_difference_label}^(3)^NS",
             " More likely^(4)^NS",
         ]
         if len(q.options) == 6:
@@ -3188,18 +3680,29 @@ def build_split_summary_context(items: List[Question], labels: List[str]) -> Opt
     }
 
     groups: List[List[int]] = []
-    idx = 0
-    while idx < len(items):
-        if idx not in split_index_by_item:
-            idx += 1
-            continue
-        group = [idx]
-        idx += 1
-        while idx < len(items) and idx in split_index_by_item:
-            group.append(idx)
-            idx += 1
+    group: List[int] = []
+    group_markers: set[str] = set()
+
+    def finish_group() -> None:
+        nonlocal group, group_markers
         if len(group) >= 2:
             groups.append(group)
+        group = []
+        group_markers = set()
+
+    for idx in range(len(items)):
+        marker = split_markers.get(idx)
+        if marker is None:
+            finish_group()
+            continue
+        # A repeated marker starts a new logical split cycle. For example,
+        # A/B/A/B represents two separate A/B combinations, not one four-item
+        # combination.
+        if marker in group_markers:
+            finish_group()
+        group.append(idx)
+        group_markers.add(marker)
+    finish_group()
 
     if not groups:
         return None
@@ -3235,6 +3738,32 @@ def split_summary_item_letters(items: List[Question], group: List[int], labels: 
     return "/".join(letters) if letters else "Split"
 
 
+def split_summary_combo_label(
+    items: List[Question],
+    group: List[int],
+    labels: List[str],
+) -> str:
+    letters = split_summary_item_letters(items, group, labels)
+    subjects: List[str] = []
+    for idx in group:
+        body = re.sub(r"^\s*[a-z]\.\s*", "", labels[idx], flags=re.IGNORECASE)
+        marker = split_marker(items[idx])
+        if marker:
+            body = re.sub(
+                rf"\s*-\s*{re.escape(marker)}\s*$",
+                "",
+                body,
+                flags=re.IGNORECASE,
+            )
+        body = clean_text(body).strip(" -")
+        if not body:
+            return f"{letters}. Combo"
+        subjects.append(body)
+    if subjects and len({subject.casefold() for subject in subjects}) == 1:
+        return f"{letters}. {subjects[0]} - Combo"
+    return f"{letters}. Combo"
+
+
 def append_direct_battery_summary_lines(
     lines: List[str],
     items: List[Question],
@@ -3267,12 +3796,110 @@ def append_direct_battery_summary_lines(
             parts.append(
                 f"{{{split_summary_condition(items[idx], selector, split_index, split_context.variable_name)}}}"
             )
-        combo_label = f"{split_summary_item_letters(items, group, labels)}. Combo"
+        combo_label = split_summary_combo_label(items, group, labels)
         lines.append(f" {combo_label}^{' OR '.join(parts)}^NS")
+
+
+def append_difference_battery_summary_lines(
+    lines: List[str],
+    items: List[Question],
+    labels: List[str],
+    profiles: List[BatterySummaryProfile],
+    minuend_selector: Callable[[BatterySummaryProfile], str],
+    subtrahend_selector: Callable[[BatterySummaryProfile], str],
+    split_context: Optional[SplitSummaryContext],
+) -> None:
+    combo_labels: List[str] = []
+    minuend_positions: List[int] = []
+    subtrahend_positions: List[int] = []
+    combo_minuend_positions: List[int] = []
+    combo_subtrahend_positions: List[int] = []
+    source_position = 0
+
+    for item_idx, (q, label, profile) in enumerate(zip(items, labels, profiles)):
+        source_position += 1
+        minuend_positions.append(source_position)
+        split_index = split_context.split_index_by_item.get(item_idx) if split_context else None
+        variable_name = split_context.variable_name if split_context else "num_cd"
+        condition = split_summary_condition(
+            q,
+            minuend_selector(profile),
+            split_index,
+            variable_name,
+        )
+        suffix = "HR,NS"
+        if split_context and split_index is not None:
+            suffix = f"HR,NS,{split_context.hidden_row_by_split_index[split_index]}"
+        lines.append(f" {label}^{condition}^{suffix}")
+
+    if split_context:
+        for split_index in sorted(split_context.hidden_row_by_split_index):
+            source_position += 1
+            lines.append(f" HIDE^{split_context.variable_name}({split_index})^hr")
+        for group in split_context.groups:
+            parts = [
+                f"{{{split_summary_condition(items[item_idx], minuend_selector(profiles[item_idx]), split_context.split_index_by_item[item_idx], split_context.variable_name)}}}"
+                for item_idx in group
+            ]
+            combo_label = split_summary_combo_label(items, group, labels)
+            source_position += 1
+            combo_labels.append(combo_label)
+            combo_minuend_positions.append(source_position)
+            lines.append(f" {combo_label}^{' OR '.join(parts)}^HR,NS")
+
+    for item_idx, (q, label, profile) in enumerate(zip(items, labels, profiles)):
+        source_position += 1
+        subtrahend_positions.append(source_position)
+        split_index = split_context.split_index_by_item.get(item_idx) if split_context else None
+        variable_name = split_context.variable_name if split_context else "num_cd"
+        condition = split_summary_condition(
+            q,
+            subtrahend_selector(profile),
+            split_index,
+            variable_name,
+        )
+        suffix = "HR,NS"
+        if split_context and split_index is not None:
+            suffix = f"HR,NS,{split_context.hidden_row_by_split_index[split_index]}"
+        lines.append(f" {label}^{condition}^{suffix}")
+
+    if split_context:
+        for group in split_context.groups:
+            parts = [
+                f"{{{split_summary_condition(items[item_idx], subtrahend_selector(profiles[item_idx]), split_context.split_index_by_item[item_idx], split_context.variable_name)}}}"
+                for item_idx in group
+            ]
+            combo_label = split_summary_combo_label(items, group, labels)
+            source_position += 1
+            combo_subtrahend_positions.append(source_position)
+            lines.append(f" {combo_label}^{' OR '.join(parts)}^HR,NS")
+
+    for label, minuend_position, subtrahend_position in zip(
+        labels,
+        minuend_positions,
+        subtrahend_positions,
+    ):
+        lines.append(
+            f" {label}^CALC V{minuend_position} - V{subtrahend_position}^NS"
+        )
+    for label, minuend_position, subtrahend_position in zip(
+        combo_labels,
+        combo_minuend_positions,
+        combo_subtrahend_positions,
+    ):
+        lines.append(
+            f" {label}^CALC V{minuend_position} - V{subtrahend_position}^NS"
+        )
 
 
 def extract_last_name(title: str, item_text: Optional[str]) -> str:
     text = clean_text(title)
+    single_terminated = re.search(
+        r"\bto\s+vote\s+(?:for|against)\s+([A-Z][a-zA-Z'\-\.]+)(?=[,;:?!\.]|$)",
+        text,
+    )
+    if single_terminated:
+        return single_terminated.group(1).strip().rstrip(".")
     name_pattern = r"([A-Z][a-zA-Z'\-\.]+)\s+([A-Z][a-zA-Z'\-\.]+)"
     m = re.search(rf"\breasons?\s+to\s+vote\s+against\s+{name_pattern}\b", text)
     if not m:
@@ -3281,6 +3908,14 @@ def extract_last_name(title: str, item_text: Optional[str]) -> str:
         m = re.search(rf"\bto\s+vote\s+for\s+{name_pattern}\b", text)
     if m:
         return m.group(2).strip()
+    single_name = re.search(
+        r"\bto\s+vote\s+(?:for|against)\s+([A-Z][a-zA-Z'\-\.]+)\b",
+        text,
+    )
+    if single_name:
+        candidate = single_name.group(1).strip()
+        if candidate.casefold() not in {"him", "her", "them", "it"}:
+            return candidate
     item = clean_text(item_text or "")
     item = re.sub(r"\[[^\]]*\]", "", item)
     item = re.sub(r"^[a-z]\.\s*", "", item.strip(), flags=re.IGNORECASE)
@@ -3296,6 +3931,137 @@ def focus_importance_summary_item_label(q: Question) -> str:
     if not letter or not item:
         return ""
     return f"{letter}. {item}"
+
+
+def describes_better_candidates(q: Question) -> Optional[Tuple[str, str]]:
+    title = clean_text(q.title)
+    qtype = normalize_classification_token(q.question_type)
+    has_describes_better_wording = bool(
+        re.search(r"\bdescribes?\s+better\b", title, flags=re.IGNORECASE)
+        or re.search(r"\bbest\s+describes?\b", title, flags=re.IGNORECASE)
+        or re.search(r"\bdescription\s+the\s+best\b", title, flags=re.IGNORECASE)
+    )
+    if qtype != "candidate_trait_forced_choice" and not has_describes_better_wording:
+        return None
+    if [opt.value for opt in q.options] != ["1", "2", "3", "4", "5"]:
+        return None
+
+    def normalized_terminal_label(text: str) -> str:
+        label = clean_text(strip_parens(text)).strip()
+        if label.startswith("[") and label.endswith("]"):
+            label = label[1:-1].strip()
+        return normalize_apostrophes(norm_spaces(label)).lower()
+
+    if normalized_terminal_label(q.options[2].text) != "both":
+        return None
+    if normalized_terminal_label(q.options[3].text) not in {"none", "neither", "neither one"}:
+        return None
+    if not is_dont_know_label(q.options[4].text):
+        return None
+
+    first = clean_text(strip_parens(q.options[0].text))
+    second = clean_text(strip_parens(q.options[1].text))
+    terminal_labels = {
+        "both",
+        "none",
+        "neither",
+        "neither one",
+        "don't know",
+        "dont know",
+        "do not know",
+        "dk",
+    }
+    if (
+        not first
+        or not second
+        or first.lower() == second.lower()
+        or normalized_label(first) in terminal_labels
+        or normalized_label(second) in terminal_labels
+    ):
+        return None
+    return first, second
+
+
+def describes_better_summary_item_label(q: Question, position: int) -> str:
+    letter = item_letter(q.item_text)
+    item = item_remainder_without_brackets(q.item_text)
+    if not letter:
+        qid_match = re.search(r"([a-z])$", clean_text(q.qid), flags=re.IGNORECASE)
+        letter = qid_match.group(1).lower() if qid_match else chr(ord("a") + position)
+    if not item:
+        title = re.sub(
+            rf"^\s*Q?{re.escape(clean_text(q.qid))}\.\s*",
+            "",
+            clean_text(q.title),
+            flags=re.IGNORECASE,
+        )
+        title_match = re.search(
+            r"\bdescribes?\s+better\b\s*(?:[-:]\s*)?(.+)$",
+            title,
+            flags=re.IGNORECASE,
+        )
+        item = clean_text(title_match.group(1)).strip(" -:") if title_match else ""
+    if not item:
+        return ""
+    return f"{letter}. {item}"
+
+
+def build_describes_better_summary_tables(
+    qnum: str,
+    items: List[Question],
+    idx: int,
+) -> Tuple[List[Table], int]:
+    if len(items) <= 1:
+        return [], idx
+    candidate_pairs = [describes_better_candidates(q) for q in items]
+    if any(pair is None for pair in candidate_pairs):
+        return [], idx
+    first_pair = candidate_pairs[0]
+    if any(
+        pair is None
+        or tuple(name.lower() for name in pair) != tuple(name.lower() for name in first_pair)
+        for pair in candidate_pairs
+    ):
+        return [], idx
+
+    labels = [describes_better_summary_item_label(q, pos) for pos, q in enumerate(items)]
+    if any(not label for label in labels):
+        return [], idx
+
+    tables: List[Table] = []
+    for candidate, selector in zip(first_pair, ("1", "2")):
+        idx += 1
+        table = Table(
+            table_id=make_table_id(f"{qnum}sum", idx),
+            banner=RANKED_SUMMARY_BANNER,
+            header=format_generated_header(f"Q{qnum}. Summary Table - Describes {candidate}"),
+            lines=[" TOTAL^TN^0"],
+        )
+        for q, label in zip(items, labels):
+            table.lines.append(f" {label}^Q{q.qid}({selector})^NS")
+        tables.append(table)
+
+    idx += 1
+    difference = Table(
+        table_id=make_table_id(f"{qnum}sum", idx),
+        banner=RANKED_SUMMARY_BANNER,
+        header=format_generated_header(
+            f"Q{qnum}. Summary Table - Describes {first_pair[0]} minus {first_pair[1]}"
+        ),
+        lines=[" TOTAL^TN^0"],
+    )
+    for q, label in zip(items, labels):
+        difference.lines.append(f" {label}^Q{q.qid}(1)^HR,NS")
+    for q, label in zip(items, labels):
+        difference.lines.append(f" {label}^Q{q.qid}(2)^HR,NS")
+    count = len(items)
+    for position, label in enumerate(labels, start=1):
+        difference.lines.append(
+            f" {label}^CALC V{position} - V{count + position}^NS"
+        )
+    difference.lines.append(f" ^Q{items[0].qid}(1-5)^HR,NS")
+    tables.append(difference)
+    return tables, idx
 
 
 def build_focus_importance_summary_tables(
@@ -3351,6 +4117,9 @@ def build_focus_importance_summary_tables(
 def build_battery_summary_tables(qnum: str, items: List[Question], idx: int) -> Tuple[List[Table], int]:
     if len(items) <= 1:
         return [], idx
+    describes_better_tables, idx = build_describes_better_summary_tables(qnum, items, idx)
+    if describes_better_tables:
+        return describes_better_tables, idx
     focus_tables, idx = build_focus_importance_summary_tables(qnum, items, idx)
     if focus_tables:
         return focus_tables, idx
@@ -3438,13 +4207,15 @@ def build_battery_summary_tables(qnum: str, items: List[Question], idx: int) -> 
         lines=[],
     )
     diff.lines.append(" TOTAL^TN^0")
-    for q, label, profile in zip(items, labels, profiles):
-        diff.lines.append(f" {label}^Q{q.qid}({profile.total_selector})^HR,NS")
-    for q, label, profile in zip(items, labels, profiles):
-        diff.lines.append(f" {label}^Q{q.qid}({profile.opposite_selector})^HR,NS")
-    n = len(items)
-    for pos, label in enumerate(labels, start=1):
-        diff.lines.append(f" {label}^CALC V{pos} - V{n + pos}^NS")
+    append_difference_battery_summary_lines(
+        diff.lines,
+        items,
+        labels,
+        profiles,
+        lambda profile: profile.total_selector,
+        lambda profile: profile.opposite_selector or "",
+        split_context,
+    )
     diff.lines.append(f" ^Q{items[0].qid}({sample_profile.span_selector})^HR,NS")
     tables.append(diff)
 
@@ -3474,13 +4245,15 @@ def build_battery_summary_tables(qnum: str, items: List[Question], idx: int) -> 
             lines=[],
         )
         first_diff.lines.append(" TOTAL^TN^0")
-        for q, label, profile in zip(items, labels, profiles):
-            first_diff.lines.append(f" {label}^Q{q.qid}({profile.first_selector})^HR,NS")
-        for q, label, profile in zip(items, labels, profiles):
-            first_diff.lines.append(f" {label}^Q{q.qid}({profile.first_minus_selector})^HR,NS")
-        n = len(items)
-        for pos, label in enumerate(labels, start=1):
-            first_diff.lines.append(f" {label}^CALC V{pos} - V{n + pos}^NS")
+        append_difference_battery_summary_lines(
+            first_diff.lines,
+            items,
+            labels,
+            profiles,
+            lambda profile: profile.first_selector,
+            lambda profile: profile.first_minus_selector or "",
+            split_context,
+        )
         first_diff.lines.append(f" ^Q{items[0].qid}({sample_profile.span_selector})^HR,NS")
         tables.append(first_diff)
 
@@ -3653,12 +4426,139 @@ def route_codes_from_instructions(q: Question, source_qid: str) -> List[str]:
     out: List[str] = []
     for instr in q.instructions:
         text = normalize_apostrophes(norm_spaces(instr))
-        for match in re.finditer(rf"\[IF\s+Q{source}\s*=\s*([0-9,\s]+)\]", text, re.IGNORECASE):
+        for match in re.finditer(rf"\[IF\s+Q{source}\s*=\s*([0-9,\s-]+)\]", text, re.IGNORECASE):
             for token in match.group(1).split(","):
                 value = token.strip()
-                if value and value not in out:
-                    out.append(value)
+                range_match = re.fullmatch(r"(\d+)\s*-\s*(\d+)", value)
+                if range_match:
+                    start = int(range_match.group(1))
+                    end = int(range_match.group(2))
+                    step = 1 if end >= start else -1
+                    values = [str(number) for number in range(start, end + step, step)]
+                else:
+                    values = [value] if value.isdigit() else []
+                for routed_value in values:
+                    if routed_value not in out:
+                        out.append(routed_value)
     return out
+
+
+def is_candidate_consideration_question(q: Question) -> bool:
+    qtype = normalize_classification_token(q.question_type)
+    text = normalize_apostrophes(clean_text(q.title)).casefold()
+    labels = {normalized_label(option.text) for option in q.options}
+    return (
+        qtype == "candidate_consideration"
+        or (
+            "chance you might consider voting" in text
+            and "might consider" in labels
+            and "no chance" in labels
+        )
+    )
+
+
+def candidate_consideration_target_pair(
+    vote_q: Question,
+    followup_q: Question,
+) -> Optional[Tuple[ResponseOption, ResponseOption]]:
+    pairs = get_leans_pairs(vote_q)
+    if not pairs:
+        return None
+
+    routed = set(route_codes_from_instructions(followup_q, vote_q.qid))
+    omitted_pairs = [
+        (candidate, lean)
+        for candidate, lean in pairs
+        if candidate.value not in routed and lean.value not in routed
+    ]
+
+    followup_tokens = candidate_match_tokens(followup_q.title)
+    named_pairs: List[Tuple[ResponseOption, ResponseOption]] = []
+    for candidate, lean in pairs:
+        candidate_tokens = candidate_match_tokens(candidate.text)
+        if candidate_tokens and any(
+            followup_tokens[index : index + len(candidate_tokens)] == candidate_tokens
+            for index in range(len(followup_tokens) - len(candidate_tokens) + 1)
+        ):
+            named_pairs.append((candidate, lean))
+
+    if len(named_pairs) == 1:
+        named_pair = named_pairs[0]
+        if routed and named_pair not in omitted_pairs:
+            return None
+        return named_pair
+    if len(omitted_pairs) == 1:
+        return omitted_pairs[0]
+    return None
+
+
+def is_candidate_consideration_pair(vote_q: Question, followup_q: Question) -> bool:
+    if not is_candidate_consideration_question(followup_q):
+        return False
+    if not is_vote_table_question(vote_q):
+        return False
+    if not route_codes_from_instructions(followup_q, vote_q.qid):
+        return False
+    return candidate_consideration_target_pair(vote_q, followup_q) is not None
+
+
+def find_candidate_consideration_vote_index(
+    questions: List[Question],
+    followup_index: int,
+) -> Optional[int]:
+    followup_q = questions[followup_index]
+    if not is_candidate_consideration_question(followup_q):
+        return None
+    for vote_index in range(followup_index - 1, -1, -1):
+        if is_candidate_consideration_pair(questions[vote_index], followup_q):
+            return vote_index
+    return None
+
+
+def append_candidate_consideration_lines(
+    table: Table,
+    vote_q: Question,
+    followup_q: Question,
+) -> None:
+    target_pair = candidate_consideration_target_pair(vote_q, followup_q)
+    if target_pair is None:
+        return
+    candidate, lean = target_pair
+    might_consider = next(
+        (
+            option
+            for option in followup_q.options
+            if normalized_label(option.text) == "might consider"
+        ),
+        None,
+    )
+    if might_consider is None:
+        return
+
+    target_values = {candidate.value, lean.value}
+    complement_values = [
+        option.value
+        for option in vote_q.options
+        if option.value not in target_values and is_int_value(option.value)
+    ]
+    if not complement_values:
+        return
+
+    target_label = norm_spaces(strip_parens(candidate.text)).upper()
+    target_selector = f"{candidate.value},{lean.value}"
+    complement_selector = selector_span(complement_values)
+    target_ref = q_selector_ref(vote_q, target_selector)
+    complement_ref = q_selector_ref(vote_q, complement_selector)
+    consider_ref = q_selector_ref(followup_q, might_consider.value)
+
+    table.lines.extend(
+        [
+            " ^ ^NS,DV",
+            f" VOTING {target_label}^{target_ref}^NS",
+            f" VOTING FOR/WOULD CONSIDER^{target_ref} OR {consider_ref}^NS",
+            f" not {target_label}^{complement_ref}^HR,NS",
+        ]
+    )
 
 
 def has_routed_party_registration_followup(
@@ -4613,6 +5513,15 @@ def build_tables(questions: List[Question], rules: List[Rule]) -> List[Table]:
     for i in range(len(questions) - 1):
         if is_communication_summary_pair(questions[i], questions[i + 1]):
             communication_pair_indices[i + 1] = i
+    candidate_communication_groups: Dict[int, CandidateCommunicationGroup] = {}
+    i = 0
+    while i <= len(questions) - 4:
+        group = candidate_communication_group(questions[i : i + 4])
+        if group is None:
+            i += 1
+            continue
+        candidate_communication_groups[i + 3] = group
+        i += 4
     second_choice_pair_indices: Dict[int, int] = {}
     for i in range(len(questions)):
         first_choice_index = find_second_choice_first_question_index(questions, i)
@@ -4622,6 +5531,11 @@ def build_tables(questions: List[Question], rules: List[Rule]) -> List[Table]:
     for i in range(1, len(questions)):
         if is_vote_certainty_pair(questions[i - 1], questions[i]):
             vote_certainty_pair_indices[i] = i - 1
+    candidate_consideration_pair_indices: Dict[int, int] = {}
+    for i in range(1, len(questions)):
+        vote_index = find_candidate_consideration_vote_index(questions, i)
+        if vote_index is not None:
+            candidate_consideration_pair_indices[i] = vote_index
     generic_ballot_pair_indices: Dict[int, int] = {}
     generic_ballot_followup_indices: set[int] = set()
     for i in range(len(questions) - 1):
@@ -4694,6 +5608,12 @@ def build_tables(questions: List[Question], rules: List[Rule]) -> List[Table]:
                 )
             if i in vote_certainty_pair_indices:
                 apply_vote_certainty_table(t, questions[vote_certainty_pair_indices[i]], q)
+            if i in candidate_consideration_pair_indices:
+                append_candidate_consideration_lines(
+                    t,
+                    questions[candidate_consideration_pair_indices[i]],
+                    q,
+                )
             if i in second_choice_pair_indices:
                 append_second_choice_combo_lines(t, questions[second_choice_pair_indices[i]], q)
 
@@ -4712,6 +5632,12 @@ def build_tables(questions: List[Question], rules: List[Rule]) -> List[Table]:
             digital_q = questions[communication_pair_indices[i]]
             mail_q = questions[i]
             extra, idx = build_communication_summary(digital_q, mail_q, idx)
+            tables.append(extra)
+        if i in candidate_communication_groups:
+            extra, idx = build_candidate_communication_summary(
+                candidate_communication_groups[i],
+                idx,
+            )
             tables.append(extra)
         if (
             pid_q3_idx is not None
