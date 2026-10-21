@@ -12,11 +12,11 @@ from openpyxl import load_workbook
 
 COLUMN_ROLES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("region", "Region Code", ("regioncode", "region_code", "regnum")),
-    ("gender", "Gender/Sex", ("gendergrp", "gender_group", "gender", "sex")),
-    ("split_ab", "Split A/B", ("num_ab", "split_ab", "s_ab")),
-    ("split_cd", "Split C/D", ("num_cd", "split_cd", "s_cd")),
+    ("gender", "Gender/Sex", ("gendergrp", "gender_group", "hgender", "gender", "sex")),
+    ("split_ab", "Split A/B", ("num_ab", "split_ab", "s_ab", "hsplitab")),
+    ("split_cd", "Split C/D", ("num_cd", "split_cd", "s_cd", "hsplitcd")),
     ("race", "Race", ("race", "racegrp", "qracegrp")),
-    ("stype", "Sample Type/Oversample", ("stype", "sampletype", "sample_type", "oversample")),
+    ("stype", "Sample Type/Oversample", ("stype", "sampletype", "sample_type", "hsampletype", "oversample")),
 )
 COLUMN_ROLE_LABELS = {role: label for role, label, _candidates in COLUMN_ROLES}
 COLUMN_ROLE_CANDIDATES = {role: candidates for role, _label, candidates in COLUMN_ROLES}
