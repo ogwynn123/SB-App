@@ -2258,8 +2258,10 @@ class RepositoryDashboardGUI:
         *,
         phase: str | None = None,
         note: str = "",
+        survey_id: str = "",
     ) -> None:
-        survey_id = self.main_survey_id_var.get().strip() or self.selected_survey_id_var.get().strip()
+        current_survey_id = self.main_survey_id_var.get().strip() or self.selected_survey_id_var.get().strip()
+        survey_id = survey_id.strip() or current_survey_id
         if not survey_id:
             return
         clean_status = str(status or "pending").strip().casefold()
@@ -2268,7 +2270,8 @@ class RepositoryDashboardGUI:
         payload = self._read_workflow_status(survey_id)
         if phase in PHASE_VALUES:
             payload["current_phase"] = phase
-            self.phase_var.set(phase)
+            if survey_id == current_survey_id:
+                self.phase_var.set(phase)
         steps = payload.get("steps", {})
         if not isinstance(steps, dict):
             steps = {}
@@ -2280,6 +2283,21 @@ class RepositoryDashboardGUI:
         }
         self._write_workflow_status(survey_id, payload)
         self._refresh_workflow_home()
+
+    def _record_merge_output(
+        self,
+        survey_id: str,
+        output_path: Path | None,
+        *,
+        phase: str | None = "In-field Daily",
+    ) -> None:
+        # Guided and advanced-editor merges both record here so the workspace
+        # manifest and merge_generated step stay in sync with outputs/merge.
+        if not survey_id:
+            return
+        if output_path is not None and output_path.exists() and output_path.is_file():
+            self._record_workspace_file(survey_id, "merge_output", output_path, copied=False)
+        self._mark_workflow_step("merge_generated", "done", phase=phase, survey_id=survey_id)
 
     def _set_workflow_data_day(self, survey_id: str, day: int) -> None:
         if not survey_id:
@@ -4946,6 +4964,39 @@ class RepositoryDashboardGUI:
         self.results_output_var.set(self._default_results_output_path(survey_id, docx) if docx else "")
         self.results_status_var.set(f"Loaded results defaults from {survey_id}.")
 
+    def _capture_advanced_merge_result(
+        self,
+        survey_id: str,
+        *,
+        opened_at_ts: float,
+        primary_raw: str,
+        secondary_raw: str,
+        output_raw: str,
+        primary_json_raw: str = "",
+        secondary_json_raw: str = "",
+    ) -> Path | None:
+        """Record a merge run made in the advanced editor and save its map."""
+        if not survey_id or not primary_raw or not secondary_raw:
+            return None
+        run_path = self._latest_merge_run_path_for_output(output_raw, primary_raw)
+        if run_path is None:
+            return None
+        try:
+            if run_path.stat().st_mtime < opened_at_ts - 2:
+                return None
+        except OSError:
+            return None
+        self._record_merge_output(survey_id, self._resolve_gui_path(output_raw) if output_raw else None)
+        return self._save_guided_merge_map_from_run(
+            survey_id,
+            primary_raw=primary_raw,
+            secondary_raw=secondary_raw,
+            output_raw=output_raw,
+            command_output=f"Catalog run JSON: {run_path}",
+            primary_json_raw=primary_json_raw,
+            secondary_json_raw=secondary_json_raw,
+        )
+
     def open_advanced_merge_editor(self) -> None:
         survey_id = (
             self.merge_primary_survey_var.get().strip()
@@ -5029,22 +5080,12 @@ class RepositoryDashboardGUI:
                         self.merge_secondary_path_var.set(secondary_after)
                     if output_after:
                         self.merge_output_path_var.set(output_after)
-                    if not survey_id or not primary_after or not secondary_after:
-                        return
-                    run_path = self._latest_merge_run_path_for_output(output_after, primary_after)
-                    if run_path is None:
-                        return
-                    try:
-                        if run_path.stat().st_mtime < opened_at_ts - 2:
-                            return
-                    except OSError:
-                        return
-                    map_path = self._save_guided_merge_map_from_run(
+                    map_path = self._capture_advanced_merge_result(
                         survey_id,
+                        opened_at_ts=opened_at_ts,
                         primary_raw=primary_after,
                         secondary_raw=secondary_after,
                         output_raw=output_after,
-                        command_output=f"Catalog run JSON: {run_path}",
                         primary_json_raw=primary_json_after,
                         secondary_json_raw=secondary_json_after,
                     )
@@ -6737,10 +6778,6 @@ class RepositoryDashboardGUI:
 
         def finish_guided_merge(ok: bool, command_output: str = "") -> None:
             if ok:
-                if output_path:
-                    path = self._resolve_gui_path(output_path)
-                    if path.exists() and path.is_file():
-                        self._record_workspace_file(survey_id, "merge_output", path, copied=False)
                 saved_map_after_run: Path | None = None
                 map_warning = ""
                 try:
@@ -6755,7 +6792,7 @@ class RepositoryDashboardGUI:
                     )
                 except Exception as exc:
                     map_warning = f" Merge map save warning: {exc}"
-                self._mark_workflow_step("merge_generated", "done", phase="In-field Daily")
+                self._record_merge_output(survey_id, self._resolve_gui_path(output_path) if output_path else None)
                 map_note = ""
                 if saved_map_path is not None:
                     map_note = " Reused saved map."

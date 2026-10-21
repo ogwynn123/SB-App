@@ -58,6 +58,24 @@ def _make_app(workspace_root: Path):
     return app
 
 
+class _Var:
+    def __init__(self, value: str = "") -> None:
+        self.value = value
+
+    def get(self) -> str:
+        return self.value
+
+    def set(self, value: str) -> None:
+        self.value = value
+
+
+def _add_workflow_state(app, main_survey_id: str = "") -> None:
+    app.main_survey_id_var = _Var(main_survey_id)
+    app.selected_survey_id_var = _Var("")
+    app.phase_var = _Var("Pre-fielding")
+    app._refresh_workflow_home = lambda: None
+
+
 @contextmanager
 def _local_tmp():
     path = TMP_ROOT / f"run_{uuid.uuid4().hex}"
@@ -187,6 +205,88 @@ class RepositoryDashboardDataIntakeTests(unittest.TestCase):
             )
             self.assertIsNone(reused_path)
             self.assertIn("primary headers changed", note)
+
+    def _write_advanced_merge_run(self, root: Path, survey_id: str) -> tuple[Path, Path, Path]:
+        primary = root / "inputs" / f"{survey_id}_current_data.csv"
+        secondary = root / "inputs" / "NPA3711tsSB.csv"
+        output = root / "workspace" / survey_id / "outputs" / "merge" / f"{survey_id}_day1_ts.csv"
+        _write_csv(primary, [["survnum", "q1", "timeseries"], ["1", "2", "1"]])
+        _write_csv(secondary, [["survnum", "q5", "timeseries"], ["2", "1", "3711"]])
+        _write_csv(output, [["survnum", "q1", "timeseries"], ["2", "1", "3711"], ["1", "2", "1"]])
+        run_path = output.parent / "merge_runs" / "merge_test.json"
+        run_path.parent.mkdir(parents=True, exist_ok=True)
+        run_path.write_text(
+            json.dumps(
+                {
+                    "column_mappings": [
+                        {"primary_col": "survnum", "secondary_col": "survnum", "linked": True},
+                        {"primary_col": "q1", "secondary_col": "q5", "linked": True},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return primary, secondary, output
+
+    def test_advanced_merge_editor_records_output_and_merge_step(self) -> None:
+        with _local_tmp() as root:
+            app = _make_app(root / "workspace")
+            _add_workflow_state(app, main_survey_id="NPA3804")
+            primary, secondary, output = self._write_advanced_merge_run(root, "NPA3804")
+
+            map_path = app._capture_advanced_merge_result(
+                "NPA3804",
+                opened_at_ts=0.0,
+                primary_raw=str(primary),
+                secondary_raw=str(secondary),
+                output_raw=str(output),
+            )
+
+            self.assertIsNotNone(map_path)
+            workspace = root / "workspace" / "NPA3804"
+            manifest = json.loads((workspace / "workspace_manifest.json").read_text(encoding="utf-8"))
+            merge_entries = manifest["files"]["merge_output"]
+            self.assertEqual(merge_entries[0]["path"], str(output))
+            self.assertEqual(merge_entries[0]["workspace_dir"], "outputs/merge")
+            self.assertFalse(merge_entries[0]["copied"])
+            status = json.loads((workspace / "workflow_status.json").read_text(encoding="utf-8"))
+            self.assertEqual(status["steps"]["merge_generated"]["status"], "done")
+            self.assertEqual(status["current_phase"], "In-field Daily")
+            self.assertEqual(app.phase_var.get(), "In-field Daily")
+
+    def test_advanced_merge_editor_ignores_runs_older_than_the_editor(self) -> None:
+        with _local_tmp() as root:
+            app = _make_app(root / "workspace")
+            _add_workflow_state(app, main_survey_id="NPA3804")
+            primary, secondary, output = self._write_advanced_merge_run(root, "NPA3804")
+
+            map_path = app._capture_advanced_merge_result(
+                "NPA3804",
+                opened_at_ts=output.stat().st_mtime + 3600,
+                primary_raw=str(primary),
+                secondary_raw=str(secondary),
+                output_raw=str(output),
+            )
+
+            self.assertIsNone(map_path)
+            workspace = root / "workspace" / "NPA3804"
+            self.assertFalse((workspace / "workspace_manifest.json").exists())
+            self.assertFalse((workspace / "workflow_status.json").exists())
+
+    def test_recording_merge_for_another_survey_keeps_current_phase(self) -> None:
+        with _local_tmp() as root:
+            app = _make_app(root / "workspace")
+            _add_workflow_state(app, main_survey_id="NPA3801")
+            _primary, _secondary, output = self._write_advanced_merge_run(root, "NPA3804")
+
+            app._record_merge_output("NPA3804", output)
+
+            status = json.loads(
+                (root / "workspace" / "NPA3804" / "workflow_status.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(status["steps"]["merge_generated"]["status"], "done")
+            self.assertEqual(app.phase_var.get(), "Pre-fielding")
+            self.assertFalse((root / "workspace" / "NPA3801" / "workflow_status.json").exists())
 
     def test_import_adds_timeseries_and_records_identity_state(self) -> None:
         with _local_tmp() as root:
