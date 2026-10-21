@@ -89,6 +89,29 @@ class SampleAppendTests(unittest.TestCase):
             sa.append_sample_columns(self.data, self.sample, {"csm_score": "CSM_2026"})
         self.assertFalse((self.data.parent / "NPA9999ts_append.csv").exists())
 
+    def test_trended_ids_must_be_unique_within_each_filled_wave(self) -> None:
+        _write(self.data, [
+            ["survnum", "voterbaseid", "timeseries", "CSM_2026"],
+            ["1", "IA-1", "1", ""],
+            ["1", "IA-2", "2", ""],
+            ["2", "IA-2", "2", ""],
+        ])
+        _write(self.sample, [["voterbase_id", "survnum", "csm_score"], ["IA-1", "1", "0.1"], ["IA-2", "2", "0.2"]])
+
+        with self.assertRaisesRegex(sa.AppendError, "repeat within a wave.*timeseries 2 / IA-2"):
+            sa.append_sample_columns(self.data, self.sample, {"csm_score": "CSM_2026"})
+        with self.assertRaisesRegex(sa.AppendError, "restarts in every wave"):
+            sa.append_sample_columns(
+                self.data, self.sample, {"csm_score": "CSM_2026"},
+                data_key="survnum", sample_key="survnum", waves="all",
+            )
+        # One wave at a time, survnum is a valid key.
+        result = sa.append_sample_columns(
+            self.data, self.sample, {"csm_score": "CSM_2026"},
+            data_key="survnum", sample_key="survnum", waves=["1"],
+        )
+        self.assertEqual(result.matched, 1)
+
     def test_never_overwrites_input_and_checks_waves(self) -> None:
         with self.assertRaisesRegex(sa.AppendError, "overwrite the input"):
             sa.append_sample_columns(self.data, self.sample, {"csm_score": "CSM_2026"}, output_path=self.data)

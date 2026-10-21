@@ -28,6 +28,10 @@ class AppendError(ValueError):
     pass
 
 
+# Per-wave respondent numbers; only a (timeseries, ID) pair identifies a row in ts data.
+RESPONDENT_NUMBER_KEYS = {"survnum", "respondent", "respondentid", "respid", "record", "recordid"}
+
+
 @dataclass
 class AppendResult:
     output_path: Path
@@ -147,6 +151,28 @@ def append_sample_columns(
     )
     if result.output_path.resolve() == data_path.resolve():
         raise AppendError("The output would overwrite the input data file; choose another output name.")
+
+    # Trended data restarts respondent numbering each wave: the data ID must be
+    # unique within every filled wave, and respondent-number IDs (survnum) can
+    # only fill one wave at a time.
+    if ts_idx is not None:
+        if len(selected) > 1 and data_key.casefold().replace("_", "") in RESPONDENT_NUMBER_KEYS:
+            raise AppendError(
+                f"`{data_key}` restarts in every wave, so it cannot match a sample across "
+                f"{len(selected)} waves. Use a voter ID, or fill one wave at a time."
+            )
+        pair_counts = Counter(
+            (row[ts_idx].strip(), row[data_key_idx].strip())
+            for row in data_rows
+            if row[ts_idx].strip() in selected and row[data_key_idx].strip()
+        )
+        repeated = sorted(pair for pair, count in pair_counts.items() if count > 1)
+        if repeated:
+            raise AppendError(
+                f"{len(repeated)} `{data_key}` value(s) repeat within a wave, e.g. "
+                + ", ".join(f"timeseries {wave} / {key}" for wave, key in repeated[:5])
+                + ". Nothing was written."
+            )
 
     # Conflicting duplicate IDs only block the run when a respondent being filled has one.
     needed_conflicts = sorted(

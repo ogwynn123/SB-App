@@ -402,12 +402,50 @@ def suggest_key_column(headers: Sequence[str]) -> str | None:
     return None
 
 
-def validate_record_keys(rows: Sequence[dict[str, str]], key_column: str) -> None:
+KEY_PART_SEPARATOR = "|"
+
+
+def record_key_columns(headers: Sequence[str], key_spec: str) -> tuple[str, ...]:
+    """
+    Resolve a record key such as "Survnum" or "Timeseries + Survnum".
+
+    Trended (ts) files restart respondent numbering in every wave, so whenever
+    the file has a Timeseries column the key is the (Timeseries, ID) pair.
+    """
+    parts = [part.strip() for part in str(key_spec or "").split("+") if part.strip()]
+    resolved: list[str] = []
+    for part in parts:
+        column = resolve_column(headers, part)
+        if not column:
+            raise ValueError(f"Key column {part} is missing from the datafile.")
+        resolved.append(column)
+    if not resolved:
+        return ()
+    timeseries_column = resolve_column(headers, "Timeseries")
+    if timeseries_column and timeseries_column not in resolved:
+        resolved.insert(0, timeseries_column)
+    return tuple(resolved)
+
+
+def key_spec_label(key_columns: Sequence[str]) -> str:
+    return " + ".join(key_columns)
+
+
+def record_key_for(row: dict[str, str], key_columns: Sequence[str]) -> str:
+    parts = [normalize_record_key(row.get(column)) for column in key_columns]
+    if not all(parts):
+        return ""
+    return KEY_PART_SEPARATOR.join(parts)
+
+
+def validate_record_keys(rows: Sequence[dict[str, str]], key_columns: str | Sequence[str]) -> None:
+    columns = (key_columns,) if isinstance(key_columns, str) else tuple(key_columns)
+    label = key_spec_label(columns)
     seen: dict[str, int] = {}
     blanks: list[int] = []
     duplicates: list[tuple[str, int, int]] = []
     for row_number, row in enumerate(rows, start=2):
-        key = normalize_record_key(row.get(key_column))
+        key = record_key_for(row, columns)
         if not key:
             blanks.append(row_number)
             continue
@@ -417,12 +455,12 @@ def validate_record_keys(rows: Sequence[dict[str, str]], key_column: str) -> Non
             seen[key] = row_number
     if blanks:
         shown = ", ".join(str(value) for value in blanks[:8])
-        raise ValueError(f"Key column {key_column} is blank on row(s): {shown}")
+        raise ValueError(f"Key column {label} is blank on row(s): {shown}")
     if duplicates:
         shown = ", ".join(
             f"{key} (rows {first}/{second})" for key, first, second in duplicates[:8]
         )
-        raise ValueError(f"Key column {key_column} is not unique: {shown}")
+        raise ValueError(f"Key column {label} is not unique: {shown}")
 
 
 def detect_open_end_questions(headers: Sequence[str]) -> list[QuestionSpec]:
@@ -630,10 +668,11 @@ class CodingSession:
         if not source_path.exists():
             raise ValueError(f"Datafile not found: {source_path}")
         headers, rows = read_tabular(source_path)
-        actual_key = resolve_column(headers, key_column or "") if key_column else suggest_key_column(headers)
-        if not actual_key:
+        key_columns = record_key_columns(headers, key_column or suggest_key_column(headers) or "")
+        if not key_columns:
             raise ValueError("No record key was selected. Choose Survnum or another unique column.")
-        validate_record_keys(rows, actual_key)
+        validate_record_keys(rows, key_columns)
+        actual_key = key_spec_label(key_columns)
         timeseries_column = resolve_column(headers, "Timeseries")
         timeseries_values: list[int | None] = []
         for row_number, row in enumerate(rows, start=2):
@@ -671,6 +710,19 @@ class CodingSession:
                 (str(source_path), fingerprint, imported_at, actual_key, len(rows), json.dumps(headers)),
             )
             dataset_id = int(cursor.lastrowid)
+            if len(key_columns) > 1:
+                # Sessions started with a single ID key: each stored response
+                # already knows its wave, so its key becomes the same pair.
+                migrated = self.connection.execute(
+                    "UPDATE responses SET record_key = CAST(timeseries AS TEXT) || ? || record_key "
+                    "WHERE timeseries IS NOT NULL AND instr(record_key, ?) = 0",
+                    (KEY_PART_SEPARATOR, KEY_PART_SEPARATOR),
+                ).rowcount
+                if migrated:
+                    self.connection.execute(
+                        "INSERT INTO audit_log(changed_at, action, detail) VALUES(?, 'migrate_record_keys', ?)",
+                        (imported_at, json.dumps({"key": actual_key, "responses": migrated})),
+                    )
             self.connection.execute("UPDATE responses SET present=0")
             self.connection.execute(
                 "INSERT INTO meta(key, value) VALUES('timeseries_column', ?) "
@@ -699,7 +751,7 @@ class CodingSession:
                 for row_index, source_row in enumerate(rows):
                     row_number = row_index + 2
                     timeseries = timeseries_values[row_index]
-                    record_key = normalize_record_key(source_row.get(actual_key))
+                    record_key = record_key_for(source_row, key_columns)
                     verbatim = clean_verbatim(source_row.get(spec.text_column))
                     original_codes = tuple(
                         code
@@ -1707,11 +1759,8 @@ class CodingSession:
         if output_path == source_path.resolve():
             raise ValueError("The coded export cannot overwrite the original source datafile.")
         headers, rows = read_tabular(source_path)
-        key_column = str(dataset["key_column"])
-        actual_key = resolve_column(headers, key_column)
-        if not actual_key:
-            raise ValueError(f"Key column {key_column} is missing from the source datafile.")
-        validate_record_keys(rows, actual_key)
+        key_columns = record_key_columns(headers, str(dataset["key_column"]))
+        validate_record_keys(rows, key_columns)
 
         override_rows = self.connection.execute(
             "SELECT r.id, r.record_key, q.name, q.companion_columns_json "
@@ -1733,7 +1782,7 @@ class CodingSession:
         modified_cells = 0
         questions = self.questions()
         for source_row in rows:
-            record_key = normalize_record_key(source_row.get(actual_key))
+            record_key = record_key_for(source_row, key_columns)
             for question in questions:
                 override = overrides.get((question.name.casefold(), record_key))
                 if override is None:

@@ -96,6 +96,8 @@ py -3 sample_append.py "..\Data\NPA3857ts.csv" "..\Sample\NPA3857 Sample wCSM.cs
 - The input file is never changed and every other value is copied as text.
 - An existing output is moved to `Data\Backups\<name>.<timestamp>.csv` first.
 - A sample ID repeated with different values stops the run if a respondent has it.
+- In trended data the data ID must be unique within each filled wave, and
+  `survnum`-style IDs (which restart every wave) can fill only one wave at a time.
 - `<output>_report.md` lists matched/unmatched IDs and values changed.
 
 Checked against the NPA3857 CSM append: the same 600 wave-11 respondents and

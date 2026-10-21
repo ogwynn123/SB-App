@@ -46,6 +46,8 @@ DECLARE_RE = re.compile(r"^\s*DECLARE\s+(.+)$", re.IGNORECASE)
 GLOSSARY_TARGET_RE = re.compile(r"\b(?:ASSIGN|COMPUTE)\s+([A-Za-z0-9_]+)\s*=\s*(.*)$", re.IGNORECASE)
 BARE_VAR_RE = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z0-9_]*[A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_]*\s*\()")
 SEVERITY_ORDER = {"Critical": 0, "Major": 1, "Minor": 2}
+# Respondent numbers restart every wave, so a respondent is (timeseries, ID).
+RESPONDENT_ID_COLUMNS = ("survnum", "respondent", "respondentid", "respid", "record")
 
 
 @dataclass
@@ -229,6 +231,7 @@ def run_checks(inputs: QcInputs) -> QcReport:
     if inputs.data_path and inputs.data_path.exists():
         needed = {var for row in rows for var, _ in row.terms} | {f"q{qid}" for qid in questions}
         needed |= {var for _line, var in glossary.references}
+        needed |= set(RESPONDENT_ID_COLUMNS)
         try:
             data = load_merged_data(inputs.data_path, needed)
         except Exception as exc:
@@ -361,6 +364,24 @@ def run_checks(inputs: QcInputs) -> QcReport:
                         f"Responses {', '.join(uncovered[:10])} occur in the data but no table row includes them.",
                         ", ".join(f"{v}: {question['labels'].get(v, 'not in questionnaire')}" for v in uncovered[:10]),
                         "Add the response to the table or confirm it is excluded on purpose.",
+                    ))
+
+        # 6a. Each respondent appears once: the (timeseries, ID) pair is unique.
+        id_column = next((data.columns[name] for name in RESPONDENT_ID_COLUMNS if name in data.columns), None)
+        if id_column is not None:
+            for wave in data.waves:
+                repeated = sorted(
+                    (value for value, count in data.values[id_column].get(wave, Counter()).items()
+                     if count > 1 and value.strip()),
+                    key=lambda v: (len(v), v),
+                )
+                if repeated:
+                    wave_label = f"timeseries {wave}" if wave else "the file"
+                    report.issues.append(Issue(
+                        "Major", "Confirmed error", inputs.data_path.name, f"{id_column}, {wave_label}",
+                        f"{len(repeated)} `{id_column}` value(s) appear more than once within {wave_label}.",
+                        ", ".join(f"{v} x{data.values[id_column][wave][v]}" for v in repeated[:10]),
+                        "Each (timeseries, ID) pair must identify one respondent; check for duplicated interviews.",
                     ))
 
         # 6. TIMESERIES codes exist in the data.

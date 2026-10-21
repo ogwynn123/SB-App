@@ -17,6 +17,7 @@ Checks:
 | Closed question not used by any table or glossary definition | Major | Human review |
 | Response present in the latest wave but in no table row (skipped for tables that combine questions, such as generic ballot with leans) | Major | Human review |
 | `TIMESERIES` code that is not a wave in the data | Major | Confirmed error |
+| Respondent ID (`survnum`, `Respondent`, ...) repeated within one wave; the same ID in different waves is expected | Major | Confirmed error |
 | Data value not among the questionnaire's codes | Minor | Human review |
 | `TOTAL`/`NET` row including codes no individual row shows | Minor | Human review |
 

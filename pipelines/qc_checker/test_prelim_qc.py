@@ -140,6 +140,20 @@ class PrelimQcTests(unittest.TestCase):
         self.assertTrue(self._find("TIMESERIES code 3 is not a wave"))
         self.assertTrue(self._find("Net includes code(s) 1-3"))
 
+    def test_respondent_is_timeseries_plus_survnum(self) -> None:
+        data = self.root / "ids.csv"
+        rows = [["survnum", "timeseries"], ["101", "1"], ["101", "2"], ["102", "2"], ["102", "2"], ["", "2"], ["", "2"]]
+        with data.open("w", encoding="utf-8", newline="") as handle:
+            csv.writer(handle).writerows(rows)
+
+        issues = qc.run_checks(qc.QcInputs(None, None, data)).issues
+        repeated = [i for i in issues if "appear more than once" in i.description]
+
+        # 101 in waves 1 and 2 is two respondents; 102 twice in wave 2 is a duplicate; blanks are ignored.
+        self.assertEqual(len(repeated), 1)
+        self.assertEqual(repeated[0].location, "survnum, timeseries 2")
+        self.assertEqual(repeated[0].evidence, "102 x2")
+
     def test_report_follows_qc_register_format(self) -> None:
         report = qc.run_checks(self.inputs)
         md_path, csv_path = qc.write_report(report, self.root / "out", "NPA9999")

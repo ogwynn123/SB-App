@@ -19,6 +19,13 @@ Daily appended data can be imported into the same session. Existing overrides
 are preserved by record key. Each import is matched by the selected unique key
 and question, normally `Survnum` plus `qN`.
 
+In trended (`ts`) files `Survnum` restarts every wave, so when the file has a
+`Timeseries` column the record key is the pair `Timeseries + Survnum` (shown as
+`2|1002` for survnum 1002 in wave 2). The pair must be unique; the same survnum
+in different waves is expected. A session saved with a plain `Survnum` key is
+converted on its next import using each response's stored wave, so earlier
+overrides stay with the same respondent.
+
 The first imported file is the session baseline, so all of its responses are
 marked **New**. On later cumulative imports:
 

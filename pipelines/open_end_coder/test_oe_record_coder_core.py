@@ -1,6 +1,7 @@
 import csv
 import shutil
 import sys
+import csv
 import unittest
 import uuid
 from contextlib import contextmanager
@@ -169,7 +170,8 @@ class RecordCoderCoreTests(unittest.TestCase):
                 responses = session.list_responses(question.id, timeseries=latest)
 
             self.assertEqual(latest, 2)
-            self.assertEqual([item.record_key for item in responses], ["1002", "1003"])
+            # Trended data is keyed by the (Timeseries, Survnum) pair.
+            self.assertEqual([item.record_key for item in responses], ["2|1002", "2|1003"])
             self.assertTrue(all(item.timeseries == 2 for item in responses))
 
     def test_timeseries_maximum_includes_rows_without_open_end_answers(self) -> None:
@@ -209,7 +211,7 @@ class RecordCoderCoreTests(unittest.TestCase):
             with core.CodingSession(temp / "coding.sqlite") as session:
                 session.import_data(source)
                 question = session.questions()[0]
-                responses = {item.record_key: item for item in session.list_responses(question.id)}
+                responses = {item.record_key.split("|")[-1]: item for item in session.list_responses(question.id)}
 
                 changed = session.apply_to_matching_text(
                     responses["1002"].id,
@@ -265,7 +267,7 @@ class RecordCoderCoreTests(unittest.TestCase):
             with core.CodingSession(temp / "coding.sqlite") as session:
                 session.import_data(source)
                 question = session.questions()[0]
-                responses = {item.record_key: item for item in session.list_responses(question.id)}
+                responses = {item.record_key.split("|")[-1]: item for item in session.list_responses(question.id)}
                 session.set_assignment(
                     responses["1002"].id,
                     ["98", "14", "15"],
@@ -770,6 +772,68 @@ class RecordCoderCoreTests(unittest.TestCase):
             able_to_mention = next(line for line in text.splitlines() if line.startswith("ABLE TO MENTION^"))
             self.assertNotIn("96", able_to_mention)
             self.assertNotIn("99", able_to_mention)
+
+
+    def _repeated_survnum_rows(self) -> list[dict[str, str]]:
+        return [
+            {"Survnum": "1001", "Timeseries": "1", "q16": "Older answer", "c16_1": "10", "c16_2": "", "c16_3": ""},
+            {"Survnum": "1001", "Timeseries": "2", "q16": "Newer answer", "c16_1": "98", "c16_2": "", "c16_3": ""},
+            {"Survnum": "1002", "Timeseries": "2", "q16": "Another", "c16_1": "98", "c16_2": "", "c16_3": ""},
+        ]
+
+    def test_trended_data_keys_records_by_timeseries_and_survnum(self) -> None:
+        with local_tmp() as temp:
+            source = write_csv(temp / "data.csv", self._repeated_survnum_rows())
+            with core.CodingSession(temp / "coding.sqlite") as session:
+                summary = session.import_data(source, key_column="Survnum")
+                question = session.questions()[0]
+                responses = {item.record_key: item for item in session.list_responses(question.id)}
+                session.set_assignment(responses["2|1001"].id, ["500"])
+                session.upsert_code(question.id, "500", label="New code")
+                session.export_coded_csv(temp / "coded.csv")
+
+            self.assertEqual(summary.key_column, "Timeseries + Survnum")
+            self.assertEqual(set(responses), {"1|1001", "2|1001", "2|1002"})
+            with (temp / "coded.csv").open(encoding="utf-8-sig", newline="") as handle:
+                exported = [(row["Timeseries"], row["Survnum"], row["c16_1"]) for row in csv.DictReader(handle)]
+            self.assertEqual(exported, [("1", "1001", "10"), ("2", "1001", "500"), ("2", "1002", "98")])
+
+    def test_trended_data_rejects_repeated_pair_within_a_wave(self) -> None:
+        rows = self._repeated_survnum_rows()
+        rows[2]["Survnum"] = "1001"
+        with local_tmp() as temp:
+            source = write_csv(temp / "data.csv", rows)
+            with core.CodingSession(temp / "coding.sqlite") as session:
+                with self.assertRaisesRegex(ValueError, r"Timeseries \+ Survnum is not unique: 2\|1001"):
+                    session.import_data(source)
+
+    def test_single_key_session_is_converted_to_pairs_with_overrides_kept(self) -> None:
+        rows = [row for row in self._repeated_survnum_rows() if row["Survnum"] == "1002" or row["Timeseries"] == "1"]
+        with local_tmp() as temp:
+            database = temp / "coding.sqlite"
+            source = write_csv(temp / "data.csv", rows)
+            with core.CodingSession(database) as session:
+                session.import_data(source)
+                question = session.questions()[0]
+                # Simulate a session saved before pair keys: plain Survnum keys.
+                session.connection.execute("UPDATE responses SET record_key = substr(record_key, instr(record_key, '|') + 1)")
+                session.connection.execute("UPDATE datasets SET key_column='Survnum'")
+                session.connection.commit()
+                old = {item.record_key: item for item in session.list_responses(question.id)}
+                self.assertEqual(set(old), {"1001", "1002"})
+                session.set_assignment(old["1002"].id, ["500"])
+
+            source = write_csv(temp / "data2.csv", self._repeated_survnum_rows())
+            with core.CodingSession(database) as session:
+                summary = session.import_data(source, key_column="Survnum")
+                question = session.questions()[0]
+                responses = {item.record_key: item for item in session.list_responses(question.id)}
+
+            self.assertEqual(set(responses), {"1|1001", "2|1001", "2|1002"})
+            self.assertEqual(summary.new_response_count, 1)
+            self.assertEqual(summary.preserved_override_count, 1)
+            self.assertEqual(responses["2|1002"].final_codes, ("500",))
+            self.assertFalse(responses["2|1001"].override_active)
 
 
 if __name__ == "__main__":

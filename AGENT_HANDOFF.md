@@ -52,6 +52,23 @@ shortcuts target each pipeline's normal `dist\` EXE.
 
 Still run `git status --short` before editing and preserve any user work.
 
+## Respondent identity rule
+
+`survnum` (and other respondent numbers such as `Respondent`) restart in every
+wave, so in trended (`ts`) data a respondent is identified only by the pair
+(`timeseries`, `survnum`). Measured on real files: NPA3873ts repeats 388
+survnums across 2 waves, NPA3869 508 across 10 waves, with no repeated pairs.
+Code that matches respondents must use the pair whenever a `timeseries`
+column exists:
+
+- Dashboard data intake: blocks duplicate (survnum, timeseries) pairs.
+- Open-End Coder: record key is `Timeseries + <ID>` (stored as `2|1002`);
+  sessions saved with a single key are converted in place on the next import,
+  using each response's stored wave, so overrides stay attached.
+- Sample Append: the data ID must be unique within each filled wave, and
+  respondent-number IDs cannot fill several waves at once.
+- Preliminary QC: flags an ID repeated within a wave (blank IDs ignored).
+
 ## System model
 
 SurveyPlatform has three layers:

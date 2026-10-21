@@ -426,9 +426,9 @@ def _open_end_coder(context: launcher.ProjectContext) -> StepOutcome:
         latest = session.max_timeseries()
         _require(latest == 2, f"Expected latest Timeseries 2; got {latest!r}.")
         responses = {item.record_key: item for item in session.list_responses(question.id, timeseries=latest)}
-        _require(set(responses) == {"2002", "2003"}, "Latest-wave response filter is wrong.")
-        session.set_assignment(responses["2002"].id, ["500"])
-        session.set_assignment(responses["2003"].id, ["42"])
+        _require(set(responses) == {"2|2002", "2|2003"}, "Latest-wave response filter is wrong.")
+        session.set_assignment(responses["2|2002"].id, ["500"])
+        session.set_assignment(responses["2|2003"].id, ["42"])
         session.upsert_code(
             question.id,
             "500",
