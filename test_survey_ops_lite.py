@@ -271,6 +271,29 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertIn("NPA9992", context.warnings()[0])
         self.assertIn("NPA9991", context.warnings()[0])
 
+    def test_project_startup_accepts_final_followed_by_a_date(self) -> None:
+        root = self._case_dir() / "NPA9994 Track Week 2"
+        qst = root / "Qst"
+        qst.mkdir(parents=True)
+        files = {
+            "NPA9994 Track Week 2 Draft 1.docx": 100,
+            "NPA9994 Track Week 2 Final 10.19.26.docx": 200,
+            "NPA9994 Track Week 2 Final - Phone.docx": 300,
+            "NPA9994 Track Week 2 Final - SMS.docx": 400,
+            "NPA9994 SPANISH FINAL 10.19.26.docx": 500,
+        }
+        for name, stamp in files.items():
+            (qst / name).write_bytes(name.encode())
+            os.utime(qst / name, (stamp, stamp))
+        context = core.ProjectContext.from_values("NPA9994", root)
+
+        self.assertEqual(core.find_latest_final_docx(context), qst / "NPA9994 Track Week 2 Final 10.19.26.docx")
+
+        for stem in ("X FINAL 9.30.26", "X Final 10-19-2026", "X Final_20261019", "X Final", "X FINALFINAL"):
+            self.assertTrue(core.is_final_questionnaire_name(stem), stem)
+        for stem in ("X Final - Phone", "X Spanish Final", "X Semifinal", "X Final 2", "X Finalized"):
+            self.assertFalse(core.is_final_questionnaire_name(stem), stem)
+
     def _write_csv(self, path: Path, rows: list[list[str]]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(",".join(row) for row in rows) + "\n", encoding="utf-8")

@@ -155,7 +155,8 @@ Launcher:
 Select the survey ID and project root, then open a specialist workflow. The
 `Project Startup` workflow creates the standard `Job`, `Data`, `Data\Partial`,
 and `Job\Table Gen` paths without replacing existing folders, then copies the
-newest `Qst` DOCX ending in `Final` into Table Gen. WinCross uses that output
+newest `Qst` DOCX ending in `Final` (optionally followed by a date such as
+`Final 10.19.26`; Spanish versions are skipped) into Table Gen. WinCross uses that output
 folder and receives the selected survey context. See `docs\SURVEY_LAUNCHER.md`
 for the folder and manifest contract.
 

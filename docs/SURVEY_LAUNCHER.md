@@ -55,7 +55,9 @@ missing folders in this layout:
 ```
 
 Existing folders and their contents are preserved. Project Startup recursively
-searches `Qst` for DOCX filenames whose stem ends in `Final`, selects the most
+searches `Qst` for DOCX filenames whose stem ends in `Final`, optionally followed by
+a date (`Final 10.19.26`, `FINAL 9.30.26`, `Final 10-19-2026`), skips Spanish
+versions, selects the most
 recently modified match, and copies it into `Job\Table Gen`. It updates an older
 copy, leaves an identical copy alone, and does not overwrite a newer differing
 Table Gen copy.

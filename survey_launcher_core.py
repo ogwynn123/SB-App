@@ -335,6 +335,20 @@ class ProjectStartupResult:
     check: ProjectStartupCheck
 
 
+# "... Final", optionally followed by a date: "Final 10.19.26", "FINAL 9.30.26",
+# "Final 10-19-2026", "Final_20261019". Phone/SMS versions end in another word.
+FINAL_QUESTIONNAIRE_RE = re.compile(
+    r"(?<![a-z])(?:final)+(?:[\s_-]+(?:\d{1,2}[./_-]\d{1,2}(?:[./_-]\d{2,4})?|\d{6}|\d{8}))?$",
+    re.IGNORECASE,
+)
+NON_ENGLISH_QUESTIONNAIRE_RE = re.compile(r"\b(?:spanish|espa[nñ]ol)\b", re.IGNORECASE)
+
+
+def is_final_questionnaire_name(stem: str) -> bool:
+    stem = stem.strip()
+    return bool(FINAL_QUESTIONNAIRE_RE.search(stem)) and not NON_ENGLISH_QUESTIONNAIRE_RE.search(stem)
+
+
 def find_latest_final_docx(context: ProjectContext) -> Path | None:
     qst = resolve_relative_directory(context.project_root, ("Qst",))
     if qst is None:
@@ -347,7 +361,7 @@ def find_latest_final_docx(context: ProjectContext) -> Path | None:
                 path.is_file()
                 and path.suffix.casefold() == ".docx"
                 and not path.name.startswith("~$")
-                and path.stem.rstrip().casefold().endswith("final")
+                and is_final_questionnaire_name(path.stem)
             ):
                 candidates.append(path)
     except OSError:
