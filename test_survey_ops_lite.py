@@ -271,6 +271,61 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertIn("NPA9992", context.warnings()[0])
         self.assertIn("NPA9991", context.warnings()[0])
 
+    def _write_csv(self, path: Path, rows: list[list[str]]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(",".join(row) for row in rows) + "\n", encoding="utf-8")
+
+    def test_launcher_lists_every_daily_tool(self) -> None:
+        keys = [tool.key for tool in core.TOOLS]
+        for key in (
+            "project_startup", "wincross", "table_merger", "sample_append", "open_end_coder", "quota_checker",
+            "trend_table_updater", "auto_results", "prelim_qc", "dashboard", "browser_workbench",
+        ):
+            self.assertIn(key, keys)
+        self.assertEqual(core.resolve_tool_entry(core.TOOL_BY_KEY["dashboard"]).name, "survey_platform_gui.py")
+        self.assertEqual(core.resolve_tool_entry(core.TOOL_BY_KEY["browser_workbench"]).name, "run_survey_browser.bat")
+
+    def test_sample_append_picks_newest_timeseries_and_remembers_columns(self) -> None:
+        root = self._case_dir() / "NPA9997 Track"
+        data_dir = root / "Data"
+        self._write_csv(data_dir / "NPA9997.csv", [["voterbaseid", "score"], ["A", ""]])
+        self._write_csv(data_dir / "NPA9997ts.csv", [["voterbaseid", "timeseries", "score"], ["A", "2", ""]])
+        self._write_csv(data_dir / "NPA9997tsSB.csv", [["voterbaseid", "timeseries", "score"], ["A", "2", ""]])
+        self._write_csv(data_dir / "NPA9997tsSB_append.csv", [["x"], ["1"]])
+        os.utime(data_dir / "NPA9997ts.csv", (100, 100))
+        os.utime(data_dir / "NPA9997tsSB.csv", (200, 200))
+        os.utime(data_dir / "NPA9997tsSB_append.csv", (300, 300))
+        sample = root / "Sample" / "sample.csv"
+        self._write_csv(sample, [["voterbase_id", "csm"], ["A", "0.7"]])
+        context = core.ProjectContext.from_values("NPA9997", root)
+
+        data = core.default_append_data_file(context)
+        self.assertEqual(data, data_dir / "NPA9997tsSB.csv")
+
+        result = core.run_sample_append(context, data, sample, "score=csm")
+
+        self.assertEqual(result.changed["score"], 1)
+        self.assertEqual(core.remembered_append_columns(context), "score=csm")
+        self.assertEqual(
+            (data_dir / "NPA9997tsSB.csv").read_text(encoding="utf-8").splitlines()[1], "A,2,"
+        )
+
+    def test_prelim_qc_writes_report_under_job_qc(self) -> None:
+        root = self._case_dir() / "NPA9996 Track"
+        (root / "Job").mkdir(parents=True)
+        (root / "Job" / "NPA9996.job").write_text(
+            "[TABLES]\nTQ1^1\n OV,OI\n Q1. Test\n Yes^Q1(1)^NS\n Ghost^MISSING(1)^NS\n", encoding="utf-8"
+        )
+        self._write_csv(root / "Data" / "NPA9996.csv", [["q1"], ["1"]])
+        context = core.ProjectContext.from_values("NPA9996", root)
+
+        report_path, counts, inputs = core.run_prelim_qc(context)
+
+        self.assertEqual(report_path.parent.parent, root / "Job" / "QC")
+        self.assertEqual(counts.get("Critical"), 1)
+        self.assertEqual(inputs.data_path.name, "NPA9996.csv")
+        self.assertIn("prelim_qc", json.loads(context.manifest_path.read_text(encoding="utf-8"))["tools"])
+
 
 if __name__ == "__main__":
     unittest.main()

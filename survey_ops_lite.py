@@ -21,16 +21,27 @@ from survey_launcher_core import (
     TOOLS,
     ProjectContext,
     ToolSpec,
+    default_append_data_file,
     inspect_project_startup,
     load_launcher_settings,
     normalize_survey_id,
     record_tool_launch,
     remember_project,
+    remembered_append_columns,
     resolve_tool_entry,
+    run_prelim_qc,
     run_project_startup,
+    run_sample_append,
     save_launcher_settings,
+    stale_packaged_apps,
     launch_tool,
 )
+
+ACTION_BUTTON_LABELS = {
+    "project_startup": "Run Startup",
+    "sample_append": "Append...",
+    "prelim_qc": "Run QC",
+}
 
 
 def open_path(path: Path) -> None:
@@ -94,6 +105,12 @@ class SurveyLauncherApp:
         self._refresh_recent_projects()
         self._refresh_tools()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        stale = stale_packaged_apps(self.app_root)
+        if stale:
+            self.log(
+                f"Out of date: {', '.join(stale)} (the app is older than its source). "
+                "Run rebuild_apps.bat in the SurveyPlatform folder to update."
+            )
 
     def _build_ui(self) -> None:
         self.root.title("Survey Launcher")
@@ -240,6 +257,10 @@ class SurveyLauncherApp:
                 if tool.internal_action == "project_startup":
                     folder = "."
                     status = inspect_project_startup(self.context).status_label
+                elif tool.internal_action:
+                    existing = self.context.existing_work_dir(tool)
+                    folder = self.context.relative_display(existing) if existing is not None else folder
+                    status = "Ready" if existing is not None else "Run Project Startup"
                 else:
                     existing = self.context.existing_work_dir(tool)
                     if existing is not None:
@@ -269,7 +290,7 @@ class SurveyLauncherApp:
 
     def _tool_selected(self, _event: tk.Event[Any] | None = None) -> None:
         tool = self.selected_tool()
-        label = "Run Startup" if tool is not None and tool.internal_action else "Open Tool"
+        label = ACTION_BUTTON_LABELS.get(tool.internal_action, "Open Tool") if tool is not None else "Open Tool"
         self.launch_button.configure(text=label)
 
     def _require_context(self) -> ProjectContext | None:
@@ -292,6 +313,12 @@ class SurveyLauncherApp:
             return
         if tool.internal_action == "project_startup":
             self.run_project_startup(context, tool)
+            return
+        if tool.internal_action == "sample_append":
+            self.open_sample_append(context)
+            return
+        if tool.internal_action == "prelim_qc":
+            self.run_prelim_qc(context)
             return
         try:
             _process, work_dir, _command = launch_tool(context, tool, app_root=self.app_root)
@@ -341,6 +368,110 @@ class SurveyLauncherApp:
             f"{docx_message}\n\n"
             f"Status: {result.check.status_label}",
         )
+
+    def run_prelim_qc(self, context: ProjectContext) -> None:
+        self.status_var.set("Running preliminary QC...")
+        self.root.update_idletasks()
+        try:
+            report_path, counts, inputs = run_prelim_qc(context, app_root=self.app_root)
+        except Exception as exc:
+            self.status_var.set("Preliminary QC failed")
+            messagebox.showerror("Preliminary QC", f"The QC check failed:\n{exc}")
+            return
+        for label, path in (
+            ("Job/TABLES", inputs.tables_path),
+            ("Questionnaire JSON", inputs.questionnaire_json),
+            ("Data", inputs.data_path),
+        ):
+            self.log(f"QC input {label}: {path or 'not found'}")
+        summary = (
+            f"Critical {counts.get('Critical', 0)}, Major {counts.get('Major', 0)}, Minor {counts.get('Minor', 0)}"
+        )
+        self.log(f"Preliminary QC: {summary}. Report: {report_path}")
+        self.status_var.set(f"Preliminary QC: {summary}")
+        self._refresh_tools()
+        try:
+            open_path(report_path)
+        except Exception:
+            pass
+
+    def open_sample_append(self, context: ProjectContext) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Sample Append - {context.survey_id}")
+        dialog.transient(self.root)
+        dialog.resizable(True, False)
+        default_data = default_append_data_file(context)
+        data_var = tk.StringVar(value=str(default_data or ""))
+        sample_var = tk.StringVar(value="")
+        columns_var = tk.StringVar(value=remembered_append_columns(context))
+        waves_var = tk.StringVar(value="latest")
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(1, weight=1)
+
+        def browse(var: tk.StringVar, title: str, start: Path) -> None:
+            chosen = filedialog.askopenfilename(
+                parent=dialog, title=title, initialdir=str(start),
+                filetypes=[("Data files", "*.csv *.xlsx"), ("All files", "*.*")],
+            )
+            if chosen:
+                var.set(chosen)
+
+        sample_dir = next(
+            (p for p in (context.project_root / "Sample", context.project_root / "Data") if p.is_dir()),
+            context.project_root,
+        )
+        rows = (
+            ("Data file", data_var, lambda: browse(data_var, "Respondent data", Path(data_var.get() or context.project_root).parent)),
+            ("Sample file", sample_var, lambda: browse(sample_var, "Sample file", sample_dir)),
+        )
+        for row, (label, var, command) in enumerate(rows):
+            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
+            ttk.Entry(frame, textvariable=var, width=70).grid(row=row, column=1, sticky="ew", pady=4)
+            ttk.Button(frame, text="Browse", command=command).grid(row=row, column=2, padx=(8, 0), pady=4)
+        ttk.Label(frame, text="Columns").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(frame, textvariable=columns_var).grid(row=2, column=1, columnspan=2, sticky="ew", pady=4)
+        ttk.Label(frame, text="DATA_COLUMN=SAMPLE_COLUMN, comma separated (e.g. Bohannan_CSM_2026=csm_score)",
+                  foreground="#555").grid(row=3, column=1, columnspan=2, sticky="w")
+        ttk.Label(frame, text="Waves").grid(row=4, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Combobox(frame, textvariable=waves_var, values=("latest", "all"), width=12).grid(row=4, column=1, sticky="w", pady=4)
+        ttk.Label(frame, text="The data file is never changed; output is <data>_append.csv with a report.",
+                  foreground="#555").grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        def run() -> None:
+            data_path = Path(data_var.get().strip())
+            sample_path = Path(sample_var.get().strip())
+            if not data_path.is_file() or not sample_path.is_file():
+                messagebox.showerror("Sample Append", "Choose an existing data file and sample file.", parent=dialog)
+                return
+            try:
+                result = run_sample_append(
+                    context, data_path, sample_path, columns_var.get(),
+                    waves=waves_var.get().strip() or "latest", app_root=self.app_root,
+                )
+            except Exception as exc:
+                messagebox.showerror("Sample Append", f"Nothing was written:\n{exc}", parent=dialog)
+                return
+            changed = ", ".join(f"{column} {count}" for column, count in result.changed.items()) or "no values"
+            self.log(
+                f"Sample append wave(s) {', '.join(result.waves) or 'all'}: matched {result.matched}, "
+                f"unmatched {result.unmatched}; changed {changed}. Output: {result.output_path}"
+            )
+            if result.backup_path:
+                self.log(f"Previous output moved to {result.backup_path}")
+            dialog.destroy()
+            messagebox.showinfo(
+                "Sample Append",
+                f"Output: {result.output_path}\nMatched {result.matched}, unmatched {result.unmatched}\n"
+                f"Changed: {changed}\n\nReport: {result.report_path}",
+            )
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=6, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
+        ttk.Button(buttons, text="Append", command=run).pack(side=tk.RIGHT, padx=(0, 8))
+        dialog.grab_set()
 
     def open_project(self) -> None:
         context = self._require_context()

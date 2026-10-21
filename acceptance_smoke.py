@@ -237,6 +237,8 @@ def _launcher_contract(context: launcher.ProjectContext, run_dir: Path) -> StepO
         "trend_table_updater": context.project_root / "Job" / "Table Gen",
         "auto_results": context.project_root / "Data",
         "tomas": context.project_root / "Qst" / "Spanish Ver",
+        "dashboard": context.project_root,
+        "browser_workbench": context.project_root,
     }
     for tool in launcher.TOOLS:
         if tool.internal_action:
@@ -260,7 +262,8 @@ def _launcher_contract(context: launcher.ProjectContext, run_dir: Path) -> StepO
     _require(_scoped_launch_path(str(outside), context.project_root) == "", "Cross-project merger path was retained.")
 
     manifest = json.loads(context.manifest_path.read_text(encoding="utf-8"))
-    expected_tools = {tool.key for tool in launcher.TOOLS}
+    # Internal actions other than Project Startup record themselves only when run.
+    expected_tools = {tool.key for tool in launcher.TOOLS if not tool.internal_action} | {"project_startup"}
     _require(set(manifest["tools"]) == expected_tools, "Project manifest is missing launcher entries.")
     return StepOutcome(
         f"Validated {len(entries)} tool entrypoints, work folders, environment values, and merger path isolation.",
@@ -531,7 +534,8 @@ def _gui_smoke(context: launcher.ProjectContext, wait_seconds: float) -> StepOut
     started: list[str] = []
     left_open: list[str] = []
     for tool in launcher.TOOLS:
-        if tool.internal_action:
+        # Only packaged specialist apps; source-run tools (dashboard, browser workbench) are skipped.
+        if tool.internal_action or not any(parts[-1].casefold().endswith(".exe") for parts in tool.entry_candidates):
             continue
         work_dir = context.ensure_work_dir(tool)
         command = launcher.build_tool_command(context, tool, work_dir, app_root=BASE_DIR)

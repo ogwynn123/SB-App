@@ -142,6 +142,15 @@ TOOLS: tuple[ToolSpec, ...] = (
         create_on_launch=False,
     ),
     ToolSpec(
+        key="sample_append",
+        label="Sample Append",
+        create_work_dir=("Data",),
+        existing_work_dirs=(("Data",),),
+        entry_candidates=(),
+        create_on_launch=False,
+        internal_action="sample_append",
+    ),
+    ToolSpec(
         key="open_end_coder",
         label="Open-End Coder",
         create_work_dir=("Data",),
@@ -199,6 +208,15 @@ TOOLS: tuple[ToolSpec, ...] = (
         create_on_launch=False,
     ),
     ToolSpec(
+        key="prelim_qc",
+        label="Preliminary QC",
+        create_work_dir=("Job",),
+        existing_work_dirs=(("Job",),),
+        entry_candidates=(),
+        create_on_launch=False,
+        internal_action="prelim_qc",
+    ),
+    ToolSpec(
         key="tomas",
         label="TOMAS",
         create_work_dir=("Qst", "Spanish Ver"),
@@ -207,6 +225,22 @@ TOOLS: tuple[ToolSpec, ...] = (
             ("pipelines", "thomas_in_a_box", "dist", "tomas_pipeline_gui.exe"),
             ("pipelines", "thomas_in_a_box", "tomas_pipeline_gui.py"),
         ),
+    ),
+    ToolSpec(
+        key="dashboard",
+        label="Repository & Question Browser",
+        create_work_dir=None,
+        existing_work_dirs=(),
+        entry_candidates=(("survey_platform_gui.py",),),
+        create_on_launch=False,
+    ),
+    ToolSpec(
+        key="browser_workbench",
+        label="Browser Workbench",
+        create_work_dir=None,
+        existing_work_dirs=(),
+        entry_candidates=(("run_survey_browser.bat",),),
+        create_on_launch=False,
     ),
 )
 
@@ -586,3 +620,90 @@ def remember_project(
     settings["last_project_root"] = str(context.project_root)
     save_launcher_settings(settings, settings_path)
     return settings
+
+
+def _import_pipeline_module(folder: str, module: str, app_root: Path = APP_ROOT) -> Any:
+    path = str(app_root / "pipelines" / folder)
+    if path not in sys.path:
+        sys.path.insert(0, path)
+    return __import__(module)
+
+
+def default_append_data_file(context: ProjectContext) -> Path | None:
+    """Newest Data/NPA####ts*.csv (falls back to NPA####*.csv), skipping earlier append outputs."""
+    data_dir = resolve_relative_directory(context.project_root, ("Data",))
+    if data_dir is None:
+        return None
+    pattern = re.compile(rf"^{re.escape(context.survey_id)}[A-Za-z0-9_]*$", re.IGNORECASE)
+    candidates = [
+        p for p in data_dir.glob("*.csv")
+        if pattern.match(p.stem) and not p.stem.casefold().endswith("_append")
+    ]
+    timeseries = [p for p in candidates if p.stem.casefold().startswith(f"{context.survey_id.casefold()}ts")]
+    pool = timeseries or candidates
+    return max(pool, key=lambda p: p.stat().st_mtime) if pool else None
+
+
+def remembered_append_columns(context: ProjectContext) -> str:
+    tool = load_manifest(context).get("tools", {}).get("sample_append", {})
+    return str(tool.get("columns", "")) if isinstance(tool, dict) else ""
+
+
+def run_sample_append(
+    context: ProjectContext,
+    data_path: Path,
+    sample_path: Path,
+    columns_text: str,
+    *,
+    waves: str = "latest",
+    app_root: Path = APP_ROOT,
+) -> Any:
+    """Run the sample append for this project and remember the column mapping."""
+    sample_append = _import_pipeline_module("table_merger", "sample_append", app_root)
+    columns: dict[str, str] = {}
+    for item in re.split(r"[,;\n]+", columns_text):
+        data_col, _, sample_col = item.strip().partition("=")
+        if data_col.strip() and sample_col.strip():
+            columns[sample_col.strip()] = data_col.strip()
+    if not columns:
+        raise ValueError("Enter at least one DATA_COLUMN=SAMPLE_COLUMN pair.")
+    wave_arg: str | list[str] = waves if waves in {"latest", "all"} else [w.strip() for w in waves.split(",") if w.strip()]
+    result = sample_append.append_sample_columns(data_path, sample_path, columns, waves=wave_arg)
+    manifest = load_manifest(context)
+    tools = manifest.setdefault("tools", {})
+    tools["sample_append"] = {
+        "work_dir": context.relative_display(data_path.parent),
+        "last_launched_at": utc_now(),
+        "columns": ", ".join(f"{data}={sample}" for sample, data in columns.items()),
+    }
+    save_manifest(context, manifest)
+    return result
+
+
+def run_prelim_qc(context: ProjectContext, *, app_root: Path = APP_ROOT) -> tuple[Path, dict[str, int], Any]:
+    """Run the preliminary QC for this project into Job/QC/<timestamp> and return the report path."""
+    prelim_qc = _import_pipeline_module("qc_checker", "prelim_qc", app_root)
+    inputs = prelim_qc.find_inputs(context.project_root, context.survey_id)
+    report = prelim_qc.run_checks(inputs)
+    job_dir = ensure_relative_directory(context.project_root, ("Job",))
+    out_dir = job_dir / "QC" / datetime.now().strftime("%Y%m%d_%H%M%S")
+    md_path, _csv_path = prelim_qc.write_report(report, out_dir, context.survey_id)
+    counts: dict[str, int] = {}
+    for issue in report.issues:
+        counts[issue.severity] = counts.get(issue.severity, 0) + 1
+    record_tool_launch(context, TOOL_BY_KEY["prelim_qc"], job_dir)
+    return md_path, counts, inputs
+
+
+def stale_packaged_apps(app_root: Path = APP_ROOT) -> list[str]:
+    """Labels of packaged EXEs older than their source (empty if the registry is unavailable)."""
+    try:
+        if str(app_root) not in sys.path:
+            sys.path.insert(0, str(app_root))
+        import packaged_apps
+    except Exception:
+        return []
+    return [
+        app.label for app in packaged_apps.APPS
+        if app.auto_rebuild and packaged_apps.freshness(app).status != "fresh"
+    ]

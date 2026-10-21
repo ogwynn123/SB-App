@@ -121,6 +121,19 @@ specialist applications after the data checks. See
 
 ## GUI Entry Point
 
+Start daily work from the Survey Launcher:
+
+```powershell
+.\run_survey_ops_lite.bat
+```
+
+Pick the survey ID and project folder once; every workflow (Table Gen, Sheet
+Merge, Sample Append, Open-End Coder, Quota Checker, Trend Tables, Auto
+Results, Preliminary QC, TOMAS, the repository dashboard, and the browser
+workbench) opens from its list with that project's context. See
+`docs\SURVEY_LAUNCHER.md`. The sections below describe the other front ends,
+which the launcher also opens.
+
 For the local browser version of the essential production tools, run:
 
 ```powershell

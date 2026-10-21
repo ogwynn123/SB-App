@@ -1,8 +1,28 @@
 # Survey Launcher
 
-The Survey Launcher is the lightweight daily entry point for active projects.
-It selects an existing survey folder and opens each workflow in its own
-specialist application. Processing logic remains inside those applications.
+The Survey Launcher is the single starting point for daily work. It selects an
+existing survey folder and opens every workflow from one list. Processing logic
+remains inside each specialist application or pipeline module.
+
+| Workflow | Runs as | Working folder |
+|---|---|---|
+| Project Startup | launcher action | project root |
+| WinCross Table Generator | Table Gen app | `Job\Table Gen` |
+| Table Merger | Sheet Merge app (writes the Combined Demographics carry-over after a timeseries merge) | `Data` |
+| Sample Append | launcher dialog over `pipelines\table_merger\sample_append.py` | `Data` |
+| Open-End Coder | OE app | `Data\Partial\Open Ends` or `Data` |
+| Sample Quota Checker | Quota app | `Data` |
+| Trend Table Updater | Trend app | `Job\Table Gen` |
+| Auto Results | Auto Results app | `Data\Partial\Results` or `Data` |
+| Preliminary QC | launcher action over `pipelines\qc_checker\prelim_qc.py`; report in `Job\QC\<timestamp>` | `Job` |
+| TOMAS | TOMAS app | `Qst\Spanish Ver` |
+| Repository & Question Browser | full dashboard (`survey_platform_gui.py`) | project root |
+| Browser Workbench | `run_survey_browser.bat` | project root |
+
+Sample Append defaults to the newest `Data\NPA####ts*.csv` and remembers the
+project's column mapping (`DATA_COLUMN=SAMPLE_COLUMN`) in the project manifest.
+When any packaged EXE is older than its source, the Activity log says so and
+points to `rebuild_apps.bat`.
 
 ## Launch
 
