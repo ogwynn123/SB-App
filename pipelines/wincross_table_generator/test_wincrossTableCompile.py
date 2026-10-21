@@ -1154,7 +1154,8 @@ class WincrossTableCompileTests(unittest.TestCase):
         self.assertNotIn(" Never heard^(11)^NS", table.lines)
         self.assertNotIn(" Don't know^(12)^NS", table.lines)
 
-    def test_favorability_0_10_battery_gets_extremely_unfavorable_summary_table(self) -> None:
+    def test_favorability_0_10_battery_gets_no_summary_table(self) -> None:
+        # Analysts deleted the former "Extremely Unfavorable (0)" summary from every finished job.
         def fav_item(qid: str, item_text: str) -> Question:
             return Question(
                 qid=qid,
@@ -1178,19 +1179,10 @@ class WincrossTableCompileTests(unittest.TestCase):
             fav_item("7l", "l. The cryptocurrency industry"),
         ]
 
-        tables, _ = build_battery_summary_tables("7", items, 9128)
+        tables, idx = build_battery_summary_tables("7", items, 9128)
 
-        self.assertEqual(len(tables), 1)
-        table = tables[0]
-        self.assertEqual(table.table_id, "TQ7^9129")
-        self.assertEqual(table.banner, "OV,OD,OI2,O%,R%,BR,RV,S2,P0,SA,SP")
-        self.assertEqual(table.header, "Q7. Summary Table - Extremely Unfavorable (0)")
-        self.assertEqual(table.lines[0], " TOTAL ANSWERING^TN^1")
-        self.assertIn(" a. Donald Trump^Q7a(0)^NS", table.lines)
-        self.assertIn(" d. ICE^Q7d(0)^NS", table.lines)
-        self.assertIn(" e. The NRA^Q7e(0)^NS", table.lines)
-        self.assertIn(" l. Cryptocurrency industry^Q7l(0)^NS", table.lines)
-        self.assertEqual(table.lines[-1], " hidden^Q7a(0-12)^HR,NS")
+        self.assertEqual(tables, [])
+        self.assertEqual(idx, 9128)
 
     def test_describes_well_battery_gets_summary_tables(self) -> None:
         def item(qid: str, item_text: str) -> Question:

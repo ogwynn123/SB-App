@@ -72,7 +72,6 @@ Rule = Callable[[Table, Question], None]
 BANNER = "OV,OI,O%,BR,RV,S2,P0,SA,SP"
 SUMMARY_BANNER_OI2 = "OV,OI2,O%,BR,RV,S2,P0,SA,SP"
 RANKED_SUMMARY_BANNER = "OV,OD,OI2,O%,R%,BR,RV,S2,P0,SA,SP"
-FAVORABILITY_SUMMARY_BANNER = RANKED_SUMMARY_BANNER
 LIKELY_SUMMARY_BANNER = RANKED_SUMMARY_BANNER
 SKIP_LABEL_RE = re.compile(r"\b(refused)\b", re.IGNORECASE)
 ITEM_PREFIX_RE = re.compile(r"^\s*([a-zA-Z])\s*[\.\)\:]\s*(.*)$")
@@ -3583,59 +3582,6 @@ def is_favorability_0_10_summary_candidate(q: Question) -> bool:
     return all(v in values for v in range(0, 11)) and 11 in values and 12 in values
 
 
-def favorability_summary_item_label(q: Question) -> str:
-    letter = item_letter(q.item_text)
-    item = item_remainder_without_brackets(q.item_text)
-    item = clean_text(item)
-    acronym_match = re.match(r"^(The\s+)?(.+?)\s+or\s+([A-Z]{2,})$", item)
-    if acronym_match:
-        article = acronym_match.group(1) or ""
-        left = clean_text(acronym_match.group(2))
-        acronym = clean_text(acronym_match.group(3))
-        if len(left) >= 24:
-            item = f"{article}{acronym}".strip()
-        else:
-            item = f"{article}{left}".strip()
-    if item.lower().startswith("the ") and not re.match(r"^The\s+[A-Z]{2,}\b", item):
-        item = item[4:]
-    item = clean_text(item)
-    if item and not re.match(r"^[A-Z]{2,}\b", item):
-        item = item[:1].upper() + item[1:]
-    if letter:
-        return f"{letter}. {item}"
-    return item
-
-
-def build_favorability_0_10_summary_tables(
-    qnum: str,
-    items: List[Question],
-    idx: int,
-) -> Tuple[List[Table], int]:
-    if len(items) <= 1:
-        return [], idx
-    if not all(is_favorability_0_10_summary_candidate(q) for q in items):
-        return [], idx
-
-    span_values = [opt.value for opt in items[0].options if is_int_value(opt.value)]
-    span_selector = selector_span(span_values)
-    labels = [favorability_summary_item_label(q) for q in items]
-
-    idx += 1
-    table_id = make_table_id(qnum, idx)
-    table = Table(
-        table_id=table_id,
-        banner=FAVORABILITY_SUMMARY_BANNER,
-        header=format_generated_header(f"Q{qnum}. Summary Table - Extremely Unfavorable (0)"),
-        lines=[],
-    )
-    table.lines.append(" TOTAL ANSWERING^TN^1")
-    for q, label in zip(items, labels):
-        table.lines.append(f" {label}^Q{q.qid}(0)^NS")
-    if span_selector:
-        table.lines.append(f" hidden^Q{items[0].qid}({span_selector})^HR,NS")
-    return [table], idx
-
-
 def summary_header(base: str, direction: str, kind: str) -> str:
     target = f"{direction} likely"
     replacement = f"{kind} {direction} likely"
@@ -4131,9 +4077,10 @@ def build_battery_summary_tables(qnum: str, items: List[Question], idx: int) -> 
     focus_tables, idx = build_focus_importance_summary_tables(qnum, items, idx)
     if focus_tables:
         return focus_tables, idx
-    favorability_tables, idx = build_favorability_0_10_summary_tables(qnum, items, idx)
-    if favorability_tables:
-        return favorability_tables, idx
+    # 0-10 favorability batteries get no summary table: analysts deleted the
+    # former "Extremely Unfavorable (0)" summary from every finished job.
+    if all(is_favorability_0_10_summary_candidate(q) for q in items):
+        return [], idx
     profiles = [battery_summary_profile(q) for q in items]
     if any(p is None for p in profiles):
         return [], idx
