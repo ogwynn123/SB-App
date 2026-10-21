@@ -254,6 +254,8 @@ class RecordCoderApp:
         search.pack(side=tk.LEFT, padx=(6, 6), fill=tk.X, expand=True)
         search.bind("<KeyRelease>", lambda _event: self.refresh_responses())
         ttk.Button(controls, text="Refresh", command=self.refresh_responses).pack(side=tk.LEFT, padx=(6, 0))
+        self.wave_lock_button = ttk.Button(controls, text="Unlock Prior Waves...", command=self.toggle_prior_waves)
+        self.wave_lock_button.pack(side=tk.LEFT, padx=(6, 0))
         ttk.Label(controls, textvariable=self.response_progress_var).pack(side=tk.RIGHT, padx=(12, 0))
 
         paned = ttk.Panedwindow(tab, orient=tk.HORIZONTAL)
@@ -501,6 +503,7 @@ class RecordCoderApp:
             messagebox.showerror("Session error", str(exc))
             return
         self.session_var.set(str(self.session.path))
+        self._update_wave_lock_button()
         survey_label = self.session.get_meta("survey_id") or self.context.survey_id or "Unassigned project"
         self.project_var.set(survey_label)
         dataset = self.session.active_dataset()
@@ -886,6 +889,33 @@ class RecordCoderApp:
     def _active_codebook_question(self) -> core.QuestionInfo | None:
         return self.codebook_question_by_display.get(self.codebook_question_var.get())
 
+    def toggle_prior_waves(self) -> None:
+        """Prior waves are read-only; unlocking for a correction asks for a reason that is audited."""
+        if self.session is None:
+            return
+        if self.session.prior_waves_unlocked:
+            self.session.lock_prior_waves()
+            self.status_var.set("Prior waves locked. Only the latest timeseries can be edited.")
+        else:
+            if self.session.max_timeseries() is None:
+                messagebox.showinfo("Prior waves", "This datafile has no Timeseries column; every record is editable.")
+                return
+            reason = simpledialog.askstring(
+                "Unlock prior waves",
+                "Prior-wave codes are locked. Reason for this correction (saved in the audit log):",
+                parent=self.root,
+            )
+            if not reason or not reason.strip():
+                return
+            self.session.unlock_prior_waves(reason)
+            self.status_var.set("Prior waves unlocked for this session. All waves are listed.")
+        self._update_wave_lock_button()
+        self.refresh_responses()
+
+    def _update_wave_lock_button(self) -> None:
+        unlocked = self.session is not None and self.session.prior_waves_unlocked
+        self.wave_lock_button.configure(text="Lock Prior Waves" if unlocked else "Unlock Prior Waves...")
+
     def refresh_responses(self, *, preserve_response_id: int | None = None) -> None:
         if self.response_tree is None:
             return
@@ -897,7 +927,8 @@ class RecordCoderApp:
             self.response_progress_var.set("No responses")
             self.clear_response_editor()
             return
-        max_timeseries = self.session.max_timeseries()
+        # Locked (default): list the latest wave only. Unlocked: list every wave for corrections.
+        max_timeseries = None if self.session.prior_waves_unlocked else self.session.max_timeseries()
         self.refresh_response_code_filters(question, timeseries=max_timeseries)
         raw_code_filter = self.response_code_filter_var.get()
         code_filter = "" if raw_code_filter == ALL_CODE_FILTER else raw_code_filter
@@ -934,7 +965,12 @@ class RecordCoderApp:
         if scoped_responses:
             coded = sum(response.override_active for response in scoped_responses)
             flagged = sum(response.flagged for response in scoped_responses)
-            prefix = f"Timeseries {max_timeseries} (latest) | " if max_timeseries is not None else ""
+            if max_timeseries is not None:
+                prefix = f"Timeseries {max_timeseries} (latest) | "
+            elif self.session.prior_waves_unlocked:
+                prefix = "All waves (prior waves unlocked) | "
+            else:
+                prefix = ""
             if import_scope != "all":
                 prefix += f"{self.response_import_scope_var.get()} | "
             self.response_progress_var.set(

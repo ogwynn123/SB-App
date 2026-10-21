@@ -360,6 +360,11 @@ def oe_responses(payload: dict[str, Any]) -> dict[str, Any]:
     limit = min(max(int(payload.get("limit", 250) or 250), 1), 1000)
     session = core.CodingSession(_oe_session_path(payload))
     try:
+        # Only the latest wave is editable, so list it by default; prior waves
+        # can be viewed (read-only) with all_waves. Corrections need the desktop
+        # Open-End Coder's explicit unlock.
+        if timeseries is None and not _as_bool(payload, "all_waves", False):
+            timeseries = session.max_timeseries()
         rows = session.list_responses(
             question_id,
             status=_text(payload, "status", "all"),

@@ -836,5 +836,33 @@ class RecordCoderCoreTests(unittest.TestCase):
             self.assertFalse(responses["2|1001"].override_active)
 
 
+    def test_prior_waves_are_read_only_until_unlocked(self) -> None:
+        with local_tmp() as temp:
+            source = write_csv(temp / "data.csv", self._repeated_survnum_rows())
+            with core.CodingSession(temp / "coding.sqlite") as session:
+                session.import_data(source)
+                question = session.questions()[0]
+                responses = {item.record_key: item for item in session.list_responses(question.id)}
+                with self.assertRaises(core.PriorWaveLockedError):
+                    session.set_assignment(responses["1|1001"].id, ["500"])
+                with self.assertRaises(core.PriorWaveLockedError):
+                    session.reset_assignment(responses["1|1001"].id)
+                with self.assertRaises(core.PriorWaveLockedError):
+                    session.cleanup_redundant_code(question.id, "10", timeseries=1)
+                session.set_assignment(responses["2|1001"].id, ["500"])
+                with self.assertRaises(ValueError):
+                    session.unlock_prior_waves("  ")
+                session.unlock_prior_waves("Correct wave 1 typo")
+                fixed = session.set_assignment(responses["1|1001"].id, ["11"])
+                session.lock_prior_waves()
+                with self.assertRaises(core.PriorWaveLockedError):
+                    session.set_assignment(responses["1|1001"].id, ["12"])
+                actions = [row["action"] for row in session.connection.execute("SELECT action FROM audit_log")]
+
+            self.assertEqual(fixed.final_codes, ("11",))
+            self.assertIn("unlock_prior_waves", actions)
+            self.assertIn("lock_prior_waves", actions)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -504,8 +504,18 @@ def _json_codes(raw: str | None) -> tuple[str, ...]:
     return tuple(code for code in (normalize_code(value) for value in values) if code)
 
 
+class PriorWaveLockedError(ValueError):
+    """Raised when a prior-wave response would change while prior waves are locked."""
+
+
 class CodingSession:
-    """Persistent record-level coding session backed by SQLite."""
+    """
+    Persistent record-level coding session backed by SQLite.
+
+    In trended data only the latest timeseries is editable. Prior waves are
+    read-only until ``unlock_prior_waves(reason)`` is called; the unlock is
+    logged and lasts only for this session object.
+    """
 
     def __init__(
         self,
@@ -520,6 +530,7 @@ class CodingSession:
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys = ON")
         self.connection.execute("PRAGMA journal_mode = WAL")
+        self._prior_waves_unlocked = False
         self._create_schema()
         if survey_id:
             self.set_meta("survey_id", survey_id)
@@ -1053,6 +1064,58 @@ class CodingSession:
             return None
         return int(row["maximum"])
 
+    @property
+    def prior_waves_unlocked(self) -> bool:
+        return self._prior_waves_unlocked
+
+    def unlock_prior_waves(self, reason: str) -> None:
+        """Allow prior-wave corrections for this session; the reason is audited."""
+        reason = clean_text(reason)
+        if not reason:
+            raise ValueError("Give a reason for unlocking prior waves.")
+        self._prior_waves_unlocked = True
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO audit_log(changed_at, action, detail) VALUES(?, 'unlock_prior_waves', ?)",
+                (now_iso(), json.dumps({"reason": reason, "latest_timeseries": self.max_timeseries()})),
+            )
+
+    def lock_prior_waves(self) -> None:
+        if self._prior_waves_unlocked:
+            self._prior_waves_unlocked = False
+            with self.connection:
+                self.connection.execute(
+                    "INSERT INTO audit_log(changed_at, action, detail) VALUES(?, 'lock_prior_waves', '')",
+                    (now_iso(),),
+                )
+
+    def is_editable(self, response: ResponseInfo) -> bool:
+        if self._prior_waves_unlocked or response.timeseries is None:
+            return True
+        latest = self.max_timeseries()
+        return latest is None or response.timeseries >= latest
+
+    def _require_editable(self, response: ResponseInfo) -> None:
+        if not self.is_editable(response):
+            raise PriorWaveLockedError(
+                f"Record {response.record_key} is from timeseries {response.timeseries}; prior waves are "
+                f"read-only (latest is {self.max_timeseries()}). Unlock prior waves to correct it."
+            )
+
+    def _editable_timeseries_scope(self, timeseries: int | None) -> int | None:
+        """Bulk actions default to the latest wave and refuse a prior wave while locked."""
+        latest = self.max_timeseries()
+        if self._prior_waves_unlocked or latest is None:
+            return timeseries
+        if timeseries is None:
+            return latest
+        if int(timeseries) < latest:
+            raise PriorWaveLockedError(
+                f"Timeseries {timeseries} is a prior wave and read-only (latest is {latest}). "
+                "Unlock prior waves to correct it."
+            )
+        return timeseries
+
     def set_assignment(
         self,
         response_id: int,
@@ -1063,6 +1126,7 @@ class CodingSession:
         action: str = "set_assignment",
     ) -> ResponseInfo:
         response = self.response(response_id)
+        self._require_editable(response)
         question = self.question(response.question_id)
         normalized: list[str] = []
         for raw in codes:
@@ -1098,6 +1162,7 @@ class CodingSession:
 
     def reset_assignment(self, response_id: int) -> ResponseInfo:
         response = self.response(response_id)
+        self._require_editable(response)
         question = self.question(response.question_id)
         timestamp = now_iso()
         with self.connection:
@@ -1122,6 +1187,8 @@ class CodingSession:
         timeseries: int | None = None,
     ) -> int:
         response = self.response(response_id)
+        self._require_editable(response)
+        timeseries = self._editable_timeseries_scope(timeseries)
         clauses = ["question_id=?", "present=1", "verbatim=?"]
         params: list[object] = [response.question_id, response.verbatim]
         if timeseries is not None:
@@ -1172,6 +1239,7 @@ class CodingSession:
         *,
         timeseries: int | None = None,
     ) -> RedundantCodeCleanupSummary:
+        timeseries = self._editable_timeseries_scope(timeseries)
         preview = self.preview_redundant_code_cleanup(
             question_id,
             code,

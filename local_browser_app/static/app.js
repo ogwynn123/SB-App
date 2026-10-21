@@ -202,7 +202,7 @@ async function refreshOeResponses(preserveId = null) {
   if (!questionId) return;
   setStatus('oe-progress', 'Loading…');
   try {
-    const result = await api('/api/oe/responses', {...oeBase(), question_id: questionId, status: value('oe-filter'), search: value('oe-search')});
+    const result = await api('/api/oe/responses', {...oeBase(), question_id: questionId, status: value('oe-filter'), search: value('oe-search'), all_waves: checked('oe-all-waves')});
     oeResponses = result.responses;
     const list = $('oe-responses');
     list.innerHTML = result.responses.map(row => `<div class="response-row" data-id="${row.id}"><div class="row-top"><span>${escapeHtml(row.record_key)} · row ${row.row_number}</span><span class="codes">${escapeHtml(row.final_codes.join(', ') || 'blank')}</span></div><p>${escapeHtml(row.verbatim || '(blank verbatim)')}</p></div>`).join('');
