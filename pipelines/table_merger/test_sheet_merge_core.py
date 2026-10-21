@@ -187,6 +187,131 @@ class SheetMergeCoreTests(unittest.TestCase):
         self.assertNotIn("b", mapping)
         self.assertEqual(mapping["a"], "x")
 
+    def test_merge_preflight_rejects_duplicate_reviewed_secondary(self) -> None:
+        out_dir = self._tmpdir()
+        primary_path = out_dir / "primary.csv"
+        secondary_path = out_dir / "secondary.csv"
+        pd.DataFrame({"id": ["1"], "a": [""], "b": [""]}).to_csv(
+            primary_path, index=False
+        )
+        pd.DataFrame({"sid": ["2"], "x": ["value"]}).to_csv(
+            secondary_path, index=False
+        )
+
+        options = MergeOptions(
+            primary_path=primary_path,
+            secondary_path=secondary_path,
+            primary_join="id",
+            secondary_join="sid",
+            mapping_mode="auto",
+            manual_mapping={"a": "x", "b": "x"},
+            output_path=out_dir / "merged.csv",
+            report_enabled=False,
+            archive_secondary=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "secondary column more than once"):
+            analyze_merge(options)
+
+    def test_auto_manual_shift_chain_releases_stale_secondary_ownership(self) -> None:
+        mapping, methods, _scores = build_mapping(
+            primary_cols=["survnum", "q3", "q4", "q5", "q6", "q7"],
+            secondary_cols=["survnum", "3801_q3", "q3", "q4", "q5", "q6"],
+            primary_join="survnum",
+            secondary_join="survnum",
+            mode="auto",
+            threshold=85,
+            top_n=5,
+            manual_mapping={
+                "q3": "3801_q3",
+                "q4": "q3",
+                "q5": "q4",
+                "q6": "q5",
+                "q7": "q6",
+            },
+        )
+
+        self.assertEqual(
+            {
+                primary: mapping.get(primary)
+                for primary in ("q3", "q4", "q5", "q6", "q7")
+            },
+            {
+                "q3": "3801_q3",
+                "q4": "q3",
+                "q5": "q4",
+                "q6": "q5",
+                "q7": "q6",
+            },
+        )
+        self.assertTrue(
+            all(
+                methods.get(primary) == "manual"
+                for primary in ("q3", "q4", "q5", "q6", "q7")
+            )
+        )
+
+    def test_auto_manual_shift_chain_merges_into_reviewed_columns(self) -> None:
+        out_dir = self._tmpdir()
+        primary_path = out_dir / "NPA3854.csv"
+        secondary_path = out_dir / "NPA3808_history.csv"
+        output_path = out_dir / "NPA3854_merged.csv"
+
+        pd.DataFrame(
+            {
+                "survnum": ["9001"],
+                "q3": ["primary q3"],
+                "q4": ["primary q4"],
+                "q5": ["primary q5"],
+                "q6": ["primary q6"],
+                "q7": ["primary q7"],
+            }
+        ).to_csv(primary_path, index=False)
+        pd.DataFrame(
+            {
+                "survnum": ["8001"],
+                "3801_q3": ["secondary historical q3"],
+                "q3": ["secondary q3"],
+                "q4": ["secondary q4"],
+                "q5": ["secondary q5"],
+                "q6": ["secondary q6"],
+                "historical_note": ["preserve me"],
+            }
+        ).to_csv(secondary_path, index=False)
+
+        run_merge(
+            MergeOptions(
+                primary_path=primary_path,
+                secondary_path=secondary_path,
+                primary_join="survnum",
+                secondary_join="survnum",
+                mapping_mode="auto",
+                manual_mapping={
+                    "q3": "3801_q3",
+                    "q4": "q3",
+                    "q5": "q4",
+                    "q6": "q5",
+                    "q7": "q6",
+                },
+                output_path=output_path,
+                report_enabled=False,
+                archive_secondary=False,
+            )
+        )
+
+        merged = pd.read_csv(output_path, dtype=str)
+        secondary_row = merged.iloc[0]
+        self.assertEqual(secondary_row["q3"], "secondary historical q3")
+        self.assertEqual(secondary_row["q4"], "secondary q3")
+        self.assertEqual(secondary_row["q5"], "secondary q4")
+        self.assertEqual(secondary_row["q6"], "secondary q5")
+        self.assertEqual(secondary_row["q7"], "secondary q6")
+        self.assertNotIn("3801_q3", merged.columns)
+        self.assertNotIn("3808_q3", merged.columns)
+        self.assertNotIn("3808_q4", merged.columns)
+        self.assertNotIn("3808_q5", merged.columns)
+        self.assertEqual(secondary_row["3808_historical_note"], "preserve me")
+
     def test_auto_mapping_prefers_exact_and_canonical_before_fuzzy(self) -> None:
         mapping, methods, _scores = build_mapping(
             primary_cols=["survnum", "vf_p2025", "vf_p2024", "vf_p2024_party"],

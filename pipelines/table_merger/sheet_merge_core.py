@@ -537,6 +537,62 @@ def apply_ab_dependent_mapping(
         used_secondary.add(matched_secondary)
 
 
+def _valid_manual_mapping_items(
+    *,
+    primary_cols: list[str],
+    secondary_cols: list[str],
+    primary_join: str,
+    secondary_join: str,
+    manual_mapping: dict[str, str],
+    blocked_primary_columns: set[str] | None,
+) -> list[tuple[str, str]]:
+    blocked_casefold = {
+        col.casefold()
+        for col in (blocked_primary_columns or set())
+        if col.casefold() != primary_join.casefold()
+    }
+    return [
+        (primary_col, secondary_col)
+        for primary_col, secondary_col in manual_mapping.items()
+        if primary_col != primary_join
+        and primary_col.casefold() not in blocked_casefold
+        and secondary_col != secondary_join
+        and primary_col in primary_cols
+        and secondary_col in secondary_cols
+    ]
+
+
+def _validate_manual_mapping_resolution(
+    *,
+    mapping: dict[str, str],
+    manual_items: list[tuple[str, str]],
+) -> None:
+    secondary_owners: dict[str, str] = {}
+    duplicate_secondary: list[str] = []
+    for primary_col, secondary_col in manual_items:
+        owner = secondary_owners.get(secondary_col)
+        if owner is not None and owner != primary_col:
+            duplicate_secondary.append(f"{secondary_col} ({owner}, {primary_col})")
+        else:
+            secondary_owners[secondary_col] = primary_col
+    if duplicate_secondary:
+        raise ValueError(
+            "Reviewed manual mapping uses a secondary column more than once: "
+            + ", ".join(duplicate_secondary)
+        )
+
+    unresolved = [
+        f"{primary_col} <- {secondary_col}"
+        for primary_col, secondary_col in manual_items
+        if mapping.get(primary_col) != secondary_col
+    ]
+    if unresolved:
+        raise RuntimeError(
+            "Reviewed manual mappings were not preserved: "
+            + ", ".join(unresolved)
+        )
+
+
 def build_mapping(
     primary_cols: list[str],
     secondary_cols: list[str],
@@ -557,6 +613,14 @@ def build_mapping(
         for col in (blocked_primary_columns or set())
         if col.casefold() != primary_join.casefold()
     }
+    manual_items = _valid_manual_mapping_items(
+        primary_cols=primary_cols,
+        secondary_cols=secondary_cols,
+        primary_join=primary_join,
+        secondary_join=secondary_join,
+        manual_mapping=manual_mapping,
+        blocked_primary_columns=blocked_primary_columns,
+    )
 
     if mode == "auto":
         secondary_non_oth1 = [
@@ -652,22 +716,25 @@ def build_mapping(
                 used_secondary[secondary_col] = primary_col
                 break
 
-    for primary_col, secondary_col in manual_mapping.items():
-        if primary_col == primary_join:
-            continue
-        if primary_col.casefold() in blocked_casefold:
-            continue
-        if secondary_col == secondary_join:
-            continue
-        if primary_col not in primary_cols:
-            continue
-        if secondary_col not in secondary_cols:
-            continue
+    # Clear every reviewed primary assignment as a batch before applying manual
+    # mappings. Otherwise shifted chains (q4 <- q3, q5 <- q4, ...) inherit stale
+    # ownership from exact auto-matches and delete each preceding reviewed pair.
+    for primary_col, _secondary_col in manual_items:
+        mapping.pop(primary_col, None)
+        method.pop(primary_col, None)
+        score.pop(primary_col, None)
+    used_secondary = {
+        secondary_col: primary_col
+        for primary_col, secondary_col in mapping.items()
+    }
+
+    for primary_col, secondary_col in manual_items:
         previous = used_secondary.get(secondary_col)
         if previous and previous != primary_col and previous in mapping:
             del mapping[previous]
             del method[previous]
             del score[previous]
+            used_secondary.pop(secondary_col, None)
         mapping[primary_col] = secondary_col
         method[primary_col] = "manual"
         score[primary_col] = int(fuzz.QRatio(primary_col.casefold(), secondary_col.casefold()))
@@ -678,17 +745,7 @@ def build_mapping(
         forced_method = {primary_join: "join"}
         forced_score: dict[str, int | None] = {primary_join: 100}
         forced_used_secondary: set[str] = {secondary_join}
-        for primary_col, secondary_col in manual_mapping.items():
-            if primary_col == primary_join:
-                continue
-            if primary_col.casefold() in blocked_casefold:
-                continue
-            if secondary_col == secondary_join:
-                continue
-            if primary_col not in primary_cols:
-                continue
-            if secondary_col not in secondary_cols:
-                continue
+        for primary_col, secondary_col in manual_items:
             if secondary_col in forced_used_secondary:
                 continue
             forced[primary_col] = secondary_col
@@ -726,7 +783,7 @@ def build_mapping(
         score=score,
         blocked_primary_columns=blocked_primary_columns,
         replace_existing=True,
-        protected_primary_columns=set(manual_mapping),
+        protected_primary_columns={primary_col for primary_col, _ in manual_items},
     )
     apply_oth1_dependent_mapping(
         primary_cols=primary_cols,
@@ -1406,6 +1463,18 @@ def _build_effective_mapping(
         top_n=options.top_n,
         manual_mapping=options.manual_mapping,
         blocked_primary_columns=options.blocked_primary_columns,
+    )
+    manual_items = _valid_manual_mapping_items(
+        primary_cols=primary_cols,
+        secondary_cols=secondary_cols,
+        primary_join=primary_join,
+        secondary_join=secondary_join,
+        manual_mapping=options.manual_mapping,
+        blocked_primary_columns=options.blocked_primary_columns,
+    )
+    _validate_manual_mapping_resolution(
+        mapping=mapping,
+        manual_items=manual_items,
     )
 
     # In TS layering, keep timeseries aligned even in manual_only mode.
