@@ -464,8 +464,72 @@ def _open_end_coder(context: launcher.ProjectContext) -> StepOutcome:
     )
 
 
+def _child_pids(pid: int) -> list[int]:
+    """Direct child process IDs on Windows; packaged one-file EXEs run the app in a child."""
+    if os.name != "nt":
+        return []
+    result = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            f"(Get-CimInstance Win32_Process -Filter 'ParentProcessId={int(pid)}').ProcessId",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return [int(line) for line in result.stdout.split() if line.strip().isdigit()]
+
+
+def _pid_running(pid: int) -> bool:
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+    result = subprocess.run(
+        ["tasklist", "/FI", f"PID eq {int(pid)}", "/NH", "/FO", "CSV"],
+        capture_output=True,
+        text=True,
+    )
+    return f'"{int(pid)}"' in result.stdout
+
+
+def _stop_process_tree(process: subprocess.Popen, timeout: float = 8.0) -> list[int]:
+    """
+    Close a launched app and everything it started. Returns the PIDs still
+    running afterwards (empty on success).
+
+    terminate() alone only stops a one-file EXE's bootloader and leaves the
+    real app window open, so the whole tree is closed instead: politely first,
+    then forcibly.
+    """
+    pids = [process.pid, *_child_pids(process.pid)]
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(process.pid), "/T"], capture_output=True)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline and any(_pid_running(pid) for pid in pids):
+            time.sleep(0.25)
+        if any(_pid_running(pid) for pid in pids):
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True)
+            for pid in pids:
+                if _pid_running(pid):
+                    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+    else:
+        process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+    time.sleep(0.25)
+    return [pid for pid in pids if _pid_running(pid)]
+
+
 def _gui_smoke(context: launcher.ProjectContext, wait_seconds: float) -> StepOutcome:
     started: list[str] = []
+    left_open: list[str] = []
     for tool in launcher.TOOLS:
         if tool.internal_action:
             continue
@@ -489,13 +553,10 @@ def _gui_smoke(context: launcher.ProjectContext, wait_seconds: float) -> StepOut
             _require(process.poll() is None, f"{tool.label} exited during startup with code {process.returncode}.")
             started.append(tool.label)
         finally:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=8)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
+            remaining = _stop_process_tree(process)
+            if remaining:
+                left_open.append(f"{tool.label} (PID {', '.join(map(str, remaining))})")
+    _require(not left_open, f"Packaged GUIs were left running: {'; '.join(left_open)}")
     return StepOutcome(f"Started and closed {len(started)} packaged GUIs: {', '.join(started)}.")
 
 
