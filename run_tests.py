@@ -15,6 +15,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMP_DIR = BASE_DIR / ".tmp_tests"
+COVERAGE_RC = BASE_DIR / ".coveragerc"
 
 
 @dataclass(frozen=True)
@@ -56,10 +57,15 @@ ACCEPTANCE = Suite("acceptance", ".", ("acceptance_smoke.py",))
 RAN_RE = re.compile(r"^Ran (\d+) tests? in", re.MULTILINE)
 
 
-def run_suite(suite: Suite, env: dict[str, str], verbose: bool) -> tuple[bool, int | None, float, str]:
+def run_suite(
+    suite: Suite, env: dict[str, str], verbose: bool, coverage: bool = False
+) -> tuple[bool, int | None, float, str]:
     started = time.perf_counter()
+    prefix = []
+    if coverage:
+        prefix = ["-m", "coverage", "run", "--parallel-mode", f"--rcfile={COVERAGE_RC}", f"--source={BASE_DIR}"]
     proc = subprocess.run(
-        [sys.executable, *suite.args],
+        [sys.executable, *prefix, *suite.args],
         cwd=BASE_DIR / suite.cwd,
         env=env,
         capture_output=True,
@@ -82,6 +88,11 @@ def main() -> int:
     parser.add_argument("suites", nargs="*", help=f"Suites to run (default: all). Choices: {', '.join(names)}")
     parser.add_argument("--acceptance", action="store_true", help="Also run the synthetic end-to-end acceptance smoke test.")
     parser.add_argument("-v", "--verbose", action="store_true", help="Print each suite's full output.")
+    parser.add_argument(
+        "--coverage",
+        action="store_true",
+        help="Measure line coverage (needs `py -3 -m pip install coverage`) and write an HTML report.",
+    )
     args = parser.parse_args()
 
     unknown = [name for name in args.suites if name not in names]
@@ -96,11 +107,16 @@ def main() -> int:
     TEMP_DIR.mkdir(exist_ok=True)
     env = dict(os.environ, TEMP=str(TEMP_DIR), TMP=str(TEMP_DIR), PYTHONIOENCODING="utf-8")
 
+    if args.coverage:
+        env["COVERAGE_FILE"] = str(TEMP_DIR / ".coverage")
+        for stale in TEMP_DIR.glob(".coverage*"):
+            stale.unlink()
+
     failures: list[tuple[Suite, str]] = []
     total = 0
     for suite in selected:
         print(f"{suite.name:<13}", end="", flush=True)
-        ok, count, elapsed, output = run_suite(suite, env, args.verbose)
+        ok, count, elapsed, output = run_suite(suite, env, args.verbose, args.coverage)
         total += count or 0
         label = f"{count} tests" if count is not None else "done"
         print(f"{'PASS' if ok else 'FAIL'}  {label:<10} {elapsed:5.1f}s")
@@ -112,6 +128,16 @@ def main() -> int:
         print(output.rstrip())
 
     print(f"\n{len(selected) - len(failures)}/{len(selected)} suites passed, {total} tests run.")
+    if args.coverage:
+        sys.stdout.flush()
+        report_dir = TEMP_DIR / "coverage_html"
+        for command in (["combine", "-q"], ["report", "--sort=cover"], ["html", "-q", "-d", str(report_dir)]):
+            subprocess.run(
+                [sys.executable, "-m", "coverage", *command, f"--rcfile={COVERAGE_RC}"],
+                cwd=BASE_DIR,
+                env=env,
+            )
+        print(f"\nHTML coverage report: {report_dir / 'index.html'}")
     return 1 if failures else 0
 
 

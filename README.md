@@ -86,7 +86,8 @@ one command:
 .\run_tests.bat --acceptance
 ```
 
-Pass suite names such as `merge trend` to run a subset, and `-v` for full output.
+Pass suite names such as `merge trend` to run a subset, and `-v` for full output. Add `--coverage`
+for a line-coverage report (written to `.tmp_tests\coverage_html\index.html`).
 
 ## Acceptance Smoke Test
 

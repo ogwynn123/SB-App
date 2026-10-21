@@ -6,6 +6,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .coverage*
+!.coveragerc
 htmlcov/
 
 # Temporary files and test runs

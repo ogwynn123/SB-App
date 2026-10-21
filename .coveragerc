@@ -1,0 +1,15 @@
+# Used by `run_tests.py --coverage`, which passes the package root as --source.
+[run]
+omit =
+    */test_*.py
+    */run_tests.py
+    */build/*
+    */dist/*
+    */pyinstaller_hooks/*
+    */.tmp*/*
+    */repository/*
+    */workspace/*
+
+[report]
+skip_empty = true
+precision = 0
