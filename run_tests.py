@@ -50,7 +50,7 @@ SUITES: tuple[Suite, ...] = (
     Suite("channel", "pipelines/questionnaire_channel_builder", ("-m", "unittest", "test_channel_builder.py")),
     Suite("writer", "pipelines/survey_writer", ("-m", "unittest", "test_survey_writer_app.py")),
     Suite("browser", ".", ("-m", "unittest", "local_browser_app.test_local_browser_app")),
-    Suite("launcher", ".", ("-m", "unittest", "test_survey_ops_lite.py", "test_acceptance_smoke.py")),
+    Suite("launcher", ".", ("-m", "unittest", "test_survey_ops_lite.py", "test_acceptance_smoke.py", "test_packaged_apps.py")),
 )
 ACCEPTANCE = Suite("acceptance", ".", ("acceptance_smoke.py",))
 

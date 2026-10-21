@@ -19,7 +19,9 @@ the current working session. Read this before changing any pipeline behavior.
    current implementation and tests, and add a regression test for behavioral
    changes.
 5. Prefer source launchers while debugging. Specialist launchers are EXE-first,
-   so an old `dist` build can hide a correct source change.
+   so an old `dist` build can hide a correct source change. After changing a
+   bundled module, run `.\rebuild_apps.bat` (it backs up, rebuilds stale EXEs,
+   and launch-checks them; TOMAS only when named).
 6. After cross-pipeline work, run `.\run_tests.bat --acceptance` from the
    project root. The acceptance stage uses synthetic data and does not touch
    archive projects.

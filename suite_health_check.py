@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import packaged_apps
+
 
 BASE_DIR = Path(__file__).resolve().parent
 EXPECTED_TOMAS_MODEL = "gpt-5.4"
@@ -196,122 +198,20 @@ def check_build_recipes(report: Report) -> None:
         report.warn("build", "OE GUI build recipe does not install openpyxl", rel(path))
 
 
-def newest_source_mtime(folder: Path, names: tuple[str, ...]) -> tuple[float, Path | None]:
-    newest = 0.0
-    newest_path: Path | None = None
-    for name in names:
-        path = folder / name
-        if not path.exists():
-            continue
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:
-            continue
-        if mtime > newest:
-            newest = mtime
-            newest_path = path
-    return newest, newest_path
-
-
 def check_exe_freshness(report: Report) -> None:
-    apps = [
-        (
-            "WinCross GUI",
-            BASE_DIR / "pipelines" / "wincross_table_generator",
-            BASE_DIR / "pipelines" / "wincross_table_generator" / "dist" / "survey_pipeline_gui.exe",
-            (
-                "survey_pipeline_gui.py",
-                "unified_pipeline.py",
-                "survey_pipeline.py",
-                "surveyConvertJSON.py",
-                "wincrossTableCompile.py",
-                "question_attributes.py",
-                "survey_pipeline_gui.spec",
-                "requirements.txt",
-            ),
-        ),
-        (
-            "Table Merge GUI",
-            BASE_DIR / "pipelines" / "table_merger",
-            BASE_DIR / "pipelines" / "table_merger" / "dist" / "sheet_merge_gui.exe",
-            (
-                "sheetMerging_gui.py",
-                "sheet_merge_core.py",
-                "sheetMerging_cli.py",
-                "unified_merge.py",
-                "sheet_merge_gui.spec",
-            ),
-        ),
-        (
-            "OE Record Coder GUI",
-            BASE_DIR / "pipelines" / "open_end_coder",
-            BASE_DIR / "pipelines" / "open_end_coder" / "dist" / "oe_record_coder_gui.exe",
-            (
-                "oe_record_coder_gui.py",
-                "oe_record_coder_core.py",
-                "oe_record_coder_gui.spec",
-            ),
-        ),
-        (
-            "Auto Results GUI",
-            BASE_DIR / "pipelines" / "auto_results",
-            BASE_DIR / "pipelines" / "auto_results" / "dist" / "autoResults_gui.exe",
-            ("autoResults_gui.py", "empty_results_generator.py", "autoResults_gui.spec"),
-        ),
-        (
-            "Sample Quota Checker GUI",
-            BASE_DIR / "pipelines" / "sample_quota_checker",
-            BASE_DIR / "pipelines" / "sample_quota_checker" / "dist" / "sample_quota_checker.exe",
-            (
-                "sample_quota_checker_gui.py",
-                "sample_quota_checker_core.py",
-                "sample_quota_checker_settings.py",
-                "quota_editor.py",
-                "sample_quota_checker.spec",
-            ),
-        ),
-        (
-            "Trend Table Updater GUI",
-            BASE_DIR / "pipelines" / "trend_table_updater",
-            BASE_DIR / "pipelines" / "trend_table_updater" / "dist" / "trend_table_updater.exe",
-            (
-                "trend_table_updater_gui.py",
-                "trend_table_updater_core.py",
-                "trend_table_updater.spec",
-            ),
-        ),
-        (
-            "TOMAS GUI",
-            BASE_DIR / "pipelines" / "thomas_in_a_box",
-            BASE_DIR / "pipelines" / "thomas_in_a_box" / "dist" / "tomas_pipeline_gui.exe",
-            (
-                "tomas_pipeline_gui.py",
-                "tomas_pipeline.py",
-                "tomas_translate.py",
-                "tomas_docx_rebuilder.py",
-                "tomas_pipeline_gui.spec",
-                "requirements.txt",
-            ),
-        ),
-    ]
-    for label, source_dir, exe_path, source_names in apps:
-        if not exe_path.exists():
-            report.warn("dist", f"{label} EXE is missing", rel(exe_path))
-            continue
-        source_mtime, source_path = newest_source_mtime(source_dir, source_names)
-        try:
-            exe_mtime = exe_path.stat().st_mtime
-        except OSError as exc:
-            report.warn("dist", f"{label} EXE could not be stat'ed", str(exc))
-            continue
-        if source_path and source_mtime > exe_mtime + 1:
-            report.warn("dist", f"{label} EXE is older than source", f"{rel(exe_path)} older than {rel(source_path)}")
+    for app in packaged_apps.APPS:
+        state = packaged_apps.freshness(app)
+        if state.status == "missing":
+            report.warn("dist", f"{app.label} EXE is missing", ", ".join(rel(p) for p in app.exe_paths))
+        elif state.status == "stale":
+            fix = f"run rebuild_apps.bat {app.key}" if not app.auto_rebuild else "run rebuild_apps.bat"
+            report.warn(
+                "dist",
+                f"{app.label} EXE is older than its source ({fix})",
+                f"{rel(state.oldest_exe)} older than {rel(state.newest_source)}",
+            )
         else:
-            report.ok("dist", f"{label} EXE is present and not older than top-level source")
-
-    for path in sorted((BASE_DIR / "pipelines").glob("*/dist_rebuild")):
-        if path.is_dir():
-            report.info("dist", "legacy dist_rebuild folder is present", rel(path))
+            report.ok("dist", f"{app.label} EXE is up to date with its source")
 
 
 def step_status(workflow: dict, step_id: str) -> str:

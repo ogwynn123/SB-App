@@ -30,8 +30,12 @@ The CLI wrappers `wincross_table_generator\unified_pipeline.py` and
 - Without an EXE, the launcher falls back to the source script so
   troubleshooting still works.
 - A source change does not reach an EXE launcher or desktop shortcut until the
-  EXE is rebuilt with that app's `build_*.bat`. `suite_health_check.py` warns
-  when an EXE is older than its source.
+  EXE is rebuilt. Run `..\rebuild_apps.bat` from the package root to back up and
+  rebuild every EXE that is older than its source, then launch-check each one;
+  `rebuild_apps.bat --list` only reports. TOMAS is rebuilt only when named
+  (`rebuild_apps.bat tomas`). Each app's sources come from `packaged_apps.py`,
+  which reads its `.spec` and local imports; `suite_health_check.py` uses the same
+  rule.
 
 ## Dependency setup
 

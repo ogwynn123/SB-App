@@ -89,6 +89,19 @@ one command:
 Pass suite names such as `merge trend` to run a subset, and `-v` for full output. Add `--coverage`
 for a line-coverage report (written to `.tmp_tests\coverage_html\index.html`).
 
+## Rebuilding Packaged Apps
+
+Desktop shortcuts open each app's EXE, so source fixes only reach them after a
+rebuild. To back up and rebuild every out-of-date EXE and check each one starts:
+
+```powershell
+.\rebuild_apps.bat           # rebuild what is stale
+.\rebuild_apps.bat --list    # report only
+.\rebuild_apps.bat merge     # rebuild one app even if fresh
+```
+
+Previous EXEs are kept under `.tmp_archive\exe_backups\<timestamp>\`.
+
 ## Acceptance Smoke Test
 
 Run the synthetic end-to-end workflow after cross-pipeline changes or an EXE
