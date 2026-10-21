@@ -27,8 +27,11 @@ from pathlib import Path
 SECTION_RE = re.compile(r"^\[([A-Z]+)\]\s*$")
 TABLE_START_RE = re.compile(r"^(T[^\s^]+)\^")
 NPA_CODE_RE = re.compile(r"NPA(\d{4})", re.IGNORECASE)
-SELECTOR_VAR_RE = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)\s*\(")
-SELECTOR_TERM_RE = re.compile(r"(?:(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)\s*)?\(([^()]*)\)")
+# WinCross variable names may start with digits (3782_Q16A, 2024REGION) and
+# multi-response variables carry a modifier before the codes (c15_1 S3 (1-51)).
+_VAR_NAME = r"[A-Za-z0-9_]*[A-Za-z_][A-Za-z0-9_]*"
+SELECTOR_VAR_RE = re.compile(rf"(?<![A-Za-z0-9_])({_VAR_NAME})(?:\s+[Ss]\d+)?\s*\(")
+SELECTOR_TERM_RE = re.compile(rf"(?:(?<![A-Za-z0-9_])({_VAR_NAME})(?:\s+[Ss]\d+)?\s*)?\(([^()]*)\)")
 NON_VARIABLE_WORDS = {"AND", "OR", "NOT", "NET", "CALC", "TN"}
 # Merge methods whose primary column holds the same question for the new wave.
 RENAMING_METHODS = {"manual", "auto", "fuzzy", "exact", "join"}
@@ -223,7 +226,7 @@ def load_merged_data(path: Path, needed: set[str]) -> MergedData:
     return MergedData(columns, sorted(waves, key=_wave_sort_key), values)
 
 
-def _code_matches(code: str, observed: Counter) -> bool:
+def code_matches(code: str, observed: Counter) -> bool:
     code = code.strip()
     if not code:
         return observed.get("", 0) > 0
@@ -311,7 +314,7 @@ def check_against_data(
                         ))
                 latest = by_wave.get(data.latest_wave, Counter())
                 for code in [c for c in codes.split(",")]:
-                    if code.strip() and not _code_matches(code, latest):
+                    if code.strip() and not code_matches(code, latest):
                         issues.append(Issue(
                             "Minor", "Human review", location,
                             f"Code `{code.strip()}` of `{column}` matches no respondent in the latest wave.",

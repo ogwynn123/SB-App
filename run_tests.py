@@ -44,6 +44,7 @@ SUITES: tuple[Suite, ...] = (
     Suite("tomas", "pipelines/thomas_in_a_box", (
         "-m", "unittest", "test_tomas_docx_rebuilder.py", "test_tomas_pipeline.py", "test_tomas_translate.py",
     )),
+    Suite("qc", "pipelines/qc_checker", ("-m", "unittest", "test_prelim_qc.py")),
     Suite("catalog", "pipelines/catalogger", (
         "-m", "unittest", "test_repository_dashboard_data_intake.py", "test_survey_catalog.py",
     )),

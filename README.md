@@ -20,6 +20,7 @@ git-ignored.
 | `docs\design\SURVEY_PLATFORM_SPEC.md` | Original platform design (March 2026) and what was built |
 | `pipelines\README.md` | Pipeline folders, launchers, build dependencies |
 | `acceptance\README.md` | Synthetic end-to-end acceptance contract |
+| `docs\QC_GUIDE.md` | QC audit guide (final report); `pipelines\qc_checker` runs its preliminary checks |
 | `local_browser_app\README.md` | Browser workbench scope |
 
 Each pipeline folder has its own README where one exists.
