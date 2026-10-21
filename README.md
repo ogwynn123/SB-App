@@ -12,6 +12,8 @@ This directory mirrors the layout expected by `survey_tool_cli.py` and includes:
 The authoritative repository/control-plane structure is documented in:
 
 - `REPOSITORY_STRUCTURE.md`
+- `AGENT_HANDOFF.md` for the current cross-pipeline implementation state,
+  workflow decisions, regression contracts, and continuation instructions
 
 This bundle intentionally excludes or only partially includes:
 
@@ -89,6 +91,17 @@ specialist applications after the data checks. See
 `acceptance\README.md` for the exact contract.
 
 ## GUI Entry Point
+
+For the local browser version of the essential production tools, run:
+
+```powershell
+.\run_survey_browser.bat
+```
+
+It opens a localhost dashboard for Table Gen, Sheet Merge, Open-End Coder,
+Question Browser, Auto Results, and the read-only Quota Checker review while
+continuing to use the existing pipeline cores. See `local_browser_app/README.md`
+for the deliberately simplified version and its test command.
 
 For daily work in an existing client survey folder, use the lightweight Survey
 Launcher:

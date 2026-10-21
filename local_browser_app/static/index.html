@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="app-token" content="__APP_TOKEN__">
+  <title>Survey Workbench</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">SW</div>
+      <div>
+        <h1>Survey Workbench</h1>
+        <p>Essential production tools, running locally</p>
+      </div>
+    </div>
+    <div class="health" id="health"><span></span> Connecting</div>
+  </header>
+
+  <nav class="tabs" aria-label="Tools">
+    <button class="tab active" data-tab="table-gen"><span>01</span> Table Gen</button>
+    <button class="tab" data-tab="sheet-merge"><span>02</span> Sheet Merge</button>
+    <button class="tab" data-tab="oe-coder"><span>03</span> OE Coder</button>
+    <button class="tab" data-tab="questions"><span>04</span> Question Browser</button>
+    <button class="tab" data-tab="auto-results"><span>05</span> Auto Results</button>
+    <button class="tab" data-tab="quota-checker"><span>06</span> Quota Checker</button>
+  </nav>
+
+  <main>
+    <section class="tool active" id="table-gen">
+      <div class="tool-heading">
+        <div><p class="eyebrow">WinCross setup</p><h2>Table Generator</h2></div>
+        <p>Find matching questionnaire DOCX/PDF files, check their outputs, and run the existing generator.</p>
+      </div>
+      <div class="card">
+        <div class="form-grid wide-first">
+          <label>Job folder<input id="tg-root" placeholder="C:\…\Job\Table Gen"></label>
+          <label>Output folder <small>optional</small><input id="tg-output-root" placeholder="Leave blank to write beside questionnaire"></label>
+        </div>
+        <div class="actions">
+          <button class="primary" id="tg-discover">Discover questionnaires</button>
+          <label class="check"><input type="checkbox" id="tg-banners" checked> Banners</label>
+          <label class="check"><input type="checkbox" id="tg-cover" checked> Cover</label>
+          <span class="status" id="tg-status"></span>
+        </div>
+      </div>
+      <div class="card hidden" id="tg-jobs-card">
+        <div class="card-title"><h3>Discovered jobs</h3><button class="primary" id="tg-run">Run selected</button></div>
+        <div class="table-wrap"><table><thead><tr><th></th><th>Questionnaire</th><th>Folder</th><th>State</th><th>Outputs</th></tr></thead><tbody id="tg-jobs"></tbody></table></div>
+      </div>
+    </section>
+
+    <section class="tool" id="sheet-merge">
+      <div class="tool-heading">
+        <div><p class="eyebrow">Daily data</p><h2>Sheet Merge</h2></div>
+        <p>Preview the mapping first. The reviewed mapping remains authoritative while unmapped secondary fields are carried forward.</p>
+      </div>
+      <div class="card">
+        <div class="split">
+          <fieldset><legend>Primary / current file</legend>
+            <label>Path<input id="sm-primary" placeholder="C:\…\NPA####ts.csv"></label>
+            <div class="inline"><label>Sheet<input id="sm-primary-sheet" placeholder="First sheet"></label><label>Join column<input id="sm-primary-join" placeholder="Survnum"></label></div>
+          </fieldset>
+          <fieldset><legend>Secondary / appended file</legend>
+            <label>Path<input id="sm-secondary" placeholder="C:\…\new delivery.csv"></label>
+            <div class="inline"><label>Sheet<input id="sm-secondary-sheet" placeholder="First sheet"></label><label>Join column<input id="sm-secondary-join" placeholder="Survnum"></label></div>
+          </fieldset>
+        </div>
+        <label>Output path <small>optional; a timestamped name is chosen when blank</small><input id="sm-output" placeholder="C:\…\NPA####ts.csv"></label>
+        <div class="actions">
+          <button class="primary" id="sm-preview">Preview mapping</button>
+          <label class="check"><input type="checkbox" id="sm-report" checked> Mapping report</label>
+          <label class="check"><input type="checkbox" id="sm-archive"> Archive secondary copy</label>
+          <label class="select-label">Rows <select id="sm-row-order"><option value="secondary_first">Earlier first (secondary)</option><option value="primary_first">Primary first</option></select></label>
+          <span class="status" id="sm-status"></span>
+        </div>
+      </div>
+      <div class="grid-two hidden" id="sm-review">
+        <div class="card">
+          <div class="card-title"><h3>Reviewed mapping</h3><span class="pill" id="sm-map-count"></span></div>
+          <p class="hint">One <code>primary=secondary</code> pair per line. Use <code>primary=</code> to block a primary field.</p>
+          <textarea id="sm-mapping" class="mapping" spellcheck="false"></textarea>
+          <div class="actions"><button class="primary" id="sm-run">Run merge</button><label class="check"><input type="checkbox" id="sm-manual-only"> Only these mappings</label></div>
+        </div>
+        <div class="card"><h3>Preflight</h3><div class="metrics" id="sm-metrics"></div><div class="callout" id="sm-notes"></div></div>
+      </div>
+    </section>
+
+    <section class="tool" id="oe-coder">
+      <div class="tool-heading">
+        <div><p class="eyebrow">Record review</p><h2>Open-End Coder</h2></div>
+        <p>Keep a persistent coding session, review verbatims by question, and export coded data or WinCross rows.</p>
+      </div>
+      <div class="card">
+        <div class="form-grid three">
+          <label>Data CSV/XLSX<input id="oe-data" placeholder="C:\…\data.csv"></label>
+          <label>Session file <small>optional on first import</small><input id="oe-session" placeholder="C:\…\NPA####.oe_session.sqlite"></label>
+          <label>Record key <small>auto-detected when blank</small><input id="oe-key" placeholder="Survnum"></label>
+          <label>Codelist <small>optional</small><input id="oe-codelist" placeholder="C:\…\codelist.xlsx"></label>
+          <label>Survey ID <small>optional</small><input id="oe-survey" placeholder="NPA####"></label>
+        </div>
+        <div class="actions"><button class="primary" id="oe-import">Import / refresh data</button><button id="oe-open">Open existing session</button><span class="status" id="oe-status"></span></div>
+      </div>
+      <div class="hidden" id="oe-workspace">
+        <div class="card oe-toolbar">
+          <label>Question<select id="oe-question"></select></label>
+          <label>Status<select id="oe-filter"><option value="all">All</option><option value="pending">Pending</option><option value="coded">Coded</option><option value="flagged">Flagged</option></select></label>
+          <label>Search<input id="oe-search" placeholder="Verbatim or record"></label>
+          <button id="oe-refresh">Refresh</button>
+          <span class="status" id="oe-progress"></span>
+        </div>
+        <div class="oe-layout">
+          <div class="card response-list"><div id="oe-responses"></div></div>
+          <div class="card editor">
+            <div class="card-title"><h3 id="oe-record">Select a response</h3><span class="pill" id="oe-import-state"></span></div>
+            <blockquote id="oe-verbatim">Choose a record on the left.</blockquote>
+            <p class="hint" id="oe-original"></p>
+            <label>Final codes <small>comma separated, in slot order</small><input id="oe-codes" list="oe-code-list"></label><datalist id="oe-code-list"></datalist>
+            <label>Note<textarea id="oe-note" rows="3"></textarea></label>
+            <div class="actions"><label class="check"><input type="checkbox" id="oe-flagged"> Flag for review</label><label class="check"><input type="checkbox" id="oe-matching"> Apply to identical text</label></div>
+            <div class="actions"><button class="primary" id="oe-save">Save codes</button><button id="oe-reset">Restore original</button></div>
+            <hr>
+            <details><summary>Add or update a code label</summary>
+              <div class="inline"><label>Code<input id="oe-new-code"></label><label>Label<input id="oe-new-label"></label></div>
+              <div class="inline"><label>Supercategory<input id="oe-new-super"></label><label>Direction<select id="oe-new-direction"><option value="o">Neutral</option><option value="+">Positive</option><option value="-">Negative</option></select></label></div>
+              <button id="oe-save-code">Save code label</button>
+            </details>
+          </div>
+        </div>
+        <div class="card export-row">
+          <label>Export path<input id="oe-export-path" placeholder="C:\…\data.OE-coded.csv"></label>
+          <label>Format<select id="oe-export-kind"><option value="coded_csv">Coded CSV</option><option value="wincross">WinCross table rows</option><option value="codebook">Codebook XLSX</option><option value="audit">Audit CSV</option></select></label>
+          <button class="primary" id="oe-export">Export</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="tool" id="questions">
+      <div class="tool-heading">
+        <div><p class="eyebrow">Repository</p><h2>Question Browser</h2></div>
+        <p>Search questionnaire text, answer choices, targets, families, and tags across the local repository.</p>
+      </div>
+      <div class="card question-search">
+        <div class="search-line"><input id="qb-query" placeholder="Search question wording, answers, people, issues…"><button class="primary" id="qb-search">Search</button></div>
+        <div class="filters">
+          <label>Match<select id="qb-mode"><option value="all_words">All words</option><option value="exact">Exact phrase</option><option value="any_word">Any word</option></select></label>
+          <label>State<select id="qb-state"><option value="">All</option></select></label>
+          <label>Client<select id="qb-client"><option value="">All</option></select></label>
+          <label>Type<select id="qb-type"><option value="">All</option></select></label>
+          <label>Family<select id="qb-family"><option value="">All</option></select></label>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title"><h3 id="qb-count">Questions</h3><div class="pagination"><button id="qb-prev">←</button><span id="qb-page">Page 1</span><button id="qb-next">→</button></div></div>
+        <div class="question-results" id="qb-results"><div class="empty">Enter a phrase or choose filters to search  the question repository.</div></div>
+      </div>
+    </section>
+
+    <section class="tool" id="auto-results">
+      <div class="tool-heading">
+        <div><p class="eyebrow">Deliverables</p><h2>Auto Results</h2></div>
+        <p>Fill a results template from DOCX marginals or an XLSX export, with an optional alignment report.</p>
+      </div>
+      <div class="card compact-card">
+        <div class="form-grid">
+          <label>Value source<select id="ar-source"><option value="docx">Marginals DOCX</option><option value="xlsx">Marginal XLSX</option></select></label>
+          <label id="ar-marginals-label">Marginals DOCX<input id="ar-marginals" placeholder="C:\…\marginals.docx"></label>
+          <label id="ar-xlsx-label" class="hidden">Marginal XLSX<input id="ar-xlsx" placeholder="C:\…\marginals.xlsx"></label>
+          <label>Results template DOCX<input id="ar-template" placeholder="C:\…\results template.docx"></label>
+          <label>Output DOCX<input id="ar-output" placeholder="C:\…\Results.docx"></label>
+          <label>Placeholder<input id="ar-placeholder" value="!!"></label>
+        </div>
+        <div class="actions"><button class="primary" id="ar-run">Generate results</button><label class="check"><input type="checkbox" id="ar-report" checked> Alignment report</label><span class="status" id="ar-status"></span></div>
+        <div class="callout">If a selected file is empty, the app identifies it directly. If Word or the Explorer preview pane has locked a document, you will get a separate close-the-file message.</div>
+      </div>
+    </section>
+
+    <section class="tool" id="quota-checker">
+      <div class="tool-heading">
+        <div><p class="eyebrow">Sample progress</p><h2>Quota Checker</h2></div>
+        <p>Read the quota workbook in its original order, map each sample variable, and compare target, current count, and difference side by side.</p>
+      </div>
+      <div class="card">
+        <div class="form-grid wide-first">
+          <label>Quota workbook XLSX<input id="qc-quota" placeholder="C:\…\NPA#### Quotas Mins.xlsx"></label>
+          <label>Pulled sample CSV/XLSX<input id="qc-sample" placeholder="C:\…\NPA#### sample.csv"></label>
+        </div>
+        <div class="actions">
+          <button class="primary" id="qc-load">Load quota sheet</button>
+          <span class="status" id="qc-status"></span>
+        </div>
+      </div>
+
+      <div class="hidden" id="qc-workspace">
+        <div class="quota-summary" id="qc-summary"></div>
+
+        <div class="card quota-mapping-card">
+          <div class="card-title">
+            <div><h3>Sample mappings</h3><p class="hint">Detected columns are preselected. Blank or incorrect mappings remain visible as “Needs mapping” in the quota sheet.</p></div>
+            <button class="primary" id="qc-apply">Apply mappings</button>
+          </div>
+          <h4>Base and sample structure</h4>
+          <div class="quota-mapping-grid" id="qc-fixed-mappings"></div>
+          <div id="qc-category-section">
+            <h4>Quota variables</h4>
+            <div class="quota-mapping-grid" id="qc-category-mappings"></div>
+          </div>
+          <div class="hidden" id="qc-oversample-section">
+            <h4>Oversample identification</h4>
+            <p class="hint">Sample Type separates base from oversample. When there is more than one oversample, add the extra column and value that identifies each one.</p>
+            <div id="qc-section-mappings"></div>
+          </div>
+          <div class="quota-column-profile" id="qc-column-profile"></div>
+        </div>
+
+        <div class="card hidden" id="qc-notes-card">
+          <h3>Workbook notes</h3>
+          <ul class="quota-notes" id="qc-notes"></ul>
+        </div>
+
+        <div class="quota-paper">
+          <div class="quota-paper-head">
+            <div><p class="eyebrow" id="qc-sheet-name"></p><h3 id="qc-title"></h3></div>
+            <div class="quota-legend"><span class="quota-dot full"></span>On quota <span class="quota-dot open"></span>Open <span class="quota-dot issue"></span>Issue <span class="quota-dot unmapped"></span>Needs mapping</div>
+          </div>
+          <div id="qc-sheet"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <aside class="job-console hidden" id="job-console">
+    <div class="console-head"><div><strong id="job-name">Running</strong><span id="job-state"></span></div><button id="job-close" aria-label="Close">×</button></div>
+    <pre id="job-log"></pre>
+    <div id="job-result"></div>
+  </aside>
+
+  <div class="toast hidden" id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
+
