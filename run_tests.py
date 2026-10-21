@@ -33,7 +33,7 @@ SUITES: tuple[Suite, ...] = (
         "test_survey_pipeline_gui.py", "test_golden_compare.py",
     )),
     Suite("trend", "pipelines/trend_table_updater", ("-m", "unittest", "test_trend_table_updater_core.py")),
-    Suite("merge", "pipelines/table_merger", ("-m", "unittest", "test_sheet_merge_core.py", "test_sheetMerging_gui.py", "test_carryover_tables.py")),
+    Suite("merge", "pipelines/table_merger", ("-m", "unittest", "test_sheet_merge_core.py", "test_sheetMerging_gui.py", "test_carryover_tables.py", "test_sample_append.py")),
     Suite("auto_results", "pipelines/auto_results", ("-m", "unittest", "test_autoResults_alignment.py")),
     Suite("quota", "pipelines/sample_quota_checker", (
         "-m", "unittest", "test_sample_quota_checker.py", "test_quota_workbook_scraper.py",
