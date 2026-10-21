@@ -74,6 +74,18 @@ and temp folders:
 .\run_suite_health_check.bat --workspace NPA3804
 ```
 
+## Regression Tests
+
+Run every pipeline's unit tests, and optionally the acceptance smoke test, with
+one command:
+
+```powershell
+.\run_tests.bat
+.\run_tests.bat --acceptance
+```
+
+Pass suite names such as `merge trend` to run a subset, and `-v` for full output.
+
 ## Acceptance Smoke Test
 
 Run the synthetic end-to-end workflow after cross-pipeline changes or an EXE

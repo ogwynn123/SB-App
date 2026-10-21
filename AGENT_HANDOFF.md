@@ -11,8 +11,8 @@ the current working session. Read this before changing any pipeline behavior.
 ## Fast start for the next agent
 
 1. Work from `C:\Users\normi\venv\SurveyPlatform`.
-2. Run `git status --short` before editing. The tree contains important,
-   uncommitted user work. Do not reset, revert, clean, or overwrite it.
+2. Run `git status --short` before editing. If the tree has uncommitted user
+   work, do not reset, revert, clean, or overwrite it.
 3. Treat this packaged `SurveyPlatform` directory as the authoritative control
    plane. Older copies elsewhere under `C:\Users\normi\venv` are reference only.
 4. Read the component README named in the relevant section below, inspect the
@@ -20,14 +20,15 @@ the current working session. Read this before changing any pipeline behavior.
    changes.
 5. Prefer source launchers while debugging. Specialist launchers are EXE-first,
    so an old `dist` build can hide a correct source change.
-6. After cross-pipeline work, run `py -3 acceptance_smoke.py` from the project
-   root. It uses synthetic data and does not touch archive projects.
+6. After cross-pipeline work, run `.\run_tests.bat --acceptance` from the
+   project root. The acceptance stage uses synthetic data and does not touch
+   archive projects.
 
 Suggested continuation prompt:
 
 > Use `C:\Users\normi\venv\SurveyPlatform\AGENT_HANDOFF.md` as the authoritative
-> handoff for this survey workflow. Inspect the dirty working tree before making
-> changes, preserve all current modifications, and follow the component
+> handoff for this survey workflow. Inspect the working tree before making
+> changes, preserve any uncommitted modifications, and follow the component
 > contracts and regression-test commands in the handoff. The packaged
 > `SurveyPlatform` directory is the authoritative implementation.
 
@@ -38,6 +39,15 @@ area: WinCross rules, trend updater, sheet merge, Auto Results, quota scraper
 and browser review, the local browser workbench, and this document. Old root
 scratch files were moved into the ignored `.tmp_archive/` folder; keep
 `.tmp_tests/` in place because the merge tests use it as their temp directory.
+
+Later on 2026-10-21 the project was tidied: about 850 MB of stale
+`build_rebuild*`/`dist_rebuild`/`working_snapshots` output was deleted, unused
+legacy scripts (old Auto Results scripts, `surveyJSONer.py`, `sheetMerging.R`,
+the legacy WinCross GUI, one-off catalog audits) were removed from git, and the
+Quota Checker and Trend Table Updater EXEs were rebuilt from current source.
+The previous EXEs are in `.tmp_archive\exe_backup_20261021\`. The desktop
+shortcuts target each pipeline's normal `dist\` EXE.
+
 Still run `git status --short` before editing and preserve any user work.
 
 ## System model
@@ -535,15 +545,19 @@ All of these passed on 2026-10-21:
 
 | Area | Result |
 |---|---:|
-| WinCross compiler/classification/parser | 96 tests passed |
+| WinCross compiler/classification/parser/banner/cover/GUI | 107 tests passed |
 | Trend Table Updater | 19 tests passed |
-| Sheet Merge | 38 tests passed |
+| Sheet Merge core and GUI | 56 tests passed |
 | Auto Results | 13 tests passed |
 | Quota Checker/scraper | 10 tests passed |
-| Local browser app | 8 tests passed |
 | Open-End Coder | 36 tests passed |
-| Focused total | 220 tests passed |
-| Synthetic end-to-end acceptance | all 10 stages passed |
+| TOMAS | 9 tests passed |
+| Catalog/repository dashboard | 12 tests passed |
+| Channel builder, Survey Writer | 8 tests passed |
+| Local browser app | 8 tests passed |
+| Survey Launcher and acceptance harness | 15 tests passed |
+| Total (`run_tests.bat`) | 293 tests passed |
+| Synthetic end-to-end acceptance with `--gui-smoke` | all 11 stages passed |
 
 The acceptance report for that run is:
 
@@ -551,42 +565,18 @@ The acceptance report for that run is:
 acceptance_runs\20261021_111554_9b0251\acceptance_report.txt
 ```
 
-Commands:
+Run every suite from the SurveyPlatform root with:
 
 ```powershell
-# From pipelines\wincross_table_generator
-py -3 -m unittest test_wincrossTableCompile.py test_question_attributes.py test_surveyConvertJSON.py
-
-# From pipelines\trend_table_updater
-py -3 -m unittest test_trend_table_updater_core.py
-
-# From SurveyPlatform root; using the repo-local temp folder avoids managed
-# Windows sandbox permission errors from arbitrary TemporaryDirectory paths.
-$tmp = Resolve-Path .\.tmp_tests
-$env:TEMP = $tmp.Path
-$env:TMP = $tmp.Path
-py -3 .\pipelines\table_merger\test_sheet_merge_core.py
-
-# From pipelines\auto_results
-py -3 -m unittest test_autoResults_alignment.py
-
-# From pipelines\sample_quota_checker
-py -3 -m unittest test_sample_quota_checker.py test_quota_workbook_scraper.py
-
-# From SurveyPlatform root
-py -3 -m unittest local_browser_app.test_local_browser_app
-
-# From pipelines\open_end_coder
-py -3 -m unittest test_oe_codebook_gui.py test_oe_record_coder_core.py test_oe_record_coder_gui.py
-
-# From SurveyPlatform root
-py -3 acceptance_smoke.py
+.\run_tests.bat                 # all 12 unit-test suites
+.\run_tests.bat --acceptance    # plus the synthetic end-to-end smoke test
+.\run_tests.bat merge trend -v  # selected suites with full output
 ```
 
-The merger suite can falsely fail with `PermissionError` when Windows sandbox
-restrictions block files under a newly selected temp directory. Point `TEMP`
-and `TMP` to the existing repo-local `.tmp_tests` as shown before diagnosing a
-code regression.
+`run_tests.py` lists each suite's folder and test files and sets `TEMP`/`TMP`
+to the repo-local `.tmp_tests`. That avoids false `PermissionError` failures
+from Windows sandbox restrictions on newly created temp directories. Add new
+test files to its `SUITES` table.
 
 ## Current design limits and next likely work
 
