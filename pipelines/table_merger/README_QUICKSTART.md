@@ -66,6 +66,22 @@ If JSON files are not set, Auto Fill still works in non-semantic mode.
 
 You can change these in Basic/Advanced settings before running.
 
+### Combined Demographics carry-over
+
+After a timeseries merge (a new wave stacked onto `NPA####ts`), the app looks
+for the previous wave's WinCross job (`<previous project>\Job\NPA####.job`) and
+writes two review files next to the merged output:
+
+- `<output>_carryover_combined_demos.txt`: the previous job's Combined
+  Demographics table(s), copied verbatim except for variables the merge mapped
+  to a new column name.
+- `<output>_carryover_report.md`: every variable and code checked against the
+  merged data by wave, with Major/Minor issues marked for human review (for
+  example a variable blank for a whole wave, or not asked in the new wave).
+
+Nothing is pasted into a job automatically; review the report, then copy the
+table into the new job.
+
 ## 5. Troubleshooting
 
 ### Auto Fill crash or app closes unexpectedly

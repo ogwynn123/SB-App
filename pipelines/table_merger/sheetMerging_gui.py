@@ -2230,6 +2230,30 @@ class SheetMergeGUI:
             self.log(traceback.format_exc().strip())
             messagebox.showerror("Sample generation failed", str(exc))
 
+    def _carry_over_combined_demographics(self, run_path: Path | None) -> str:
+        """Local-engine counterpart of the CLI's post-merge Combined Demographics carry-over."""
+        if not run_path:
+            return ""
+        try:
+            run = json.loads(Path(run_path).read_text(encoding="utf-8-sig"))
+            if not run.get("timeseries_enabled"):
+                return ""
+            import carryover_tables
+
+            result = carryover_tables.carry_over_combined_demographics(Path(run_path))
+        except Exception as exc:
+            self.log(f"Carry-over skipped: {exc}")
+            return ""
+        if result is None:
+            return ""
+        note = (
+            f"Carry-over review: {result.text_path}\n"
+            f"Carry-over report: {result.report_path} ({len(result.issues)} issue(s))"
+        )
+        for line in note.splitlines():
+            self.log(line)
+        return note
+
     def run_merge_click(self) -> None:
         self.log("Starting merge...")
         try:
@@ -2261,6 +2285,7 @@ class SheetMergeGUI:
             output_path = ""
             appended_rows = ""
             conflict_rows = ""
+            carryover_lines: list[str] = []
             for line in lines:
                 if line.startswith("Output: "):
                     output_path = line.split(":", 1)[1].strip()
@@ -2268,11 +2293,14 @@ class SheetMergeGUI:
                     appended_rows = line.split(":", 1)[1].strip()
                 elif line.startswith("Conflicts detected: "):
                     conflict_rows = line.split(":", 1)[1].strip()
+                elif line.startswith(("Carry-over review: ", "Carry-over report: ")):
+                    carryover_lines.append(line)
             messagebox.showinfo(
                 "Merge complete",
                 f"Output: {output_path or '(see log)'}\n"
                 f"Appended rows: {appended_rows or '(see log)'}\n"
-                f"Conflicts: {conflict_rows or '(see log)'}",
+                f"Conflicts: {conflict_rows or '(see log)'}"
+                + ("\n\n" + "\n".join(carryover_lines) if carryover_lines else ""),
             )
         except Exception as exc:
             self._set_backend_status("Fallback local (merge)")
@@ -2306,13 +2334,15 @@ class SheetMergeGUI:
                     self.log(f"Catalog survey JSON: {result.catalog_survey_path}")
                 if result.catalog_run_path:
                     self.log(f"Catalog run JSON: {result.catalog_run_path}")
+                carryover_note = self._carry_over_combined_demographics(result.catalog_run_path)
                 messagebox.showinfo(
                     "Merge complete",
                     "Output: "
                     f"{result.output_path}\n"
                     f"Appended rows: {result.appended_rows}\n"
                     f"Conflicts: {result.conflict_rows}\n"
-                    f"Catalog master: {result.catalog_master_path or '(see log)'}",
+                    f"Catalog master: {result.catalog_master_path or '(see log)'}"
+                    + (f"\n\n{carryover_note}" if carryover_note else ""),
                 )
             except Exception as inner:
                 self._set_backend_status("error (merge)")

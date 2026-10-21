@@ -5002,6 +5002,25 @@ def _format_semantic_findings(title: str, rows: Iterable[tuple[str, str, int]]) 
         print(f"  {pcol} -> {scol} (score={score})")
 
 
+def _carry_over_combined_demographics(run_path: Path) -> None:
+    """After a timeseries merge, write the previous wave's Combined Demographics for review."""
+    try:
+        run = json.loads(Path(run_path).read_text(encoding="utf-8-sig"))
+        if not run.get("timeseries_enabled"):
+            return
+        import carryover_tables
+
+        result = carryover_tables.carry_over_combined_demographics(Path(run_path))
+    except Exception as exc:  # never fail a finished merge over the review files
+        print(f"Carry-over skipped: {exc}")
+        return
+    if result is None:
+        print("Carry-over: no previous-wave job with a Combined Demographics table was found.")
+        return
+    print(f"Carry-over review: {result.text_path}")
+    print(f"Carry-over report: {result.report_path} ({len(result.issues)} issue(s))")
+
+
 def cmd_merge(args: argparse.Namespace, cfg_all: dict, cfg_path: Path) -> int:
     merge = _require_merge_core()
     cfg = {} if args.ignore_config else cfg_all.get("merge", {})
@@ -5383,6 +5402,7 @@ def cmd_merge(args: argparse.Namespace, cfg_all: dict, cfg_path: Path) -> int:
         print(f"Catalog survey JSON: {result.catalog_survey_path}")
     if result.catalog_run_path:
         print(f"Catalog run JSON: {result.catalog_run_path}")
+        _carry_over_combined_demographics(result.catalog_run_path)
     if repo_link_write_mappings:
         try:
             repo_cfg = cfg_all.get("repo", {})

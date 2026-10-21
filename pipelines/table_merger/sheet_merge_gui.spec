@@ -20,6 +20,7 @@ datas = [
     ("unified_merge.py", "."),
     ("..\\..\\survey_tool_cli.py", "."),
     ("sheet_merge_core.py", "sheetMerge"),
+    ("carryover_tables.py", "sheetMerge"),
     ("..\\wincross_table_generator\\survey_pipeline.py", "wincross_table_generator"),
 ]
 if (TCL_ROOT / "tcl8.6").exists():

@@ -387,6 +387,18 @@ The reviewed mapping is authoritative:
 - A true prefixed-name collision should stop with a diagnostic rather than
   silently overwrite data.
 
+After a timeseries merge, `carryover_tables.py` copies the previous wave's
+Combined Demographics table(s) from `<previous project>\Job\NPA####.job` into
+`<merged output stem>_carryover_combined_demos.txt` with a
+`_carryover_report.md` issue register. Combined demos follow the last job in the
+same region and cannot be predicted from a standalone questionnaire, so the
+tables are copied verbatim. A variable is renamed only when the merge mapped it
+manually/fuzzy/join to a differently named primary column; columns kept only for
+older waves (`*_extra`, e.g. `3787_q10a`) are never substituted and are flagged.
+Every variable/code is checked against the merged data by wave. No .job file is
+edited; analysts may still choose another column (TX-15/TX-35 switched `race` to
+`old_tsmr_race`). Validated on 9 consecutive-wave pairs: 7 identical to the final.
+
 Guided daily merge saves the resolved map below
 `workspace\NPA####\inputs\merge\maps` and reuses it only while the reviewed
 primary/secondary headers still match. First-day setup belongs in the Advanced
