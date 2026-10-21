@@ -56,3 +56,18 @@ py -3 -m pip install -r requirements.txt
 ## Tests
 
 From the package root: `.\run_tests.bat wincross`.
+
+## Comparing against finished jobs
+
+`golden_compare.py` runs the current pipeline on copies of archive jobs and
+compares the generated TABLES with each job's final, hand-edited `.job` file.
+The copies live in the git-ignored `corpus\wincross\NPA####\` folders (Final
+DOCX/PDF, `final.job`, `historical\` autogen output, `source.json`), and
+reports go to `corpus\reports\<timestamp>\` (`summary.md`, `tables.csv`, and one
+Markdown file per job). Client data in the corpus must never be committed.
+
+```powershell
+py -3 golden_compare.py                  # all corpus jobs, reusing generated output
+py -3 golden_compare.py --regenerate     # rerun Table Gen first
+py -3 golden_compare.py --job NPA3873
+```

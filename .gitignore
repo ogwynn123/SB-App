@@ -50,3 +50,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Local regression corpora copied from client archive jobs (never commit)
+/corpus/
