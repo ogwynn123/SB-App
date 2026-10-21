@@ -19,6 +19,7 @@ from survey_launcher_core import (
     APP_ROOT,
     SETTINGS_PATH,
     TOOLS,
+    active_tools,
     ProjectContext,
     ToolSpec,
     default_append_data_file,
@@ -250,7 +251,8 @@ class SurveyLauncherApp:
     def _refresh_tools(self) -> None:
         selected = self.selected_tool_key()
         self.tool_tree.delete(*self.tool_tree.get_children())
-        for tool in TOOLS:
+        self.tools = active_tools(self.app_root)
+        for tool in self.tools:
             folder = tool.folder_label
             status = "Select project"
             if self.context is not None:
@@ -275,7 +277,7 @@ class SurveyLauncherApp:
                     except (FileNotFoundError, ValueError):
                         status = "App unavailable"
             self.tool_tree.insert("", tk.END, iid=tool.key, text=tool.label, values=(folder, status))
-        target = selected if selected in {tool.key for tool in TOOLS} else TOOLS[0].key
+        target = selected if selected in {tool.key for tool in self.tools} else self.tools[0].key
         self.tool_tree.selection_set(target)
         self.tool_tree.focus(target)
         self._tool_selected()
@@ -286,7 +288,7 @@ class SurveyLauncherApp:
 
     def selected_tool(self) -> ToolSpec | None:
         key = self.selected_tool_key()
-        return next((tool for tool in TOOLS if tool.key == key), None)
+        return next((tool for tool in self.tools if tool.key == key), None)
 
     def _tool_selected(self, _event: tk.Event[Any] | None = None) -> None:
         tool = self.selected_tool()

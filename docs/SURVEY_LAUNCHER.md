@@ -15,7 +15,7 @@ remains inside each specialist application or pipeline module.
 | Trend Table Updater | Trend app | `Job\Table Gen` |
 | Auto Results | Auto Results app | `Data\Partial\Results` or `Data` |
 | Preliminary QC | launcher action over `pipelines\qc_checker\prelim_qc.py`; report in `Job\QC\<timestamp>` | `Job` |
-| TOMAS | TOMAS app | `Qst\Spanish Ver` |
+| TOMAS (hidden unless turned on, see below) | TOMAS app | `Qst\Spanish Ver` |
 | Repository & Question Browser | full dashboard (`survey_platform_gui.py`) | project root |
 | Browser Workbench | `run_survey_browser.bat` | project root |
 
@@ -23,6 +23,18 @@ Sample Append defaults to the newest `Data\NPA####ts*.csv` and remembers the
 project's column mapping (`DATA_COLUMN=SAMPLE_COLUMN`) in the project manifest.
 When any packaged EXE is older than its source, the Activity log says so and
 points to `rebuild_apps.bat`.
+
+TOMAS is off by default: it is hidden from the launcher and dashboard (buttons,
+panel, survey-table column, and checklist steps) and skipped by the health
+check and packaged-app launch check. To turn it on, add this to the
+machine-local `survey_tool_config.json`:
+
+```json
+{"features": {"tomas": true}}
+```
+
+or set `SURVEYPLATFORM_TOMAS=1` for one session. The TOMAS code and its tests
+are unchanged, and `rebuild_apps.bat` rebuilds it only when named.
 
 ## Launch
 

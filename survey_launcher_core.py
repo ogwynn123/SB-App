@@ -245,6 +245,23 @@ TOOLS: tuple[ToolSpec, ...] = (
 )
 
 TOOL_BY_KEY = {tool.key: tool for tool in TOOLS}
+# Tools hidden unless their platform feature is turned on (see platform_features.py).
+OPTIONAL_TOOL_FEATURES = {"tomas": "tomas"}
+
+
+def active_tools(app_root: Path = APP_ROOT) -> tuple[ToolSpec, ...]:
+    """TOOLS without optional tools whose feature is off (TOMAS is off by default)."""
+    try:
+        if str(app_root) not in sys.path:
+            sys.path.insert(0, str(app_root))
+        from platform_features import feature_enabled
+    except Exception:
+        return tuple(tool for tool in TOOLS if tool.key not in OPTIONAL_TOOL_FEATURES)
+    return tuple(
+        tool for tool in TOOLS
+        if tool.key not in OPTIONAL_TOOL_FEATURES
+        or feature_enabled(OPTIONAL_TOOL_FEATURES[tool.key], app_root / "survey_tool_config.json")
+    )
 
 
 @dataclass(frozen=True)

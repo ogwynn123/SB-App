@@ -324,5 +324,7 @@ dependencies is in `pipelines\README.md`. Desktop shortcuts open each app's
 
 - `repository/` is local, git-ignored metadata. It reflects the source/archive path and state from the last `repo scan`.
 - If the live survey folders change, run `repo scan` again to refresh the repository index.
-- TOMAS still requires its normal OpenAI credentials at runtime.
+- TOMAS is off by default; turn it on with `{"features": {"tomas": true}}` in
+  `survey_tool_config.json` (see `docs\SURVEY_LAUNCHER.md`). It still requires
+  its normal OpenAI credentials at runtime.
 - Treat this package as the authoritative repository app and control plane. The specialist apps remain supported day-to-day tools, and older repo dashboards outside this package are legacy references.

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import packaged_apps
+from platform_features import tomas_enabled
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -200,6 +201,9 @@ def check_build_recipes(report: Report) -> None:
 
 def check_exe_freshness(report: Report) -> None:
     for app in packaged_apps.APPS:
+        if app.key == "tomas" and not tomas_enabled():
+            report.info("dist", "TOMAS is turned off (features.tomas); its EXE is not checked")
+            continue
         state = packaged_apps.freshness(app)
         if state.status == "missing":
             report.warn("dist", f"{app.label} EXE is missing", ", ".join(rel(p) for p in app.exe_paths))
@@ -353,7 +357,8 @@ def main() -> int:
 
     report = Report()
     check_config(report)
-    check_tomas_defaults(report)
+    if tomas_enabled():
+        check_tomas_defaults(report)
     check_dashboard_geometry(report)
     check_build_recipes(report)
     check_exe_freshness(report)

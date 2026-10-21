@@ -484,6 +484,17 @@ def _package_config_path() -> Path:
     return BASE_DIR / CONFIG_FILENAME
 
 
+def _tomas_feature_enabled() -> bool:
+    """TOMAS is off unless features.tomas is true in the config (or SURVEYPLATFORM_TOMAS=1)."""
+    env = os.environ.get("SURVEYPLATFORM_TOMAS", "").strip().casefold()
+    if env in {"1", "true", "yes", "on"}:
+        return True
+    if env in {"0", "false", "no", "off"}:
+        return False
+    features = _read_package_config().get("features")
+    return isinstance(features, dict) and features.get("tomas") is True
+
+
 def _read_package_config() -> dict:
     config_path = _package_config_path()
     if not config_path.exists():
@@ -567,6 +578,7 @@ class RepositoryDashboardGUI:
         self.tomas_out_dir_var = tk.StringVar(value="")
         self.tomas_build_formatted_var = tk.BooleanVar(value=True)
         self.tomas_status_var = tk.StringVar(value="")
+        self.tomas_enabled = _tomas_feature_enabled()
 
         self.merge_primary_survey_var = tk.StringVar(value="")
         self.merge_primary_csv_var = tk.StringVar(value="")
@@ -860,13 +872,14 @@ class RepositoryDashboardGUI:
             padx=6,
             pady=(6, 8),
         )
-        ttk.Button(home, text="Run Optional TOMAS", command=self.run_guided_tomas).grid(
-            row=2,
-            column=3,
-            sticky="w",
-            padx=6,
-            pady=(6, 8),
-        )
+        if self.tomas_enabled:
+            ttk.Button(home, text="Run Optional TOMAS", command=self.run_guided_tomas).grid(
+                row=2,
+                column=3,
+                sticky="w",
+                padx=6,
+                pady=(6, 8),
+            )
         ttk.Button(home, text="Open Question Browser", command=lambda: self._select_top_tab("Question Browser")).grid(
             row=2,
             column=4,
@@ -970,6 +983,8 @@ class RepositoryDashboardGUI:
         self.tree.heading("merge", text="Merge")
         self.tree.heading("oe", text="OE")
         self.tree.heading("tomas", text="TOMAS")
+        if not self.tomas_enabled:
+            self.tree.configure(displaycolumns=[c for c in self.tree["columns"] if c != "tomas"])
         self.tree.heading("results", text="Results")
         self.tree.heading("region", text="Region")
         self.tree.heading("client", text="Client")
@@ -1192,18 +1207,20 @@ class RepositoryDashboardGUI:
             padx=6,
             pady=8,
         )
-        ttk.Button(pre_primary, text="Run Optional TOMAS", command=self.run_guided_tomas).pack(
-            side=tk.LEFT,
-            padx=6,
-            pady=8,
-        )
-        ttk.Button(pre_primary, text="Open Advanced TOMAS", command=self.open_advanced_tomas_editor).pack(
-            side=tk.LEFT,
-            padx=6,
-            pady=8,
-        )
+        if self.tomas_enabled:
+            ttk.Button(pre_primary, text="Run Optional TOMAS", command=self.run_guided_tomas).pack(
+                side=tk.LEFT,
+                padx=6,
+                pady=8,
+            )
+            ttk.Button(pre_primary, text="Open Advanced TOMAS", command=self.open_advanced_tomas_editor).pack(
+                side=tk.LEFT,
+                padx=6,
+                pady=8,
+            )
         ttk.Label(pre_primary, textvariable=self.wincross_status_var).pack(side=tk.LEFT, padx=12, pady=8)
-        ttk.Label(pre_primary, textvariable=self.tomas_status_var).pack(side=tk.LEFT, padx=12, pady=8)
+        if self.tomas_enabled:
+            ttk.Label(pre_primary, textvariable=self.tomas_status_var).pack(side=tk.LEFT, padx=12, pady=8)
 
         wincross = ttk.LabelFrame(pre_field_tab, text="Run WinCross Pipeline")
         self._register_advanced_detail_frame(wincross, fill=tk.X, pady=(0, 8))
@@ -1256,63 +1273,64 @@ class RepositoryDashboardGUI:
         for col in (1, 2, 3):
             wincross.grid_columnconfigure(col, weight=1)
 
-        tomas = ttk.LabelFrame(pre_field_tab, text="Optional TOMAS Spanish Pipeline")
-        self._register_advanced_detail_frame(tomas, fill=tk.X, pady=(8, 0))
-        ttk.Label(tomas, text="Phone DOCX").grid(row=0, column=0, sticky="w", padx=6, pady=4)
-        ttk.Entry(tomas, textvariable=self.tomas_phone_docx_var, width=92).grid(
-            row=0, column=1, columnspan=3, sticky="we", padx=6, pady=4
-        )
-        ttk.Button(tomas, text="Browse", command=lambda: self.browse_tomas_input(self.tomas_phone_docx_var, "DOCX")).grid(
-            row=0, column=4, sticky="w", padx=6, pady=4
-        )
-        ttk.Label(tomas, text="Phone PDF").grid(row=1, column=0, sticky="w", padx=6, pady=4)
-        ttk.Entry(tomas, textvariable=self.tomas_phone_pdf_var, width=92).grid(
-            row=1, column=1, columnspan=3, sticky="we", padx=6, pady=4
-        )
-        ttk.Button(tomas, text="Browse", command=lambda: self.browse_tomas_input(self.tomas_phone_pdf_var, "PDF")).grid(
-            row=1, column=4, sticky="w", padx=6, pady=4
-        )
-        ttk.Label(tomas, text="SMS DOCX").grid(row=2, column=0, sticky="w", padx=6, pady=4)
-        ttk.Entry(tomas, textvariable=self.tomas_sms_docx_var, width=92).grid(
-            row=2, column=1, columnspan=3, sticky="we", padx=6, pady=4
-        )
-        ttk.Button(tomas, text="Browse", command=lambda: self.browse_tomas_input(self.tomas_sms_docx_var, "DOCX")).grid(
-            row=2, column=4, sticky="w", padx=6, pady=4
-        )
-        ttk.Label(tomas, text="SMS PDF").grid(row=3, column=0, sticky="w", padx=6, pady=4)
-        ttk.Entry(tomas, textvariable=self.tomas_sms_pdf_var, width=92).grid(
-            row=3, column=1, columnspan=3, sticky="we", padx=6, pady=4
-        )
-        ttk.Button(tomas, text="Browse", command=lambda: self.browse_tomas_input(self.tomas_sms_pdf_var, "PDF")).grid(
-            row=3, column=4, sticky="w", padx=6, pady=4
-        )
-        ttk.Label(tomas, text="Output folder").grid(row=4, column=0, sticky="w", padx=6, pady=4)
-        ttk.Entry(tomas, textvariable=self.tomas_out_dir_var, width=92).grid(
-            row=4, column=1, columnspan=3, sticky="we", padx=6, pady=4
-        )
-        ttk.Button(tomas, text="Browse", command=self.browse_tomas_out_dir).grid(
-            row=4, column=4, sticky="w", padx=6, pady=4
-        )
-        ttk.Checkbutton(tomas, text="Build formatted DOCX", variable=self.tomas_build_formatted_var).grid(
-            row=5, column=0, sticky="w", padx=6, pady=4
-        )
-        tomas_buttons = ttk.Frame(tomas)
-        tomas_buttons.grid(row=6, column=0, columnspan=5, sticky="w", padx=6, pady=(6, 8))
-        ttk.Button(tomas_buttons, text="Run TOMAS", command=self.run_guided_tomas).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(tomas_buttons, text="Open Advanced TOMAS", command=self.open_advanced_tomas_editor).pack(
-            side=tk.LEFT,
-            padx=6,
-        )
-        ttk.Label(tomas, textvariable=self.tomas_status_var).grid(
-            row=7,
-            column=0,
-            columnspan=5,
-            sticky="w",
-            padx=6,
-            pady=(0, 8),
-        )
-        for col in (1, 2, 3):
-            tomas.grid_columnconfigure(col, weight=1)
+        if self.tomas_enabled:
+            tomas = ttk.LabelFrame(pre_field_tab, text="Optional TOMAS Spanish Pipeline")
+            self._register_advanced_detail_frame(tomas, fill=tk.X, pady=(8, 0))
+            ttk.Label(tomas, text="Phone DOCX").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+            ttk.Entry(tomas, textvariable=self.tomas_phone_docx_var, width=92).grid(
+                row=0, column=1, columnspan=3, sticky="we", padx=6, pady=4
+            )
+            ttk.Button(tomas, text="Browse", command=lambda: self.browse_tomas_input(self.tomas_phone_docx_var, "DOCX")).grid(
+                row=0, column=4, sticky="w", padx=6, pady=4
+            )
+            ttk.Label(tomas, text="Phone PDF").grid(row=1, column=0, sticky="w", padx=6, pady=4)
+            ttk.Entry(tomas, textvariable=self.tomas_phone_pdf_var, width=92).grid(
+                row=1, column=1, columnspan=3, sticky="we", padx=6, pady=4
+            )
+            ttk.Button(tomas, text="Browse", command=lambda: self.browse_tomas_input(self.tomas_phone_pdf_var, "PDF")).grid(
+                row=1, column=4, sticky="w", padx=6, pady=4
+            )
+            ttk.Label(tomas, text="SMS DOCX").grid(row=2, column=0, sticky="w", padx=6, pady=4)
+            ttk.Entry(tomas, textvariable=self.tomas_sms_docx_var, width=92).grid(
+                row=2, column=1, columnspan=3, sticky="we", padx=6, pady=4
+            )
+            ttk.Button(tomas, text="Browse", command=lambda: self.browse_tomas_input(self.tomas_sms_docx_var, "DOCX")).grid(
+                row=2, column=4, sticky="w", padx=6, pady=4
+            )
+            ttk.Label(tomas, text="SMS PDF").grid(row=3, column=0, sticky="w", padx=6, pady=4)
+            ttk.Entry(tomas, textvariable=self.tomas_sms_pdf_var, width=92).grid(
+                row=3, column=1, columnspan=3, sticky="we", padx=6, pady=4
+            )
+            ttk.Button(tomas, text="Browse", command=lambda: self.browse_tomas_input(self.tomas_sms_pdf_var, "PDF")).grid(
+                row=3, column=4, sticky="w", padx=6, pady=4
+            )
+            ttk.Label(tomas, text="Output folder").grid(row=4, column=0, sticky="w", padx=6, pady=4)
+            ttk.Entry(tomas, textvariable=self.tomas_out_dir_var, width=92).grid(
+                row=4, column=1, columnspan=3, sticky="we", padx=6, pady=4
+            )
+            ttk.Button(tomas, text="Browse", command=self.browse_tomas_out_dir).grid(
+                row=4, column=4, sticky="w", padx=6, pady=4
+            )
+            ttk.Checkbutton(tomas, text="Build formatted DOCX", variable=self.tomas_build_formatted_var).grid(
+                row=5, column=0, sticky="w", padx=6, pady=4
+            )
+            tomas_buttons = ttk.Frame(tomas)
+            tomas_buttons.grid(row=6, column=0, columnspan=5, sticky="w", padx=6, pady=(6, 8))
+            ttk.Button(tomas_buttons, text="Run TOMAS", command=self.run_guided_tomas).pack(side=tk.LEFT, padx=(0, 6))
+            ttk.Button(tomas_buttons, text="Open Advanced TOMAS", command=self.open_advanced_tomas_editor).pack(
+                side=tk.LEFT,
+                padx=6,
+            )
+            ttk.Label(tomas, textvariable=self.tomas_status_var).grid(
+                row=7,
+                column=0,
+                columnspan=5,
+                sticky="w",
+                padx=6,
+                pady=(0, 8),
+            )
+            for col in (1, 2, 3):
+                tomas.grid_columnconfigure(col, weight=1)
 
         self._build_data_delivery_section(daily_tab)
 
@@ -2336,7 +2354,7 @@ class RepositoryDashboardGUI:
             steps_payload = {}
         done_count = 0
         total_count = 0
-        for step_defs in WORKFLOW_STEP_DEFS.values():
+        for step_defs in self._workflow_step_defs().values():
             total_count += len(step_defs)
             for step_id, _label in step_defs:
                 step_payload = steps_payload.get(step_id, {})
@@ -2358,7 +2376,7 @@ class RepositoryDashboardGUI:
             return
         for item in self.workflow_status_tree.get_children():
             self.workflow_status_tree.delete(item)
-        for phase_name, step_defs in WORKFLOW_STEP_DEFS.items():
+        for phase_name, step_defs in self._workflow_step_defs().items():
             for step_id, label in step_defs:
                 step_payload = steps_payload.get(step_id, {})
                 if not isinstance(step_payload, dict):
@@ -2371,6 +2389,15 @@ class RepositoryDashboardGUI:
                     iid=step_id,
                     values=(phase_name, label, status, updated),
                 )
+
+    def _workflow_step_defs(self) -> dict[str, tuple[tuple[str, str], ...]]:
+        """Checklist steps, without TOMAS steps while TOMAS is turned off."""
+        if self.tomas_enabled:
+            return WORKFLOW_STEP_DEFS
+        return {
+            phase: tuple(step for step in steps if not step[0].startswith("tomas_"))
+            for phase, steps in WORKFLOW_STEP_DEFS.items()
+        }
 
     def _phase_primary_action_label(self, phase: str) -> str:
         if phase == "Pre-fielding":

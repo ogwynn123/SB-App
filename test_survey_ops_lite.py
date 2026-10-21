@@ -294,6 +294,26 @@ class SurveyLauncherTests(unittest.TestCase):
         for stem in ("X Final - Phone", "X Spanish Final", "X Semifinal", "X Final 2", "X Finalized"):
             self.assertFalse(core.is_final_questionnaire_name(stem), stem)
 
+    def test_tomas_is_off_by_default_and_can_be_turned_on(self) -> None:
+        import platform_features
+
+        case = self._case_dir()
+        config = case / "survey_tool_config.json"
+        with patch.dict(os.environ, {"SURVEYPLATFORM_TOMAS": ""}):
+            self.assertFalse(platform_features.tomas_enabled(config))
+            config.write_text(json.dumps({"features": {"tomas": "yes"}}), encoding="utf-8")
+            self.assertFalse(platform_features.tomas_enabled(config))
+            config.write_text(json.dumps({"features": {"tomas": True}}), encoding="utf-8")
+            self.assertTrue(platform_features.tomas_enabled(config))
+        with patch.dict(os.environ, {"SURVEYPLATFORM_TOMAS": "0"}):
+            self.assertFalse(platform_features.tomas_enabled(config))
+
+        with patch.dict(os.environ, {"SURVEYPLATFORM_TOMAS": "0"}):
+            self.assertNotIn("tomas", [tool.key for tool in core.active_tools()])
+        with patch.dict(os.environ, {"SURVEYPLATFORM_TOMAS": "1"}):
+            self.assertIn("tomas", [tool.key for tool in core.active_tools()])
+        self.assertIn("tomas", core.TOOL_BY_KEY)
+
     def _write_csv(self, path: Path, rows: list[list[str]]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(",".join(row) for row in rows) + "\n", encoding="utf-8")

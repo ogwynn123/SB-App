@@ -533,8 +533,9 @@ def _stop_process_tree(process: subprocess.Popen, timeout: float = 8.0) -> list[
 def _gui_smoke(context: launcher.ProjectContext, wait_seconds: float) -> StepOutcome:
     started: list[str] = []
     left_open: list[str] = []
-    for tool in launcher.TOOLS:
-        # Only packaged specialist apps; source-run tools (dashboard, browser workbench) are skipped.
+    for tool in launcher.active_tools(BASE_DIR):
+        # Only packaged specialist apps; source-run tools (dashboard, browser workbench) are skipped,
+        # as are optional tools that are turned off (TOMAS by default).
         if tool.internal_action or not any(parts[-1].casefold().endswith(".exe") for parts in tool.entry_candidates):
             continue
         work_dir = context.ensure_work_dir(tool)

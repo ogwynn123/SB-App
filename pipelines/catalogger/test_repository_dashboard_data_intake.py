@@ -288,6 +288,16 @@ class RepositoryDashboardDataIntakeTests(unittest.TestCase):
             self.assertEqual(app.phase_var.get(), "Pre-fielding")
             self.assertFalse((root / "workspace" / "NPA3801" / "workflow_status.json").exists())
 
+    def test_tomas_checklist_steps_hidden_while_tomas_is_off(self) -> None:
+        app = _make_app(TMP_ROOT / "unused")
+        app.tomas_enabled = False
+        steps = [step for steps in app._workflow_step_defs().values() for step, _label in steps]
+        self.assertNotIn("tomas_generated", steps)
+        self.assertIn("wincross_generated", steps)
+        app.tomas_enabled = True
+        steps = [step for steps in app._workflow_step_defs().values() for step, _label in steps]
+        self.assertIn("tomas_generated", steps)
+
     def test_import_adds_timeseries_and_records_identity_state(self) -> None:
         with _local_tmp() as root:
             app = _make_app(root / "workspace")
