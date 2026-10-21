@@ -2,7 +2,7 @@
 
 Status date: 2026-10-21 (America/New_York)  
 Authoritative project: `C:\Users\normi\venv\SurveyPlatform`  
-Git branch/base: `main` at `6d11a16` (`Support legacy TTREND table identifiers`)
+Git branch: `main` (see `git log` for the current head)
 
 This document is the continuation context for another coding agent. It combines
 the stable project documentation with the workflow decisions established during
@@ -31,35 +31,14 @@ Suggested continuation prompt:
 > contracts and regression-test commands in the handoff. The packaged
 > `SurveyPlatform` directory is the authoritative implementation.
 
-## Critical state warning
+## Repository state
 
-The work described here is not fully committed. At handoff time, these tracked
-files were modified:
-
-- `README.md`
-- `pipelines/auto_results/autoResults_gui.py`
-- `pipelines/auto_results/test_autoResults_alignment.py`
-- `pipelines/sample_quota_checker/sample_quota_checker_core.py`
-- `pipelines/table_merger/sheet_merge_core.py`
-- `pipelines/table_merger/test_sheet_merge_core.py`
-- `pipelines/trend_table_updater/trend_table_updater_core.py`
-- `pipelines/trend_table_updater/test_trend_table_updater_core.py`
-- `pipelines/wincross_table_generator/wincrossTableCompile.py`
-- `pipelines/wincross_table_generator/test_wincrossTableCompile.py`
-
-These paths were untracked:
-
-- `local_browser_app/`
-- `pipelines/sample_quota_checker/quota_browser_review.py`
-- `pipelines/sample_quota_checker/quota_examples_extracted.json`
-- `pipelines/sample_quota_checker/quota_examples_verification.md`
-- `pipelines/sample_quota_checker/quota_workbook_scraper.py`
-- `pipelines/sample_quota_checker/test_quota_workbook_scraper.py`
-- `run_survey_browser.bat`
-- this handoff file
-
-The pre-handoff tracked diff was approximately 2,457 insertions and 102
-deletions. Preserve unrelated edits and use `apply_patch` for targeted changes.
+As of 2026-10-21 all handoff work is committed on `main` (no remote), split by
+area: WinCross rules, trend updater, sheet merge, Auto Results, quota scraper
+and browser review, the local browser workbench, and this document. Old root
+scratch files were moved into the ignored `.tmp_archive/` folder; keep
+`.tmp_tests/` in place because the merge tests use it as their temp directory.
+Still run `git status --short` before editing and preserve any user work.
 
 ## System model
 
