@@ -6,7 +6,11 @@ from pathlib import Path
 import re
 
 
-TABLE_HEADER_PATTERN = r"(?:TTREND\d*|TQ[^\r\n^]*)\^\d+[ \t]*(?:\r?$)"
+# Glossary table IDs are not limited to TQ/TTREND (for example, Party ID
+# trends can use TTT).  Split at every table record, then use its title to
+# decide whether it is a trend table.  This also prevents an intervening
+# non-trend record such as TXX from being absorbed by the preceding table.
+TABLE_HEADER_PATTERN = r"[ \t]*T[^\r\n^]*\^\d+[ \t]*(?:\r?$)"
 TABLE_HEADER_RE = re.compile(
     rf"^{TABLE_HEADER_PATTERN}",
     re.MULTILINE | re.IGNORECASE,
@@ -16,8 +20,21 @@ TABLE_START_RE = re.compile(
     re.MULTILINE | re.IGNORECASE,
 )
 WAVE_RE = re.compile(
-    r"^(?P<indent>\s*)(?P<label>[A-Z]+(?:\s+[A-Z]+)?\s+\d{4})"
+    # Wave labels vary between month/year ("AUG 2026") and compact field
+    # dates ("SEP 15-17" or "OCT 1").  The following caret distinguishes a
+    # wave header from its response rows, whose TIMESERIES expression is
+    # followed by an AND clause.
+    r"^(?P<indent>\s*)(?P<label>[^\^\r\n]*\S)"
     r"\^TIMESERIES\s*\((?P<series>\d+)\)(?P<tail>\^.*)$",
+    re.IGNORECASE,
+)
+FILTERED_WAVE_RE = re.compile(
+    # Some trend tables contain a second wave sequence under a banner such as
+    # AMONG VOTERS.  Its wave header carries the base condition after the
+    # TIMESERIES expression and therefore is intentionally not a WAVE_RE row.
+    r"^(?P<indent>\s*)(?P<label>[^\^\r\n]*\S)"
+    r"\^TIMESERIES\s*\((?P<series>\d+)\)"
+    r"(?P<filter>\s+AND\s+[^\^\r\n]+)(?P<tail>\^[^\r\n]*DV)$",
     re.IGNORECASE,
 )
 POSITION_RE = re.compile(r"\^(?P<position>\d+)(?P<tail>,[^\r\n]*)$")
@@ -127,6 +144,112 @@ def _replace_position(line: str, new_start: int) -> str:
     return updated + ending
 
 
+def _extend_series_selector(
+    line: str,
+    *,
+    prior_series: int,
+    new_series: int,
+) -> str:
+    """Extend an aggregate TIMESERIES selector while retaining compact ranges."""
+    selector_re = re.compile(r"(TIMESERIES\s*\()([^)]*)(\))", re.IGNORECASE)
+
+    def replace(match: re.Match[str]) -> str:
+        parts = [part.strip() for part in match.group(2).split(",")]
+        if not parts:
+            return match.group(0)
+        last = parts[-1]
+        range_match = re.fullmatch(r"(\d+)\s*-\s*(\d+)", last)
+        if range_match and int(range_match.group(2)) == prior_series:
+            start = int(range_match.group(1))
+            parts[-1] = f"{start}-{new_series}" if new_series == prior_series + 1 else f"{start}-{prior_series},{new_series}"
+        elif last.isdigit() and int(last) == prior_series:
+            parts[-1] = f"{prior_series}-{new_series}" if new_series == prior_series + 1 else f"{prior_series},{new_series}"
+        else:
+            return match.group(0)
+        return f"{match.group(1)}{','.join(parts)}{match.group(3)}"
+
+    return selector_re.sub(replace, line)
+
+
+def _is_separator(line: str) -> bool:
+    return line.strip().upper() == "^ ^NS,DV"
+
+
+def _body_end_after_separator(lines: list[str], start: int, limit: int) -> int:
+    for index in range(start, limit):
+        if _is_separator(lines[index]):
+            return index + 1
+    return limit
+
+
+def _append_filtered_waves(
+    table: str,
+    *,
+    prior_series: int,
+    new_series: int,
+    new_label: str,
+) -> tuple[str, int]:
+    lines = table.splitlines(keepends=True)
+    candidates: list[tuple[int, re.Match[str]]] = []
+    for index, line in enumerate(lines):
+        match = FILTERED_WAVE_RE.match(line.rstrip("\r\n"))
+        if match and int(match.group("series")) == prior_series:
+            candidates.append((index, match))
+
+    added_rows = 0
+    for header_index, header_match in reversed(candidates):
+        body_end = _body_end_after_separator(lines, header_index + 1, len(lines))
+        body = lines[header_index + 1 : body_end]
+        response_indices = [
+            index
+            for index, line in enumerate(body)
+            if re.search(rf"TIMESERIES\s*\({prior_series}\)", line, re.IGNORECASE)
+            and POSITION_RE.search(line.rstrip("\r\n"))
+        ]
+        if not response_indices:
+            continue
+        positions = [
+            int(POSITION_RE.search(body[index].rstrip("\r\n")).group("position"))
+            for index in response_indices
+        ]
+        if len(set(positions)) != 1:
+            raise ValueError(
+                "Filtered wave has inconsistent vertical positions: "
+                f"{header_match.group('label')}: {positions}"
+            )
+
+        new_start = positions[0] + max(response_indices) + 3
+        newline = "\r\n" if lines[header_index].endswith("\r\n") else "\n"
+        new_header = (
+            f"{header_match.group('indent')}{new_label}^TIMESERIES ({new_series})"
+            f"{header_match.group('filter')}{header_match.group('tail')}{newline}"
+        )
+        series_re = re.compile(
+            rf"(TIMESERIES\s*\(){prior_series}(\))",
+            re.IGNORECASE,
+        )
+        new_body: list[str] = []
+        for line in body:
+            cloned = series_re.sub(rf"\g<1>{new_series}\2", line)
+            if POSITION_RE.search(cloned.rstrip("\r\n")) and re.search(
+                rf"TIMESERIES\s*\({new_series}\)", cloned, re.IGNORECASE
+            ):
+                cloned = _replace_position(cloned, new_start)
+            new_body.append(cloned)
+        separator = (
+            next(
+                (line for line in reversed(lines[:header_index]) if _is_separator(line)),
+                f"{header_match.group('indent')} ^ ^NS,DV{newline}",
+            )
+        )
+        bridge = [] if body and _is_separator(body[-1]) else [separator]
+        if body_end > 0 and not lines[body_end - 1].endswith(("\r", "\n")):
+            lines[body_end - 1] += newline
+        lines[body_end:body_end] = bridge + [new_header] + new_body
+        added_rows += len(response_indices)
+    return "".join(lines), added_rows
+
+
 def _update_table(
     table: str,
     *,
@@ -142,10 +265,34 @@ def _update_table(
 
     waves = _wave_rows(lines)
     if not waves:
+        filtered_update, filtered_rows = _append_filtered_waves(
+            table,
+            prior_series=prior_series,
+            new_series=new_series,
+            new_label=new_label,
+        )
+        if filtered_rows:
+            return (
+                filtered_update,
+                True,
+                f"Updated {filtered_rows} filtered row(s) only: {title}",
+            )
         return table, False, f"Skipped; no timeseries headers: {title}"
     wave_index, wave_match = waves[-1]
     last_series = int(wave_match.group("series"))
     if last_series != prior_series:
+        filtered_update, filtered_rows = _append_filtered_waves(
+            table,
+            prior_series=prior_series,
+            new_series=new_series,
+            new_label=new_label,
+        )
+        if filtered_rows:
+            return (
+                filtered_update,
+                True,
+                f"Updated {filtered_rows} filtered row(s) only: {title}",
+            )
         return table, False, f"Skipped; latest timeseries is {last_series}: {title}"
 
     net_index = next(
@@ -156,7 +303,11 @@ def _update_table(
         ),
         None,
     )
-    body_end = net_index if net_index is not None else len(lines)
+    body_end = (
+        net_index
+        if net_index is not None
+        else _body_end_after_separator(lines, wave_index + 1, len(lines))
+    )
     latest_body = lines[wave_index + 1 : body_end]
     response_indices = [
         index
@@ -176,7 +327,10 @@ def _update_table(
         raise ValueError(f"Latest wave has inconsistent vertical positions in {title}: {positions}")
 
     old_start = positions[0]
-    new_start = old_start + len(response_indices) + 2
+    # Vertical positions include blank/divider rows between responses, but
+    # hidden HR rows after the responses do not consume a position.  The last
+    # response's body offset captures the former without counting the latter.
+    new_start = old_start + max(response_indices) + 3
     newline = "\r\n" if lines[0].endswith("\r\n") else "\n"
     new_header = (
         f"{wave_match.group('indent')}{new_label}^TIMESERIES ({new_series})"
@@ -199,9 +353,22 @@ def _update_table(
     if len(set(labels)) != len(labels):
         raise ValueError(f"Latest wave has duplicate response labels in {title}")
     label_positions = {
-        label: (new_start + index + 1, old_start + index + 1)
-        for index, label in enumerate(labels)
+        label: (
+            new_start + response_index + 1,
+            old_start + response_index + 1,
+        )
+        for label, response_index in zip(labels, response_indices)
     }
+
+    # Specialized trend tables can scope TOTAL ANSWERING to a compact series
+    # list, e.g. TIMESERIES (2-4,8-10).  Carry that selector through the new
+    # wave as well.
+    for index in range(waves[0][0]):
+        lines[index] = _extend_series_selector(
+            lines[index],
+            prior_series=prior_series,
+            new_series=new_series,
+        )
 
     if net_index is None:
         separator = next(
@@ -212,15 +379,21 @@ def _update_table(
             ),
             f"{wave_match.group('indent')} ^ ^NS,DV{newline}",
         )
-        prefix = list(lines)
+        prefix = list(lines[:body_end])
         if prefix and not prefix[-1].endswith(("\r", "\n")):
             prefix[-1] += newline
         bridge = [] if latest_body and latest_body[-1].strip().upper() == "^ ^NS,DV" else [separator]
-        updated = "".join(prefix + bridge + [new_header] + new_body)
+        updated = "".join(prefix + bridge + [new_header] + new_body + lines[body_end:])
+        updated, filtered_rows = _append_filtered_waves(
+            updated,
+            prior_series=prior_series,
+            new_series=new_series,
+            new_label=new_label,
+        )
         return (
             updated,
             True,
-            f"Updated {len(response_indices)} row(s) without NET rows: {title}",
+            f"Updated {len(response_indices) + filtered_rows} row(s) without NET rows: {title}",
         )
 
     net_lines = list(lines[net_index:])
