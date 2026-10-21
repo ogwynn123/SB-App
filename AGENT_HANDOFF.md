@@ -99,6 +99,12 @@ The launcher passes survey ID, project root, and working folder to each tool.
 It should not guess input files. Its portable manifest is written only after a
 tool is launched at `Job\.surveyplatform\project.json`.
 
+The launcher is the single starting point: it also runs Sample Append and
+Preliminary QC itself, and opens the repository dashboard and browser
+workbench. Sample Append defaults to the newest `Data\NPA####ts*.csv` and
+stores the column mapping in the manifest; Preliminary QC writes to
+`Job\QC\<timestamp>`. The Activity log lists stale packaged EXEs.
+
 ## Local browser workbench
 
 The browser app is a lightweight front end over existing pipeline cores, not a
@@ -517,23 +523,33 @@ Survey Writer is a separate draft helper under
 `pipelines\survey_writer`; it saves drafts below `drafts\survey_writer` and is
 not part of the main daily production flow.
 
-## Ad hoc R append reference
+## Sample append (replaces per-project R scripts)
 
-A repeated prior task ran:
+`pipelines\table_merger\sample_append.py` (launcher: Sample Append) fills
+data columns from a sample file by ID for the latest wave, copying values as
+text. It never overwrites the input, writes `<data>_append.csv`, moves an
+existing output to `Data\Backups\`, and stops if a respondent's ID is
+duplicated in the sample with different values. It reproduces the NPA3857 CSM
+append (`NPA3857 IA-01 CSM Append.R`: 600 wave-11 respondents, 589 changed
+values) without the R script's side effects (renamed `voterbaseid`, a
+`csm_score.x` column) and keeps the sample's full precision (R rounded to 9
+decimals). The NPA3857 sample has 4 IDs with conflicting CSM scores; none are
+respondents.
 
-```text
-C:\Users\normi\OneDrive - Normington Petts\NPA Archive - Documents\Bohannan\2026\NPA3857 Third Party\Data\NPA3857 IA-01 CSM Append.R
-```
+## Preliminary QC contract
 
-against:
-
-```text
-C:\Users\normi\OneDrive - Normington Petts\NPA Archive - Documents\Bohannan\2026\NPA3857 Third Party\Data\NPA3857ts.csv
-```
-
-This is an ad hoc project workflow, not a SurveyPlatform core stage. Resolve
-script/data paths explicitly, inspect the script before each run, and do not
-assume prior path edits remain appropriate.
+`pipelines\qc_checker\prelim_qc.py` implements the structural part of
+`docs\QC_GUIDE.md`: questionnaire JSON vs WinCross job (or TABLES) vs data,
+with no source treated as authoritative and a severity-ranked issue register.
+Glossary `DECLARE`/`ASSIGN`/`COMPUTE` variables count as defined and their
+inputs are checked; screener TERMINATE options keep position codes; combined
+question tables (generic ballot with leans) are not coverage gaps. Data
+discovery picks the newest `NPA####*.csv` without spaces in the name. On 11
+finished jobs it reports 0-8 items each; real findings included NPA3800 Q22
+(duplicate questionnaire code 3) and NPA3863 Q9 (Undecided 11 vs table 7). It
+also exposed a Table Gen parser bug: NPA3800 Q33 "I did not vote in 2024 ... 4"
+parsed with code 2024. Numerical validation is out of scope and listed as a
+limitation in every report.
 
 ## Useful regression/reference jobs
 
