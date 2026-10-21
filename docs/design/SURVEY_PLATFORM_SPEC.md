@@ -1,8 +1,35 @@
 # Survey Platform Spec
 
-Status: Draft
-Date: 2026-03-19
+Status: Historical design, largely implemented
+Date: 2026-03-19 (build status reviewed 2026-10-21)
 Scope: Align the existing survey pipelines into one platform without rewriting the stage engines or moving survey files.
+
+## Build Status (2026-10-21)
+
+This is the original design document. It is kept for the reasoning behind the
+metadata and stage model. For current usage see `docs\CLI.md` and
+`docs\REPOSITORY_STRUCTURE.md`.
+
+Implemented:
+
+- `survey.meta.json` schema version 2 with `stages` and `recent_runs`
+- per-stage `*_status` fields and `available_actions` in `index.json`
+- `survey list`, `show`, `detect`, `history`, and `run`
+- per-survey run manifests under `repository\surveys\NPA####\runs\<stage>\`
+- stage status columns in the repository dashboard
+
+Not implemented or changed since this draft:
+
+- `survey run` supports only `wincross` and `merge`; other stages run through
+  their specialist applications.
+- `survey open` was not built.
+- The four proposed `survey_platform_*.py` modules were not created; the
+  platform logic lives in `survey_tool_cli.py`.
+- Survey sources are no longer under
+  `pipelines/wincross_table_generator/NPA_Surveys`. They are read from the
+  user-selected archive tree, and generated working files go to
+  `workspace\NPA####`. Paths in the examples below reflect the March layout.
+- The `repos/` snapshot folder no longer exists.
 
 ## Goals
 

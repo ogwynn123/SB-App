@@ -2,25 +2,27 @@
 
 Curated runtime bundle for the unified survey platform.
 
-This directory mirrors the layout expected by `survey_tool_cli.py` and includes:
+This directory holds the unified CLI, the dashboards and launchers, the
+pipeline source for every specialist tool, and the local `repository` and
+`workspace` data folders. Survey source folders stay in the user-selected
+archive tree. Built EXEs under each pipeline's `dist\` and the data folders are
+git-ignored.
 
-- the unified CLI and platform docs
-- the current `repository` metadata and run history
-- the active pipeline source for WinCross, catalog, merge, OE, TOMAS, and auto/empty results
-- the packaged launcher/build-side files needed to work from `SurveyPlatform\pipelines` directly
+## Documentation
 
-The authoritative repository/control-plane structure is documented in:
+| Document | Covers |
+|---|---|
+| `README.md` (this file) | Entry points, workspaces, launchers, tests |
+| `AGENT_HANDOFF.md` | Pipeline behavior contracts, regression jobs, continuation notes |
+| `docs\CLI.md` | `survey_tool_cli.py` command reference |
+| `docs\REPOSITORY_STRUCTURE.md` | Archive vs repository vs workspace boundaries and folder layout |
+| `docs\SURVEY_LAUNCHER.md` | Daily Survey Launcher and Project Startup contract |
+| `docs\design\SURVEY_PLATFORM_SPEC.md` | Original platform design (March 2026) and what was built |
+| `pipelines\README.md` | Pipeline folders, launchers, build dependencies |
+| `acceptance\README.md` | Synthetic end-to-end acceptance contract |
+| `local_browser_app\README.md` | Browser workbench scope |
 
-- `REPOSITORY_STRUCTURE.md`
-- `AGENT_HANDOFF.md` for the current cross-pipeline implementation state,
-  workflow decisions, regression contracts, and continuation instructions
-
-This bundle intentionally excludes or only partially includes:
-
-- live survey source folders under `pipelines/wincross_table_generator/NPA_Surveys`
-- some specialist app `build/` and `dist/` artifacts may be present, but do not assume every EXE is bundled
-- copied app snapshots under `repos/`
-- test and temp output folders
+Each pipeline folder has its own README where one exists.
 
 ## Source Roots
 
@@ -126,8 +128,8 @@ Select the survey ID and project root, then open a specialist workflow. The
 `Project Startup` workflow creates the standard `Job`, `Data`, `Data\Partial`,
 and `Job\Table Gen` paths without replacing existing folders, then copies the
 newest `Qst` DOCX ending in `Final` into Table Gen. WinCross uses that output
-folder and receives the selected survey context. See `LITE_PLATFORM.md` for the
-folder and manifest contract.
+folder and receives the selected survey context. See `docs\SURVEY_LAUNCHER.md`
+for the folder and manifest contract.
 
 For repository cataloging, question search, and the full workspace dashboard,
 use:
@@ -204,15 +206,22 @@ workspace\NPA####\
     merge\maps\
     tables\reviewed\
     results\templates\
+    codebooks\
+    other\
   outputs\
     wincross\raw\
     wincross\json\
     wincross\tables\
     tomas\
     merge\
-    oe\
+      merge_runs\
+    oe\codebooks\
+    oe\wincross_blocks\
     results\
 ```
+
+The folder for each `Add File to Workspace` role is defined in
+`WORKSPACE_FILE_ROLES` in `pipelines\catalogger\repository_dashboard_gui.py`.
 
 Use `Main survey selected` on the `Survey Workspaces` page to preload likely
 inputs and outputs for those workflow tabs. The `Question Browser` stays
@@ -278,19 +287,13 @@ The repo-local launchers follow an `EXE-first` pattern: if a bundled EXE
 exists under `dist\`, the launcher opens it; otherwise it falls back to the
 source script for troubleshooting.
 
-- WinCross: `pipelines\wincross_table_generator\open_survey_pipeline_gui.bat`
-- Table Merge: `pipelines\table_merger\open_sheet_merge_gui.bat`
-- Open-End Coder: `pipelines\open_end_coder\Launch_OE_Codebook_GUI.bat`
-  - Primary output: a row-specific `*.OE-coded.csv`
-  - Session state: project-local `*.oe_session.sqlite`
-  - Legacy codebook editor: `pipelines\open_end_coder\Launch_OE_Codebook_Legacy_GUI.bat`
-- Auto Results: `pipelines\auto_results\open_autoResults_gui.bat`
-- TOMAS: `pipelines\thomas_in_a_box\open_tomas_pipeline_gui.bat`
+The full list of specialist apps, their launchers, and their build
+dependencies is in `pipelines\README.md`. Desktop shortcuts open each app's
+`dist\` EXE directly, so rebuild the EXE after a source change.
 
 ## Notes
 
-- `repository/` is a copy of the current platform metadata state as of packaging time.
-- `repository/` may still reference whatever source/archive path was last scanned. That is repository data, not a fixed package default.
-- If the live survey folders change, run `repo scan` again from this package to refresh the copied repository index.
+- `repository/` is local, git-ignored metadata. It reflects the source/archive path and state from the last `repo scan`.
+- If the live survey folders change, run `repo scan` again to refresh the repository index.
 - TOMAS still requires its normal OpenAI credentials at runtime.
 - Treat this package as the authoritative repository app and control plane. The specialist apps remain supported day-to-day tools, and older repo dashboards outside this package are legacy references.

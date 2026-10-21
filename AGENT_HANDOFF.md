@@ -595,10 +595,13 @@ test files to its `SUITES` table.
 
 ## Canonical supporting documents
 
-- `README.md` - package overview, workspaces, launchers, acceptance
-- `LITE_PLATFORM.md` - daily launcher and project-folder contract
-- `REPOSITORY_STRUCTURE.md` - authoritative/local/archive boundaries
+- `README.md` - package overview, documentation index, workspaces, launchers, tests
+- `docs\CLI.md` - `survey_tool_cli.py` command reference
+- `docs\SURVEY_LAUNCHER.md` - daily launcher and project-folder contract
+- `docs\REPOSITORY_STRUCTURE.md` - authoritative/local/archive boundaries
+- `docs\design\SURVEY_PLATFORM_SPEC.md` - original platform design and build status
 - `pipelines\README.md` - component layout and dependencies
+- `pipelines\wincross_table_generator\README.md` - WinCross GUI and pipeline files
 - `local_browser_app\README.md` - browser scope and launch instructions
 - `pipelines\table_merger\README_QUICKSTART.md` - merge workflow
 - `pipelines\trend_table_updater\README.md` - trend updater use
