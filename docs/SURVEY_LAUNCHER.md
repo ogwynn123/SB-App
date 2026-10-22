@@ -19,6 +19,27 @@ remains inside each specialist application or pipeline module.
 | Repository & Question Browser | full dashboard (`survey_platform_gui.py`) | project root |
 | Browser Workbench | `run_survey_browser.bat` | project root |
 
+## Project status panel
+
+Above the workflow list, the launcher shows where the selected project stands.
+Every line is read from the project's files, so nothing is ticked by hand and
+it cannot drift out of date. Lines are Done, To do, Check (an input changed
+after the step ran), or `-` (not used in this project), and "Next:" names the
+first Check, else the first To do. Double-click a To do or Check line to open
+its tool, or any other line to open its file.
+
+| Step | Read from | Check when |
+|---|---|---|
+| Final questionnaire | Qst Final vs. `Job\Table Gen` copy (Project Startup's content comparison) | Qst holds a newer, different Final |
+| Table Gen | `Job\Table Gen\*TABLES.autogen.txt` | the questionnaire changed after the tables were generated |
+| WinCross job | `Job\NPA####.job` | |
+| Data | `Data\NPA####*.csv` | |
+| Merge (trend) | `Data\Merge\merge_runs`, `Data\NPA####ts*.csv`, carry-over review file | current data delivered after the last merge |
+| Open ends | `*.oe_session.sqlite` under `Data` (read-only): latest-wave coded / total | |
+| Daily partials | `Data\Partial\*Day N*.docx` | |
+| Preliminary QC | newest `Job\QC\*\prelim_qc_issues.csv` | data or job changed after the QC, or critical issues |
+| Final deliverables | `Results`, `Tab`, `Cover` DOCX in the project folder | |
+
 Sample Append defaults to the newest `Data\NPA####ts*.csv` and remembers the
 project's column mapping (`DATA_COLUMN=SAMPLE_COLUMN`) in the project manifest.
 When any packaged EXE is older than its source, the Activity log says so and

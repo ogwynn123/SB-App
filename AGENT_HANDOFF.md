@@ -125,6 +125,10 @@ TOMAS is off by default (`platform_features.py`, `features.tomas` in
 `survey_tool_config.json`, or `SURVEYPLATFORM_TOMAS=1`): hidden in the launcher and
 dashboard, skipped by the health check and GUI launch check. Its tests still run.
 
+The launcher's Project status panel (`project_status.py`) derives each step's
+state from project files only; it replaces the dashboard's hand-ticked checklist
+for daily work.
+
 The launcher is the single starting point: it also runs Sample Append and
 Preliminary QC itself, and opens the repository dashboard and browser
 workbench. Sample Append defaults to the newest `Data\NPA####ts*.csv` and
