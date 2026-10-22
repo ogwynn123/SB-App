@@ -232,6 +232,7 @@ function clearOeEditor() { oeSelected = null; $('oe-record').textContent = 'No r
 $('oe-refresh').addEventListener('click', () => refreshOeResponses(oeSelected?.id));
 $('oe-question').addEventListener('change', () => refreshOeResponses());
 $('oe-filter').addEventListener('change', () => refreshOeResponses());
+$('oe-all-waves').addEventListener('change', () => refreshOeResponses());
 $('oe-search').addEventListener('keydown', event => { if (event.key === 'Enter') refreshOeResponses(); });
 $('oe-save').addEventListener('click', async () => {
   if (!oeSelected) return toast('Select a response.', true);

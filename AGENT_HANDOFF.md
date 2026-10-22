@@ -62,6 +62,10 @@ Code that matches respondents must use the pair whenever a `timeseries`
 column exists:
 
 - Dashboard data intake: blocks duplicate (survnum, timeseries) pairs.
+- Open-End Coder: only the latest wave is editable; prior waves are read-only
+  (`PriorWaveLockedError`) until `unlock_prior_waves(reason)`, which is audited
+  and lasts for the session. Desktop: Unlock/Lock Prior Waves button. Browser
+  workbench: latest wave by default, prior waves view-only.
 - Open-End Coder: record key is `Timeseries + <ID>` (stored as `2|1002`);
   sessions saved with a single key are converted in place on the next import,
   using each response's stored wave, so overrides stay attached.

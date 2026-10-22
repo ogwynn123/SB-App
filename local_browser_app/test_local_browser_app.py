@@ -177,6 +177,30 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(rows[0]["c1_1"], "500")
         self.assertEqual(rows[1]["c1_1"], "202")
 
+    def test_oe_lists_latest_wave_and_keeps_prior_waves_read_only(self) -> None:
+        root = self.temp_root
+        data = root / "trended.csv"
+        session = root / "trended.oe_session.sqlite"
+        data.write_text(
+            "Survnum,Timeseries,q1oe,c1_1,c1_2,c1_3\n"
+            "1,1,Older answer,101,,\n1,2,Newer answer,202,,\n2,2,Another,202,,\n",
+            encoding="utf-8",
+        )
+        imported = services.oe_import({"data_path": str(data), "session_path": str(session)})
+        question_id = imported["dashboard"]["questions"][0]["id"]
+        base = {"session_path": str(session), "question_id": question_id}
+
+        latest = services.oe_responses(base)["responses"]
+        every_wave = services.oe_responses({**base, "all_waves": True})["responses"]
+
+        self.assertEqual([row["record_key"] for row in latest], ["2|1", "2|2"])
+        self.assertEqual(len(every_wave), 3)
+        prior = next(row for row in every_wave if row["record_key"] == "1|1")
+        with self.assertRaisesRegex(ValueError, "prior waves are read-only"):
+            services.oe_assign({"session_path": str(session), "response_id": prior["id"], "codes": "500"})
+        with self.assertRaisesRegex(ValueError, "prior waves are read-only"):
+            services.oe_reset({"session_path": str(session), "response_id": prior["id"]})
+
     def test_question_search_reads_existing_repository(self) -> None:
         result = services.question_search({"query": "right direction", "page_size": 10})
         self.assertGreater(result["total"], 0)

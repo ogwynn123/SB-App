@@ -26,6 +26,13 @@ in different waves is expected. A session saved with a plain `Survnum` key is
 converted on its next import using each response's stored wave, so earlier
 overrides stay with the same respondent.
 
+Prior waves are read-only. Only the latest `Timeseries` can be coded, reset, or
+changed by bulk actions; the response list shows the latest wave. For a
+correction, click **Unlock Prior Waves...** and give a reason: the list then
+shows every wave until **Lock Prior Waves** is clicked or the session is
+reopened. Unlocking and relocking are recorded in the audit log. The browser
+workbench lists the latest wave by default and shows prior waves read-only.
+
 The first imported file is the session baseline, so all of its responses are
 marked **New**. On later cumulative imports:
 
