@@ -722,6 +722,44 @@ class SurveyConvertJSONTests(unittest.TestCase):
             ],
         )
 
+    def test_number_at_end_of_option_label_is_not_the_code(self) -> None:
+        vote = parse_question_block(
+            "33",
+            "In the 2024 race for President, did you vote for Donald Trump or Kamala Harris?",
+            [
+                "Trump ................................................................. 1",
+                "Harris .................................................................. 2",
+                "Other [TEXT BOX] ............................................. 3",
+                "I did not vote in 2024 .......................................... 4",
+            ],
+        )
+        stations = parse_question_block(
+            "106",
+            "Which local television news station is the one you watch the most often?",
+            [
+                "WLWT News 5 .................................................... 1",
+                "WCPO ABC 9 ..................................................... 2",
+                "WKRC Local 12 .................................................. 3",
+                "Fox 19 ................................................................ 4",
+                "(Don't know) ....................................................... 5",
+            ],
+        )
+
+        self.assertEqual(
+            [(o["value"], o["text"]) for o in vote[0]["response_options"]][-1],
+            ("4", "I did not vote in 2024"),
+        )
+        self.assertEqual(
+            [(o["value"], o["text"]) for o in stations[0]["response_options"]],
+            [
+                ("1", "WLWT News 5"),
+                ("2", "WCPO ABC 9"),
+                ("3", "WKRC Local 12"),
+                ("4", "Fox 19"),
+                ("5", "(Don't know)"),
+            ],
+        )
+
     def test_two_row_grid_header_rejoins_word_hyphenated_across_rows(self) -> None:
         elements = parse_question_block(
             "11",

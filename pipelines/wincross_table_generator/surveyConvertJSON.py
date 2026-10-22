@@ -212,6 +212,12 @@ DOT_LEADER_CODE_RE = re.compile(
     rf"(?:\.\s*){{5,}}\s+(?:{CODE_TOKEN_PATTERN})\b",
     re.IGNORECASE,
 )
+# "Label ...... code" pairs where the label may end in its own number
+# ("WLWT News 5 ...... 1", "I did not vote in 2024 ...... 4").
+DOT_LEADER_PAIR_RE = re.compile(
+    rf"\s*(.+?)\s*(?:\.\s*){{5,}}({CODE_TOKEN_PATTERN})(?=\s|$)",
+    re.IGNORECASE,
+)
 TRAILING_DIRECTIVE_CLAUSE_RE = re.compile(
     r"^(.*?)(?:\s+((?:TERMINATE(?:\s+IF)?|SKIP\s+TO|GO\s+TO|GOTO)\b.+))$",
     re.IGNORECASE,
@@ -1012,6 +1018,20 @@ def parse_option_line(line: str) -> List[Dict[str, str]]:
         ):
             return True
         return len(numeric_mentions) >= 2
+
+    # When every code follows a dot leader, the leaders separate label from
+    # code, so a number at the end of a label is part of the label.
+    leader_matches = list(DOT_LEADER_PAIR_RE.finditer(line))
+    if leader_matches and len(leader_matches) == len(DOT_LEADER_CODE_RE.findall(line)):
+        covered = "".join(match.group(0) for match in leader_matches)
+        if covered.strip() == line.strip():
+            leader_pairs = []
+            for match in leader_matches:
+                text = strip_reassurance_prefix_from_option_text(trim_dot_leader_text(match.group(1)))
+                if text:
+                    leader_pairs.append({"value": normalize_text(match.group(2)).upper(), "text": text})
+            if len(leader_pairs) == len(leader_matches):
+                return leader_pairs
 
     multi = list(OPTION_PAIR_RE.finditer(line))
     if multi:
