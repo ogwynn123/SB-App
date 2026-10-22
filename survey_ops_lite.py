@@ -38,6 +38,8 @@ from survey_launcher_core import (
     launch_tool,
 )
 
+from project_status import STATE_LABELS, StatusItem, next_step, project_status
+
 ACTION_BUTTON_LABELS = {
     "project_startup": "Run Startup",
     "sample_append": "Append...",
@@ -59,7 +61,7 @@ def open_path(path: Path) -> None:
 GEOMETRY_RE = re.compile(r"^(?P<w>\d+)x(?P<h>\d+)(?P<xsign>[+-])(?P<x>\d+)(?P<ysign>[+-])(?P<y>\d+)$")
 
 
-def safe_window_geometry(root: tk.Tk, geometry: object, default: str = "980x620") -> str:
+def safe_window_geometry(root: tk.Tk, geometry: object, default: str = "980x820") -> str:
     text = str(geometry or "").strip()
     match = GEOMETRY_RE.match(text)
     if not match:
@@ -101,6 +103,8 @@ class SurveyLauncherApp:
         self.project_root_var = tk.StringVar(value=project_root)
         self.recent_var = tk.StringVar(value="")
         self.status_var = tk.StringVar(value="Select a survey and project folder.")
+        self.next_step_var = tk.StringVar(value="Select a project to see its status.")
+        self.status_items: dict[str, StatusItem] = {}
 
         self._build_ui()
         self._refresh_recent_projects()
@@ -116,7 +120,7 @@ class SurveyLauncherApp:
     def _build_ui(self) -> None:
         self.root.title("Survey Launcher")
         self.root.geometry(safe_window_geometry(self.root, self.settings.get("window_geometry")))
-        self.root.minsize(780, 520)
+        self.root.minsize(780, 720)
 
         shell = ttk.Frame(self.root, padding=12)
         shell.pack(fill=tk.BOTH, expand=True)
@@ -139,6 +143,32 @@ class SurveyLauncherApp:
         ttk.Button(project, text="Open Project", command=self.open_project).grid(row=1, column=3, sticky="e", padx=(8, 0), pady=4)
         project.columnconfigure(2, weight=1)
 
+        status_frame = ttk.LabelFrame(shell, text="Project status", padding=8)
+        status_frame.pack(fill=tk.X, pady=(10, 0))
+        status_bar = ttk.Frame(status_frame)
+        status_bar.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(status_bar, textvariable=self.next_step_var, font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        ttk.Button(status_bar, text="Refresh Status", command=self._refresh_status).pack(side=tk.RIGHT)
+        self.status_tree = ttk.Treeview(
+            status_frame,
+            columns=("state", "detail"),
+            show="tree headings",
+            selectmode="browse",
+            height=9,
+        )
+        self.status_tree.heading("#0", text="Step")
+        self.status_tree.heading("state", text="Status")
+        self.status_tree.heading("detail", text="Details (double-click to open)")
+        self.status_tree.column("#0", width=170, minwidth=140, stretch=False)
+        self.status_tree.column("state", width=70, minwidth=60, stretch=False)
+        self.status_tree.column("detail", width=560, minwidth=260, stretch=True)
+        self.status_tree.tag_configure("attention", foreground="#b45309")
+        self.status_tree.tag_configure("todo", foreground="#1d4ed8")
+        self.status_tree.tag_configure("done", foreground="#15803d")
+        self.status_tree.tag_configure("info", foreground="#6b7280")
+        self.status_tree.pack(fill=tk.X)
+        self.status_tree.bind("<Double-1>", lambda _event: self.open_status_item())
+
         tools_frame = ttk.LabelFrame(shell, text="Workflow", padding=8)
         tools_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
         self.tool_tree = ttk.Treeview(
@@ -146,7 +176,7 @@ class SurveyLauncherApp:
             columns=("folder", "status"),
             show="tree headings",
             selectmode="browse",
-            height=11,
+            height=8,
         )
         self.tool_tree.heading("#0", text="Tool")
         self.tool_tree.heading("folder", text="Working folder")
@@ -248,6 +278,44 @@ class SurveyLauncherApp:
         self.project_root_var.set(selected["project_root"])
         self._activate_context(confirm_warning=False)
 
+    def _refresh_status(self) -> None:
+        """Re-read the project's files; nothing here is ticked by hand."""
+        self.status_tree.delete(*self.status_tree.get_children())
+        self.status_items.clear()
+        if self.context is None:
+            self.next_step_var.set("Select a project to see its status.")
+            return
+        items = project_status(self.context)
+        for item in items:
+            self.status_items[item.key] = item
+            self.status_tree.insert(
+                "", tk.END, iid=item.key, text=item.label,
+                values=(STATE_LABELS[item.state], item.summary), tags=(item.state,),
+            )
+        upcoming = next_step(items)
+        self.next_step_var.set(
+            f"Next: {upcoming.label} - {upcoming.summary}" if upcoming else "Next: nothing outstanding"
+        )
+
+    def open_status_item(self) -> None:
+        selected = self.status_tree.selection()
+        item = self.status_items.get(str(selected[0])) if selected else None
+        if item is None:
+            return
+        tool_keys = {tool.key for tool in self.tools}
+        if item.state in {"todo", "attention"} and item.tool_key in tool_keys:
+            self.tool_tree.selection_set(item.tool_key)
+            self.tool_tree.focus(item.tool_key)
+            self._tool_selected()
+            self.launch_selected_tool()
+            return
+        if item.path is not None:
+            try:
+                open_path(item.path)
+                self.log(f"Opened {item.path}")
+            except Exception as exc:
+                messagebox.showerror("Survey Launcher", str(exc))
+
     def _refresh_tools(self) -> None:
         selected = self.selected_tool_key()
         self.tool_tree.delete(*self.tool_tree.get_children())
@@ -281,6 +349,7 @@ class SurveyLauncherApp:
         self.tool_tree.selection_set(target)
         self.tool_tree.focus(target)
         self._tool_selected()
+        self._refresh_status()
 
     def selected_tool_key(self) -> str:
         selected = self.tool_tree.selection() if hasattr(self, "tool_tree") else ()
@@ -463,6 +532,7 @@ class SurveyLauncherApp:
             if result.backup_path:
                 self.log(f"Previous output moved to {result.backup_path}")
             dialog.destroy()
+            self._refresh_status()
             messagebox.showinfo(
                 "Sample Append",
                 f"Output: {result.output_path}\nMatched {result.matched}, unmatched {result.unmatched}\n"
