@@ -79,3 +79,38 @@ Ends working folder to the app.
 
 The former aggregated codebook editor remains available through
 `Launch_OE_Codebook_Legacy_GUI.bat`.
+
+## Drafting a first code list (experimental)
+
+For a question not fielded before, `oe_codelist_embed.draft_keywords_by_meaning`
+drafts a preliminary code list from the verbatims for an analyst to review.
+Everything runs on this PC; no responses are sent anywhere.
+
+1. Non-answers go to the house codes (have not heard enough, nothing, don't know).
+2. Words and phrases used by several responses become candidate codes.
+3. A small local sentence-embedding model (`BAAI/bge-small-en-v1.5`, about
+   65 MB, run through `fastembed`) then drops candidates whose responses do not
+   agree in meaning, merges codes that say the same thing in different words,
+   files leftover responses under the closest code, and names each code with its
+   most typical short clause.
+
+The model downloads once into `SurveyPlatform/.models` (git-ignored). Embeddings
+are cached in `corpus/oe/embeddings` (git-ignored client data). The same model
+runs in a browser through transformers.js.
+
+Supporting modules:
+
+- `oe_codelist_draft.py`: text handling, non-answer rules, word-based drafters.
+- `oe_codelist_kb.py`: drafters that learn from past analyst coding.
+- `oe_embeddings.py`: local embedding and cache.
+- `oe_eval_corpus.py`: builds `corpus/oe/*.json` from analyst-coded archive jobs (read-only).
+- `oe_codelist_eval.py`: scores drafters against the analysts' final coding.
+
+```bash
+py -3 oe_codelist_eval.py keyword_themes keywords_by_meaning --sample 150
+```
+
+On 39 coded questions with a first-day sample of 150 responses, the draft
+matches about 56% of the analysts' major themes closely. About 89% of analyst
+themes appear as the main content of some draft code, 72% of draft codes are
+mostly one analyst code, and it drafts about as many codes as a preliminary list.

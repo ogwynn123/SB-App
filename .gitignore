@@ -53,3 +53,6 @@ Desktop.ini
 
 # Local regression corpora copied from client archive jobs (never commit)
 /corpus/
+
+# Local ML model downloads
+/.models/
