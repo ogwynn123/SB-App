@@ -70,6 +70,7 @@ def normalize(text: str) -> str:
     text = text.lower()
     text = re.sub(r"\bw/o\b", "without", text)
     text = re.sub(r"\bw/(?=\s|[a-z])", "with ", text)  # "votes w/ Trump" is one clause
+    text = re.sub(r"(?<=[a-z])-(?=[a-z])", "", text)  # pro-life, anti-trump stay one word
     text = re.sub(r"[^a-z0-9'/&,.;:!? -]+", " ", text)
     words = []
     for word in re.split(r"\s+", text):
@@ -105,7 +106,7 @@ def question_stopwords(question: str) -> set[str]:
 # little real content remains after removing them and filler words.
 NONANSWER_FAMILIES = [
     ("Have not heard enough / need more info", re.compile(
-        r"\b(have not|have n't|never|not|did not|do not) (heard|seen|read|watched|been following|following|followed|"
+        r"\b(have not|have n't|never|not|did not|do not) (heard|hearing|seen|read|watched|been following|following|followed|"
         r"paying attention|kept up|keep up)\b|\bheard nothing\b|\bnot (familiar|aware)\b|\bnot heard\b|"
         r"\b(need|have|want) to (look|research|learn|find out|read|hear) (more|into|up|about)\b|\bneed to (do|know) more\b|"
         r"\bneed more (info|information|research)\b|\b(do not|did not) (know|hear) (much|anything|enough|a lot)\b|"
@@ -127,10 +128,18 @@ mostly staying home currently moment time single word even knew running senate c
 """.split())
 
 
-def classify_nonanswer(text: str) -> str | None:
+OPINION_NOTHING_RE = re.compile(r"\bnothing (good|positive|nice|great|bad|negative|but)\b")
+NOT_HEARING_RE = re.compile(r"^(i am |i have |have |i've |i'm )?(not|never) (hearing|heard) (anything|nothing|much)( really| lately)?$|^heard nothing$")
+
+
+def classify_nonanswer(text: str, question: str = "") -> str | None:
     clean = normalize(text)
     if not clean or len(clean) < 2 or not re.search(r"[a-z]", clean):
         return "Don't know"
+    if OPINION_NOTHING_RE.search(clean):  # "nothing good about her" is a negative remark
+        return None
+    if NOT_HEARING_RE.match(clean) and re.search(r"\bhear", question.lower()):
+        return "Nothing"  # "what are you hearing...?" -> "not hearing anything" is house code 97
     matched = [label for label, pattern in NONANSWER_FAMILIES if pattern.search(clean)]
     if not matched:
         return None
@@ -154,11 +163,11 @@ def split_clauses(text: str) -> list[str]:
 STANDARD_LABELS = ["Have not heard enough / need more info", "Nothing", "Don't know"]
 
 
-def _standard_codes(texts: list[str]) -> tuple[list[DraftCode], list[int]]:
+def _standard_codes(texts: list[str], question: str = "") -> tuple[list[DraftCode], list[int]]:
     groups: dict[str, list[int]] = defaultdict(list)
     substantive: list[int] = []
     for index, text in enumerate(texts):
-        label = classify_nonanswer(text)
+        label = classify_nonanswer(text, question)
         if label:
             groups[label].append(index)
         else:
@@ -418,7 +427,7 @@ def draft_keyword_themes_v2(
     echo_forms: bool = True,
     min_count: int | None = None,
 ) -> list[DraftCode]:
-    standard, substantive = _standard_codes(texts)
+    standard, substantive = _standard_codes(texts, question)
     stop = question_echo(question) if echo_forms else question_stopwords(question)
     docs: dict[int, list[str]] = {}
     for i in substantive:

@@ -52,6 +52,13 @@ class NonAnswerTests(unittest.TestCase):
         self.assertEqual(draft.classify_nonanswer("idk"), "Don't know")
         self.assertEqual(draft.classify_nonanswer(""), "Don't know")
 
+    def test_house_rules_from_analyst_coding(self):
+        hearing = "In a few words, what are you hearing about Smith lately?"
+        self.assertEqual(draft.classify_nonanswer("Not hearing anything", hearing), "Nothing")
+        self.assertEqual(draft.classify_nonanswer("Not hearing anything"), "Have not heard enough / need more info")
+        self.assertIsNone(draft.classify_nonanswer("There is nothing good about her", hearing))
+        self.assertEqual(draft.light_tokens("He is pro-life"), ["prolife"])
+
     def test_content_wins_over_non_answer_words(self):
         self.assertIsNone(draft.classify_nonanswer("Pass the bill to lower gas prices"))
         self.assertIsNone(draft.classify_nonanswer("Nothing, he raised taxes and cut school funding"))
