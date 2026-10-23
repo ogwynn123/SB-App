@@ -228,6 +228,8 @@ def draft_keywords_by_meaning(
     relative_merge: float | None = 0.45,
     target_codes: int | None = None,
     target_floor: float = 0.25,  # never merge codes less alike than this to reach the target
+    leads: list[str] | None = None,
+    split_share: float = 0.25,
 ) -> list[DraftCode]:
     """Word themes (sharp codes), then meaning: drop themes whose wording agrees
     but meaning does not ("never", "instead"), merge codes that say the same
@@ -239,7 +241,13 @@ def draft_keywords_by_meaning(
     apart from the other codes, to become one (higher = more, finer codes;
     None falls back to the plain similarity ``merge``); ``target_codes`` instead
     merges the most alike codes until about that many remain; ``net`` groups
-    related codes under a broader NET (None = no NETs)."""
+    related codes under a broader NET (None = no NETs).
+
+    Direction: ``leads`` gives each response's answer to the closed lead-in
+    question ("positive", "negative", "mixed", a ballot side, or ""). A code
+    whose responses clearly come from both sides (the smaller side at least
+    ``split_share`` and big enough to code) is split by side, as analysts code
+    "good on X" apart from "bad on X"."""
     from oe_codelist_draft import draft_keyword_themes_v2, light_stem, question_echo
 
     echo = question_echo(question) - {"not", "no"}
@@ -316,6 +324,9 @@ def draft_keywords_by_meaning(
                 leftover.append(i)
     else:
         leftover = sorted(other)
+    if leads is not None:
+        codes = split_by_lead(codes, leads, response_vectors, min_size_for(len(texts), min_count, min_share),
+                              split_share, lambda code: carriers(code), echo)
     if labels == "house" and house_labels:
         _house_names(codes, np.stack(group_centroids), house_labels, house_match)
     codes = _merge_same_label(codes)
@@ -365,6 +376,14 @@ def draft_code_list(texts: list[str], question: str, *, detail: str = "standard"
     return draft_keywords_by_meaning(texts, question, **{**DETAIL_LEVELS[detail], **options})
 
 
+def draft_code_list_with_lead(texts: list[str], question: str, *, leads: list[str], **options) -> list[DraftCode]:
+    """draft_code_list that also splits codes by the lead-in question's direction."""
+    return draft_code_list(texts, question, leads=leads, **options)
+
+
+draft_code_list_with_lead.uses_lead = True
+
+
 def _house_names(codes: list[DraftCode], centroids: np.ndarray, house_labels: list[str], minimum: float) -> None:
     """Rename codes with the closest past analyst label when it is a close match;
     each house label is used once (largest code first)."""
@@ -381,6 +400,47 @@ def _house_names(codes: list[DraftCode], centroids: np.ndarray, house_labels: li
                 break
 
 
+def min_size_for(n: int, min_count: int | None, min_share: float) -> int:
+    return min_count or max(3, round(n * min_share))
+
+
+def split_by_lead(
+    codes: list[DraftCode], leads: list[str], response_vectors: np.ndarray, min_size: int, split_share: float,
+    carriers, echo: set[str] = frozenset(),
+) -> list[DraftCode]:
+    """Split codes whose responses come from both sides of the lead-in question.
+    Respondents without a side ("mixed", blank) join the side their answer is
+    closer to in meaning; each side is named from its own responses."""
+    result: list[DraftCode] = []
+    for code in codes:
+        sided: dict[str, list[int]] = {}
+        for i in code.members:
+            if leads[i] and leads[i] != "mixed":
+                sided.setdefault(leads[i], []).append(i)
+        big = sorted((side for side, members in sided.items() if len(members) >= min_size), key=lambda s: -len(sided[s]))
+        total = sum(len(m) for m in sided.values())
+        if len(big) < 2 or len(sided[big[1]]) < split_share * total:
+            result.append(code)
+            continue
+        sides = {side: list(sided[side]) for side in big}
+        centres = np.stack([response_vectors[m].mean(0) for m in sides.values()])
+        names = list(sides)
+        for i in code.members:
+            if leads[i] in sides:
+                continue
+            if leads[i] and leads[i] != "mixed":  # a small side: keep it with the code's main side
+                sides[names[0]].append(i)
+            else:
+                sides[names[int(np.argmax(centres @ response_vectors[i]))]].append(i)
+        for side, members in sides.items():
+            part = DraftCode(code.label, sorted(set(members)), list(code.terms), lead=side)
+            clauses, _owners = carriers(part)
+            if clauses:
+                part.label = pick_label(clauses, embed(clauses, cache=True), part.terms, echo=echo)
+            result.append(part)
+    return result
+
+
 def _merge_same_label(codes: list[DraftCode]) -> list[DraftCode]:
     """Codes that end up with the same name ("Too old" twice, "Can't be trusted"
     / "Cannot be trusted") are one theme to a reader: merge them."""
@@ -388,7 +448,7 @@ def _merge_same_label(codes: list[DraftCode]) -> list[DraftCode]:
 
     merged: dict[str, DraftCode] = {}
     for code in sorted(codes, key=lambda c: -len(c.members)):
-        key = catalogue_key(code.label.replace("can't", "cannot").replace("Can't", "Cannot")) or code.label
+        key = (catalogue_key(code.label.replace("can't", "cannot").replace("Can't", "Cannot")) or code.label) + "|" + code.lead
         if key in merged:
             keep = merged[key]
             keep.members = sorted(set(keep.members) | set(code.members))
@@ -417,4 +477,5 @@ DRAFTERS = {
     "code_list_broad": functools.partial(draft_code_list, detail="broad"),
     "code_list_standard": functools.partial(draft_code_list, detail="standard"),
     "code_list_fine": functools.partial(draft_code_list, detail="fine"),
+    "code_list_direction": draft_code_list_with_lead,
 }

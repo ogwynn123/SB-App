@@ -38,6 +38,7 @@ class DraftCode:
     members: list[int]
     terms: list[str] = field(default_factory=list)  # words that define a word theme
     net: str = ""  # broader group (NET) the code sits under, if any
+    lead: str = ""  # direction or side from the lead-in question, when split on it
 
 
 Drafter = Callable[[list[str], str], list[DraftCode]]
@@ -236,6 +237,8 @@ def score(
 
             pool = [r for r in (knowledge_from or questions) if r["job"] != record["job"]]
             draft = drafter(texts, question, knowledge=build_knowledge(pool))
+        elif getattr(drafter, "uses_lead", False):
+            draft = drafter(texts, question, leads=[item.get("lead", "") for item in record["items"]])
         else:
             draft = drafter(texts, question)
         predicted_groups = [sorted(set(code.members)) for code in draft]

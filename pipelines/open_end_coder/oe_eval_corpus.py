@@ -27,6 +27,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(PLATFORM / "pipelines" / "table_merger"))
 
 import oe_record_coder_core as oe  # noqa: E402
+from oe_lead_in import find_lead_in, lead_in_column, respondent_direction  # noqa: E402
 from carryover_tables import read_job_text  # noqa: E402
 
 ARCHIVE = Path(r"C:\Users\normi\OneDrive - Normington Petts\NPA Archive - Documents")
@@ -45,6 +46,12 @@ def question_text(job_dir: Path, question: str) -> str:
             if str(element.get("qid", "")).lower() == qid or str(element.get("qnum", "")).lower() == qid:
                 return str(element.get("text") or "")
     return ""
+
+
+def questionnaire(job_dir: Path) -> list[dict]:
+    for path in sorted((job_dir / "generated").glob("*JSON.json")):
+        return json.loads(path.read_text(encoding="utf-8")).get("elements", [])
+    return []
 
 
 def newest_data_file(project: Path, code: str) -> Path | None:
@@ -131,9 +138,12 @@ def build() -> list[Path]:
         numeric = [int(float(w)) for w in waves if re.fullmatch(r"\d+(?:\.0+)?", w)]
         latest = max(numeric) if numeric else None
         job_text = read_job_text(job_dir / "final.job")
+        elements = questionnaire(job_dir)
         for spec in oe.detect_open_end_questions(headers):
             if re.match(r"^\d{4}_", spec.name):  # earlier waves' questions carried in the ts file
                 continue
+            lead = find_lead_in(elements, spec.name)
+            lead_column = lead_in_column(headers, lead["qid"]) if lead else None
             items = []
             for row in rows:
                 if latest is not None and ts_col and row.get(ts_col, "").strip() not in {str(latest), f"{latest}.0"}:
@@ -142,7 +152,10 @@ def build() -> list[Path]:
                 codes = [oe.normalize_code(row.get(c)) for c in spec.companion_columns]
                 codes = [c for c in codes if c]
                 if text and codes:
-                    items.append({"text": text, "codes": codes})
+                    item = {"text": text, "codes": codes}
+                    if lead_column:
+                        item["lead"] = respondent_direction(row.get(lead_column), lead)
+                    items.append(item)
             if len(items) < 50:
                 continue
             title, labels = job_code_labels(job_text, spec.companion_columns[0])
@@ -155,14 +168,16 @@ def build() -> list[Path]:
                 "data_file": data_path.name,
                 "wave": latest,
                 "labels": labels,
+                "lead_in": {k: lead[k] for k in ("qid", "text", "type", "kind")} if lead_column else None,
                 "code_counts": dict(counts.most_common()),
                 "items": items,
             }
             path = out_dir / f"{job_dir.name}_{spec.name}.json"
             path.write_text(json.dumps(record, indent=1, ensure_ascii=False), encoding="utf-8")
             written.append(path)
+            leads = Counter(item.get("lead", "") for item in items) if lead_column else {}
             print(f"{job_dir.name} {spec.name}: {len(items)} responses, {len(counts)} codes, "
-                  f"{len(labels)} labels | {title[:60]}")
+                  f"{len(labels)} labels | lead-in {dict(leads) or '-'} | {title[:40]}")
     return written
 
 

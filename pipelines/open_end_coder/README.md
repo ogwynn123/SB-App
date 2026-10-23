@@ -114,20 +114,37 @@ The knobs underneath can be set directly: `target_codes` (about how many codes),
 `None` for no NETs). With `draft_keywords_by_meaning_house`, codes that closely
 match a past analyst label take the house wording.
 
+Direction from the lead-in question: many open ends follow a closed question
+("Has what you have been hearing about X been mostly positive, mostly negative,
+or a mix?", approve/disapprove, more/less favorable, or a ballot).
+`oe_lead_in.find_lead_in` finds it from the open end's skip instruction
+("[IF Q7=1-3]") or the question just before, and gives each respondent's
+direction (positive / negative / mixed) or ballot side (the candidate chosen).
+Passing those as `leads` to `draft_code_list` splits codes that clearly come
+from both sides, as analysts code "good on X" apart from "bad on X": "He wants
+to defund the police" becomes a negative code and a positive "He supports law
+enforcement". "Mixed" respondents join the side their answer is closer to.
+Each split code records its side in `lead`. On 16 recent questions with a
+varying direction, this raised the share of a code's responses on one side
+from 76% to 91% (analysts' codes: 87%), at the cost of a few more codes.
+Open ends asked of one side only (such as "[IF Q8=2]") are left as they are.
+
 The model downloads once into `SurveyPlatform/.models` (git-ignored). Embeddings
 are cached in `corpus/oe/embeddings` (git-ignored client data). The same model
 runs in a browser through transformers.js. Drafting 150 responses takes about
 3 seconds, plus about 1.5 seconds to load the model.
 
-Known limits: the model is weak on stance and negation ("would benefit the
-economy" can collect "I don't see how it would benefit the economy"), some
-labels need the reviewer's pen, and small samples give codes of 3 responses.
+Known limits: without a lead-in question the model is weak on stance and
+negation ("would benefit the economy" can collect "I don't see how it would
+benefit the economy"), some labels need the reviewer's pen, and small samples
+give codes of 3 responses.
 
 Supporting modules:
 
 - `oe_codelist_draft.py`: text handling, non-answer rules, word-based drafters.
 - `oe_codelist_kb.py`: knowledge learned from past analyst coding.
 - `oe_embeddings.py`: local embedding and cache.
+- `oe_lead_in.py`: the lead-in question and each respondent's direction or side.
 - `oe_eval_corpus.py`: builds `corpus/oe/*.json` from analyst-coded archive jobs (read-only).
 - `oe_codelist_eval.py`: scores drafters. Past analyst lists are guiding examples,
   not the target, so it reports measures that need no answer key (share coded,

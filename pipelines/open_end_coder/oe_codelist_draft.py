@@ -25,6 +25,7 @@ except ImportError:  # pragma: no cover - standalone use
         members: list[int]
         terms: list[str] = field(default_factory=list)
         net: str = ""
+        lead: str = ""
 
 
 # --- Text normalisation ----------------------------------------------------
