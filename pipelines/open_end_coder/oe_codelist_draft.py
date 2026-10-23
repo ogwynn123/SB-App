@@ -67,6 +67,8 @@ def normalize(text: str) -> str:
     for bad, good in MOJIBAKE.items():
         text = text.replace(bad, good)
     text = text.lower()
+    text = re.sub(r"\bw/o\b", "without", text)
+    text = re.sub(r"\bw/(?=\s|[a-z])", "with ", text)  # "votes w/ Trump" is one clause
     text = re.sub(r"[^a-z0-9'/&,.;:!? -]+", " ", text)
     words = []
     for word in re.split(r"\s+", text):

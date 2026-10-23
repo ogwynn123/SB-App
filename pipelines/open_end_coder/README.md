@@ -156,6 +156,20 @@ negation ("would benefit the economy" can collect "I don't see how it would
 benefit the economy"), some labels need the reviewer's pen, and small samples
 give codes of 3 responses.
 
+To draft a job's open ends into a review workbook (a code list sheet and a
+responses sheet per question, codes 96-99 standard), describe the data file, the
+open ends and their lead-ins in a small JSON spec (see the docstring) and run:
+
+```bash
+py -3 oe_draft_codelist.py ../../workspace/NPA3887/oe_draft_spec.json
+```
+
+Only the respondent ID, the verbatims and the lead-in answers are read. Keep the
+spec and the workbook in the git-ignored `workspace/` folder. House code lists in
+long-running tracks are fine-grained (NPA3887 week 2: 90 codes per question), so
+`"detail": "fine", "options": {"target_codes": 60}` suited it better than the
+standard 25.
+
 Supporting modules:
 
 - `oe_codelist_draft.py`: text handling, non-answer rules, word-based drafters.
