@@ -1,6 +1,7 @@
 """Tests for finding an open end's lead-in question and splitting codes by direction."""
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -97,7 +98,7 @@ class SplitByLeadTests(unittest.TestCase):
         leads = ["positive"] * 5 + ["negative"] * 5
         vectors = np.array([[1.0, 0.0]] * 5 + [[0.0, 1.0]] * 5)
         parts = embed_drafter.split_by_lead([DraftCode("Republican", list(range(10)))], leads, vectors, 3, 0.25,
-                                            lambda c: ([], []), keep_whole=lambda code: code.label == "Republican")
+                                            lambda c: ([], []), keep_whole=lambda code, texts=None: code.label == "Republican")
         self.assertEqual(len(parts), 1)
 
     def test_both_sides_themes_come_from_balanced_past_codes(self):
@@ -112,6 +113,42 @@ class SplitByLeadTests(unittest.TestCase):
             [DraftCode("Doing a good job", [0], lead="positive"), DraftCode("Doing a good job", [1], lead="negative")]
         )
         self.assertEqual(len(merged), 2)
+
+
+class NeverSplitListTests(unittest.TestCase):
+    def write_list(self, text):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8")
+        handle.write(text)
+        handle.close()
+        self.addCleanup(Path(handle.name).unlink)
+        return embed_drafter.load_never_split(handle.name)
+
+    def test_alternatives_word_forms_and_exclusions(self):
+        entries = self.write_list("# note\n\nlowering taxes !rich | tax cuts !rich\nrepublican\n")
+        self.assertEqual(len(entries), 2)
+        keep = embed_drafter.never_split_matcher(entries)
+        self.assertTrue(keep(DraftCode("He has lowered taxes", [])))
+        self.assertTrue(keep(DraftCode("Votes with the Republicans", [])))
+        self.assertFalse(keep(DraftCode("Raised taxes", [])))
+        self.assertFalse(keep(DraftCode("Tax cuts for the rich", [])))
+
+    def test_matches_on_half_the_responses(self):
+        keep = embed_drafter.never_split_matcher(self.write_list("seen ads\n"))
+        texts = ["I have seen his ads", "saw the ads on tv, seen ads", "he is corrupt", "seen ads everywhere"]
+        self.assertTrue(keep(DraftCode("Television", [0, 1, 3]), texts))
+        self.assertFalse(keep(DraftCode("Television", [2, 3, 0, 1]), ["x", "y", "z", "w"]))
+
+    def test_listed_remark_is_not_split(self):
+        keep = embed_drafter.never_split_matcher(self.write_list("lowering taxes\n"))
+        leads = ["positive"] * 5 + ["negative"] * 5
+        vectors = np.array([[1.0, 0.0]] * 5 + [[0.0, 1.0]] * 5)
+        parts = embed_drafter.split_by_lead([DraftCode("He lowered taxes", list(range(10)))], leads, vectors, 3, 0.25,
+                                            lambda c: ([], []), keep_whole=keep)
+        self.assertEqual(len(parts), 1)
+
+    def test_shipped_list_loads(self):
+        self.assertTrue(embed_drafter.load_never_split())
+        self.assertEqual(embed_drafter.load_never_split(THIS_DIR / "missing.txt"), [])
 
 
 if __name__ == "__main__":

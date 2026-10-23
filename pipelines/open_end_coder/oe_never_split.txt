@@ -1,0 +1,19 @@
+# Remarks that are never split by side when drafting a code list.
+#
+# When an open end follows a lead-in question (mostly positive / mostly negative,
+# approve / disapprove, more / less favorable), drafted codes that draw from both
+# sides are split into a positive and a negative code. Remarks listed here mean
+# the same whoever makes them, so their codes are kept whole.
+#
+# One remark per line. Put alternative wordings on the same line separated by |.
+# A remark matches a code when all of its words appear in the code's label, or in
+# at least half of the code's responses. Word forms are matched loosely
+# ("lowering taxes" matches "he lowered taxes"), and small words (the, a, of, his)
+# are ignored. A word written with ! must NOT appear: "tax cuts !rich" matches
+# "cut my taxes" but not "tax cuts for the rich". Lines starting with # are notes.
+
+# Tax cuts for the rich / billionaires / corporations are a one-sided criticism, so they still split.
+lowering taxes !rich !billionaire !wealthy !corporate | lower taxes !rich !billionaire !wealthy !corporate | tax cuts !rich !billionaire !wealthy !corporate | cut taxes !rich !billionaire !wealthy !corporate
+republican
+democrat | democratic
+seen ads | saw ads | ads | commercials | tv ads

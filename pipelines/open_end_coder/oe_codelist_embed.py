@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import functools
 import re
+from pathlib import Path
 from collections import Counter
 
 import numpy as np
@@ -251,7 +252,9 @@ def draft_keywords_by_meaning(
     "good on X" apart from "bad on X". ``keep_whole(code)`` can veto a split for
     themes the house codes the same whoever mentions them ("Republican"). The
     two halves of a split share a NET named after the topic, so a reviewer can
-    merge them back in one step when both sides really made the same remark."""
+    merge them back in one step when both sides really made the same remark.
+    Remarks in the editable never-split list (oe_never_split.txt) are always
+    kept whole."""
     from oe_codelist_draft import draft_keyword_themes_v2, light_stem, question_echo
 
     echo = question_echo(question) - {"not", "no"}
@@ -330,7 +333,7 @@ def draft_keywords_by_meaning(
         leftover = sorted(other)
     if leads is not None:
         codes = split_by_lead(codes, leads, response_vectors, min_size_for(len(texts), min_count, min_share),
-                              split_share, lambda code: carriers(code), echo, keep_whole)
+                              split_share, lambda code: carriers(code), echo, keep_whole, texts)
     if labels == "house" and house_labels:
         _house_names(codes, np.stack(group_centroids), house_labels, house_match)
     codes = _merge_same_label(codes)
@@ -384,11 +387,83 @@ def draft_code_list(texts: list[str], question: str, *, detail: str = "standard"
 
 
 def draft_code_list_with_lead(texts: list[str], question: str, *, leads: list[str], **options) -> list[DraftCode]:
-    """draft_code_list that also splits codes by the lead-in question's direction."""
+    """draft_code_list that also splits codes by the lead-in question's direction,
+    except remarks in the never-split list."""
+    options.setdefault("keep_whole", never_split_matcher(load_never_split()))
     return draft_code_list(texts, question, leads=leads, **options)
 
 
 draft_code_list_with_lead.uses_lead = True
+
+
+NEVER_SPLIT_FILE = Path(__file__).resolve().with_name("oe_never_split.txt")
+
+
+def match_form(word: str) -> str:
+    """Loose word form for list matching: taxes -> tax, ads -> ad, lowered -> lower."""
+    word = word.lower().strip(".,;:!?'\"()")
+    if word.endswith(("xes", "sses", "shes", "ches")):
+        word = word[:-2]
+    elif word.endswith("s") and not word.endswith("ss") and len(word) > 2:
+        word = word[:-1]
+    for suffix in ("ing", "ed"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            word = word[: -len(suffix)]
+            break
+    return word
+
+
+def _remark_words(text: str) -> set[str]:
+    from oe_codelist_draft import STOPWORDS
+
+    return {match_form(w) for w in re.findall(r"[a-z][a-z']*", text.lower()) if w not in STOPWORDS}
+
+
+def load_never_split(path: Path | str | None = None) -> list[list[tuple[set[str], set[str]]]]:
+    """Entries of the never-split list: per line, its alternatives as
+    (words that must appear, words that must not -- written with a ! prefix)."""
+    file = Path(path) if path else NEVER_SPLIT_FILE
+    if not file.exists():
+        return []
+    entries = []
+    for line in file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        alternatives = []
+        for part in line.split("|"):
+            excluded = {match_form(w[1:]) for w in part.split() if w.startswith("!") and len(w) > 1}
+            required = _remark_words(" ".join(w for w in part.split() if not w.startswith("!")))
+            if required:
+                alternatives.append((required, excluded))
+        if alternatives:
+            entries.append(alternatives)
+    return entries
+
+
+def never_split_matcher(entries, share: float = 0.5):
+    """keep_whole for split_by_lead: a listed remark appears in the code's label,
+    or in at least ``share`` of its responses."""
+    if not entries:
+        return None
+    alternatives = [alternative for entry in entries for alternative in entry]
+
+    def found(words: set[str]) -> bool:
+        return any(required <= words and not (excluded & words) for required, excluded in alternatives)
+
+    def matches(code: DraftCode, texts: list[str] | None = None) -> bool:
+        if found(_remark_words(code.label)):
+            return True
+        if not texts or not code.members:
+            return False
+        return sum(found(_remark_words(texts[i])) for i in code.members) >= share * len(code.members)
+
+    return matches
+
+
+def either(*checks):
+    checks = [c for c in checks if c is not None]
+    return (lambda code, texts=None: any(c(code, texts) for c in checks)) if checks else None
 
 
 def both_sides_themes(records: list[dict], min_responses: int = 6, balance: float = 0.25) -> list[str]:
@@ -417,12 +492,12 @@ def keep_whole_if_known(labels: list[str], minimum: float = 0.9):
     if not labels:
         return None
     vectors = embed(labels, cache=True)
-    return lambda code: float((vectors @ embed([code.label], cache=True)[0]).max()) >= minimum
+    return lambda code, _texts=None: float((vectors @ embed([code.label], cache=True)[0]).max()) >= minimum
 
 
 def draft_code_list_with_house_lead(texts: list[str], question: str, *, leads: list[str], knowledge_records: list[dict], **options):
     """draft_code_list_with_lead, keeping whole the themes past coding treats the same on both sides."""
-    keep = keep_whole_if_known(both_sides_themes(knowledge_records))
+    keep = either(never_split_matcher(load_never_split()), keep_whole_if_known(both_sides_themes(knowledge_records)))
     return draft_code_list(texts, question, leads=leads, keep_whole=keep, **options)
 
 
@@ -452,7 +527,7 @@ def min_size_for(n: int, min_count: int | None, min_share: float) -> int:
 
 def split_by_lead(
     codes: list[DraftCode], leads: list[str], response_vectors: np.ndarray, min_size: int, split_share: float,
-    carriers, echo: set[str] = frozenset(), keep_whole=None,
+    carriers, echo: set[str] = frozenset(), keep_whole=None, texts: list[str] | None = None,
 ) -> list[DraftCode]:
     """Split codes whose responses come from both sides of the lead-in question.
     Respondents without a side ("mixed", blank) join the side their answer is
@@ -469,7 +544,7 @@ def split_by_lead(
         if len(big) < 2 or len(sided[big[1]]) < split_share * total:
             result.append(code)
             continue
-        if keep_whole is not None and keep_whole(code):
+        if keep_whole is not None and keep_whole(code, texts):
             result.append(code)
             continue
         sides = {side: list(sided[side]) for side in big}

@@ -137,6 +137,13 @@ meaning nor tone reliably spots these: splitting matched the analysts' choice
 matches a past analyst code that drew evenly from both sides (learned at run
 time from the coded jobs, so it grows with the corpus). The rest split, with
 both halves side by side, so a wrong split is a one-step merge for the reviewer.
+
+Remarks you know are never split go in `oe_never_split.txt` (one per line,
+alternatives separated by `|`, a `!word` that must not appear, `#` for notes),
+for example `lowering taxes !rich | tax cuts !rich`, `republican`, `seen ads | commercials`.
+A listed remark matches a code when its words are all in the code's label or in
+at least half of its responses, with loose word forms ("lowered taxes" matches,
+"raised taxes" does not). Both lead-in drafters read it on every run.
 Open ends asked of one side only (such as "[IF Q8=2]") are left as they are.
 
 The model downloads once into `SurveyPlatform/.models` (git-ignored). Embeddings
@@ -155,6 +162,7 @@ Supporting modules:
 - `oe_codelist_kb.py`: knowledge learned from past analyst coding.
 - `oe_embeddings.py`: local embedding and cache.
 - `oe_lead_in.py`: the lead-in question and each respondent's direction or side.
+- `oe_never_split.txt`: the editable list of remarks never split by side.
 - `oe_eval_corpus.py`: builds `corpus/oe/*.json` from analyst-coded archive jobs (read-only).
 - `oe_codelist_eval.py`: scores drafters. Past analyst lists are guiding examples,
   not the target, so it reports measures that need no answer key (share coded,
