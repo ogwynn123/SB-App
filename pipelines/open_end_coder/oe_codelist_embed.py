@@ -232,6 +232,7 @@ def draft_keywords_by_meaning(
     leads: list[str] | None = None,
     split_share: float = 0.25,
     keep_whole=None,
+    bundle: float | None = None,
 ) -> list[DraftCode]:
     """Word themes (sharp codes), then meaning: drop themes whose wording agrees
     but meaning does not ("never", "instead"), merge codes that say the same
@@ -249,7 +250,8 @@ def draft_keywords_by_meaning(
     question ("positive", "negative", "mixed", a ballot side, or ""). A code
     whose responses clearly come from both sides (the smaller side at least
     ``split_share`` and big enough to code) is split by side, as analysts code
-    "good on X" apart from "bad on X". ``keep_whole(code)`` can veto a split for
+    "good on X" apart from "bad on X". ``bundle`` then merges finished codes
+    whose responses are about the same thing (see bundle_codes). ``keep_whole(code)`` can veto a split for
     themes the house codes the same whoever mentions them ("Republican"). The
     two halves of a split share a NET named after the topic, so a reviewer can
     merge them back in one step when both sides really made the same remark.
@@ -337,6 +339,8 @@ def draft_keywords_by_meaning(
     if labels == "house" and house_labels:
         _house_names(codes, np.stack(group_centroids), house_labels, house_match)
     codes = _merge_same_label(codes)
+    if bundle is not None:
+        codes = bundle_codes(codes, response_vectors, bundle)
     for code in codes:
         code.members.sort()
     loose = [code for code in codes if not code.net]
@@ -519,6 +523,34 @@ def _house_names(codes: list[DraftCode], centroids: np.ndarray, house_labels: li
                 used.add(int(j))
                 codes[k].label = house_labels[int(j)]
                 break
+
+
+def bundle_codes(codes: list[DraftCode], response_vectors: np.ndarray, threshold: float) -> list[DraftCode]:
+    """Merge finished codes whose responses are about the same thing ("Lies from
+    the Perry campaign" / "Absolutely false" / "Smear campaign"). Codes are
+    compared on what sets their responses apart from the other codes' (every
+    answer shares the question's topic), only with codes on the same side of the
+    lead-in, never a positive with a negative. The merged code takes the name of
+    its largest code and lists the names of all the codes it bundled."""
+    if len(codes) < 3:
+        return codes
+    centres = np.stack([response_vectors[c.members].mean(0) for c in codes])
+    centres /= np.linalg.norm(centres, axis=1, keepdims=True).clip(min=1e-9)
+    apart = centres - centres.mean(0)
+    apart /= np.linalg.norm(apart, axis=1, keepdims=True).clip(min=1e-9)
+    result: list[DraftCode] = []
+    for side in sorted({c.lead for c in codes}):
+        index = [k for k, c in enumerate(codes) if c.lead == side]
+        for group in agglomerate(apart[index], threshold) if len(index) > 1 else [[0]]:
+            parts = sorted((codes[index[g]] for g in group), key=lambda c: -len(c.members))
+            if len(parts) == 1:
+                result.append(parts[0])
+                continue
+            merged = DraftCode(parts[0].label, sorted(set().union(*(p.members for p in parts))),
+                               [t for p in parts for t in p.terms], net=parts[0].net, lead=side,
+                               bundled=[p.label for p in parts])
+            result.append(merged)
+    return result
 
 
 def min_size_for(n: int, min_count: int | None, min_share: float) -> int:

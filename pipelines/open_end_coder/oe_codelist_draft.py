@@ -26,6 +26,7 @@ except ImportError:  # pragma: no cover - standalone use
         terms: list[str] = field(default_factory=list)
         net: str = ""
         lead: str = ""
+        bundled: list[str] = field(default_factory=list)
 
 
 # --- Text normalisation ----------------------------------------------------

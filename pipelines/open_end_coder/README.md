@@ -168,7 +168,11 @@ Only the respondent ID, the verbatims and the lead-in answers are read. Keep the
 spec and the workbook in the git-ignored `workspace/` folder. House code lists in
 long-running tracks are fine-grained (NPA3887 week 2: 90 codes per question), so
 `"detail": "fine", "options": {"target_codes": 60}` suited it better than the
-standard 25.
+standard 25. Adding `"bundle": 0.5` merges finished codes whose responses are
+about the same thing ("Lot of negative ads online" + "Smear campaign on
+everybody"), only within the same side of the lead-in; the bundle keeps its
+largest code's name and the code list's "Bundled from" column shows what went in.
+If the workbook is open in Excel, the runner saves beside it with the time added.
 
 Supporting modules:
 

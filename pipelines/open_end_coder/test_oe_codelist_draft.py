@@ -154,6 +154,18 @@ class DetailAndLabelTests(unittest.TestCase):
         )
         self.assertEqual(sorted(len(c.members) for c in merged), [2, 3])
 
+    def test_bundle_merges_alike_codes_on_the_same_side_only(self):
+        vectors = np.array([[1.0, 0.0, 0.0], [0.98, 0.2, 0.0], [0.0, 0.0, 1.0], [0.97, 0.25, 0.0], [0.0, 1.0, 0.0]])
+        vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+        codes = [DraftCode("Negative ads", [0]), DraftCode("Smear campaign", [1]), DraftCode("Too old", [2]),
+                 DraftCode("Absolutely false", [3], lead="positive"), DraftCode("Gas prices", [4])]
+        bundled = embed_drafter.bundle_codes(codes, vectors, 0.5)
+        merged = [c for c in bundled if c.bundled]
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(sorted(merged[0].bundled), ["Negative ads", "Smear campaign"])
+        self.assertEqual(sorted(merged[0].members), [0, 1])
+        self.assertIn("Absolutely false", [c.label for c in bundled])
+
     def test_label_cleanup(self):
         self.assertEqual(embed_drafter.clean_label("I think it is a scam"), "Scam")
         self.assertEqual(embed_drafter.clean_label("he is too old"), "Too old")

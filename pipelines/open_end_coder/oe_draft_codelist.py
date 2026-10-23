@@ -21,7 +21,8 @@ spec.json:
 
 "lead" is optional; its options are listed in code order (1, 2, ...). An
 "options" object (for the whole spec or one question) passes drafting settings
-through, e.g. {"target_codes": 60}.
+through, e.g. {"target_codes": 60, "bundle": 0.5} (bundle merges codes whose
+responses are about the same thing; the code list shows what was bundled).
 """
 
 from __future__ import annotations
@@ -133,7 +134,7 @@ def summarise(texts: list[str], answers: list[str], numbered: list[tuple[str, ob
     }
 
 
-def write_workbook(out: Path, spec: dict, results: list) -> None:
+def write_workbook(out: Path, spec: dict, results: list) -> Path:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font
 
@@ -202,14 +203,14 @@ def write_workbook(out: Path, spec: dict, results: list) -> None:
         name = question["column"]
         n = len(texts)
         sheet = book.create_sheet(f"{name} code list")
-        sheet.append(["Code", "Label", "Side", "NET", "Responses", "% of responses", "Examples"])
+        sheet.append(["Code", "Label", "Side", "NET", "Responses", "% of responses", "Examples", "Bundled from"])
         for cell in sheet[1]:
             cell.font = Font(bold=True)
         for number, code in numbered:
             examples = " | ".join(texts[i][:120] for i in code.members[:3])
             sheet.append([int(number), code.label, SIDE_MARK.get(code.lead, ""), code.net, len(code.members),
-                          round(100 * len(code.members) / n, 1) if n else 0, examples])
-        for column, width in zip("ABCDEFG", (7, 42, 6, 36, 11, 14, 120)):
+                          round(100 * len(code.members) / n, 1) if n else 0, examples, " + ".join(code.bundled)])
+        for column, width in zip("ABCDEFGH", (7, 42, 6, 36, 11, 14, 110, 60)):
             sheet.column_dimensions[column].width = width
         sheet.freeze_panes = "A2"
 
@@ -234,7 +235,12 @@ def write_workbook(out: Path, spec: dict, results: list) -> None:
             cells[0].alignment = Alignment(wrap_text=True, vertical="top")
         responses.freeze_panes = "A2"
     out.parent.mkdir(parents=True, exist_ok=True)
-    book.save(out)
+    try:
+        book.save(out)
+    except PermissionError:  # open in Excel: keep that copy, save beside it
+        out = out.with_name(f"{out.stem} {datetime.now().strftime('%H%M')}{out.suffix}")
+        book.save(out)
+    return out
 
 
 def run(spec: dict, knowledge_records: list[dict] | None = None):
@@ -246,7 +252,7 @@ def run(spec: dict, knowledge_records: list[dict] | None = None):
     rows = read_rows(Path(spec["data"]), columns, spec.get("id_column", "survnum"))
     results = [draft_question(rows, q, spec.get("detail", "standard"), knowledge_records, spec.get("options"))
                for q in spec["questions"]]
-    write_workbook(Path(spec["out"]), spec, results)
+    spec["written"] = str(write_workbook(Path(spec["out"]), spec, results))
     return results
 
 
@@ -263,7 +269,7 @@ def main() -> int:
         knowledge = load_questions() or None
     for question, (kept, texts, answers, numbered) in zip(spec["questions"], run(spec, knowledge)):
         print(f"{question['column']}: {len(texts)} responses, {sum(c.label not in STANDARD_NUMBERS for _n, c in numbered)} draft codes")
-    print(f"Wrote {spec['out']}")
+    print(f"Wrote {spec.get('written', spec['out'])}")
     return 0
 
 
