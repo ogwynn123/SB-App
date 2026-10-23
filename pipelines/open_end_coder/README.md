@@ -82,35 +82,58 @@ The former aggregated codebook editor remains available through
 
 ## Drafting a first code list (experimental)
 
-For a question not fielded before, `oe_codelist_embed.draft_keywords_by_meaning`
-drafts a preliminary code list from the verbatims for an analyst to review.
-Everything runs on this PC; no responses are sent anywhere.
+For a question not fielded before, `oe_codelist_embed.draft_code_list` drafts a
+preliminary code list, with related codes grouped under NETs, for an analyst to
+review. Everything runs on this PC; no responses are sent anywhere.
 
 1. Non-answers go to the house codes (have not heard enough, nothing, don't know).
-2. Words and phrases used by several responses become candidate codes.
+2. Words and phrases used by several responses become candidate codes; words
+   that only echo the question ("supported", "crypto" for "cryptocurrency") are ignored.
 3. A small local sentence-embedding model (`BAAI/bge-small-en-v1.5`, about
-   65 MB, run through `fastembed`) then drops candidates whose responses do not
-   agree in meaning, merges codes that say the same thing in different words,
-   files leftover responses under the closest code, and names each code with its
-   most typical short clause.
+   65 MB, run through `fastembed`) then:
+   - drops candidates whose responses do not agree in meaning ("never", "instead");
+   - merges codes that say the same thing in different words, comparing codes on
+     what sets them apart (every answer shares the question's topic);
+   - files leftover responses under the closest code;
+   - names each code with a short, typical clause ("He is too old" -> "Too old"),
+     skipping clauses that only repeat the question; codes that end up with the
+     same name are merged;
+   - groups related codes under NETs, named after the most central code.
+
+Granularity is a choice, not a fixed answer:
+
+| detail | about | use |
+|---|---|---|
+| `broad` | 12 codes | a quick first look; never forces unrelated codes together, so it may stop above 12 |
+| `standard` | 25 codes | a preliminary list |
+| `fine` | 40 codes | closer to a working list |
+
+The knobs underneath can be set directly: `target_codes` (about how many codes),
+`relative_merge` (how alike codes must be to merge, instead of a target),
+`min_count` (smallest code) and `net` (how alike codes must be to share a NET;
+`None` for no NETs). With `draft_keywords_by_meaning_house`, codes that closely
+match a past analyst label take the house wording.
 
 The model downloads once into `SurveyPlatform/.models` (git-ignored). Embeddings
 are cached in `corpus/oe/embeddings` (git-ignored client data). The same model
-runs in a browser through transformers.js.
+runs in a browser through transformers.js. Drafting 150 responses takes about
+3 seconds, plus about 1.5 seconds to load the model.
+
+Known limits: the model is weak on stance and negation ("would benefit the
+economy" can collect "I don't see how it would benefit the economy"), some
+labels need the reviewer's pen, and small samples give codes of 3 responses.
 
 Supporting modules:
 
 - `oe_codelist_draft.py`: text handling, non-answer rules, word-based drafters.
-- `oe_codelist_kb.py`: drafters that learn from past analyst coding.
+- `oe_codelist_kb.py`: knowledge learned from past analyst coding.
 - `oe_embeddings.py`: local embedding and cache.
 - `oe_eval_corpus.py`: builds `corpus/oe/*.json` from analyst-coded archive jobs (read-only).
-- `oe_codelist_eval.py`: scores drafters against the analysts' final coding.
+- `oe_codelist_eval.py`: scores drafters. Past analyst lists are guiding examples,
+  not the target, so it reports measures that need no answer key (share coded,
+  how tightly codes hold together, how distinct they are) next to how many of
+  the analysts' main themes appear.
 
 ```bash
-py -3 oe_codelist_eval.py keyword_themes keywords_by_meaning --sample 150
+py -3 oe_codelist_eval.py code_list_broad code_list_standard code_list_fine --sample 150
 ```
-
-On 39 coded questions with a first-day sample of 150 responses, the draft
-matches about 56% of the analysts' major themes closely. About 89% of analyst
-themes appear as the main content of some draft code, 72% of draft codes are
-mostly one analyst code, and it drafts about as many codes as a preliminary list.

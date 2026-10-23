@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover - standalone use
         label: str
         members: list[int]
         terms: list[str] = field(default_factory=list)
+        net: str = ""
 
 
 # --- Text normalisation ----------------------------------------------------
@@ -356,6 +357,7 @@ works working worked believe think feel seem seems look looks see seen saw hear 
 told say says said put take took come came make made use used done doing able sure ever every
 everything something anything nothing someone anyone everyone person people thing things way ways lot
 lots much many more less most least time times year years day days really very also still just
+might maybe probably perhaps likely mean means
 """.split())
 
 
@@ -383,8 +385,22 @@ def light_tokens(text: str, extra_stop: set[str] = frozenset()) -> list[str]:
         word = word.strip("'")
         if word in STOPWORDS or word in GENERIC_WORDS or word in extra_stop or len(word) < 3:
             continue
-        out.append(light_stem(word))
+        stemmed = light_stem(word)
+        if stemmed in extra_stop:
+            continue
+        out.append(stemmed)
     return out
+
+
+def question_echo(question: str) -> set[str]:
+    """Question words in any form: "supported" -> "support", and short forms of
+    long words ("crypto" for "cryptocurrency")."""
+    words = question_stopwords(question)
+    echo = set(words) | {light_stem(w) for w in words}
+    for word in words:
+        if len(word) >= 10:
+            echo.update(word[:k] for k in range(5, len(word)))
+    return echo
 
 
 def draft_keyword_themes_v2(
@@ -395,16 +411,18 @@ def draft_keyword_themes_v2(
     merge_jaccard: float = 0.5,
     max_codes: int = 3,
     min_share: float = 0.01,
+    echo_forms: bool = True,
+    min_count: int | None = None,
 ) -> list[DraftCode]:
     standard, substantive = _standard_codes(texts)
-    stop = question_stopwords(question)
+    stop = question_echo(question) if echo_forms else question_stopwords(question)
     docs: dict[int, list[str]] = {}
     for i in substantive:
         words = light_tokens(texts[i], stop)
         docs[i] = words + [f"{a} {b}" for a, b in zip(words, words[1:])]
     n_sub = max(len(substantive), 1)
     df = Counter(term for doc in docs.values() for term in set(doc))
-    min_size = max(3, round(len(texts) * min_share))
+    min_size = min_count or max(3, round(len(texts) * min_share))
     candidates = [t for t, c in df.items() if min_size <= c <= topic_share * n_sub]
     # Bigrams first when they keep most of a word's responses ("cost living" before "cost").
     candidates.sort(key=lambda t: (-(df[t] * (1.6 if " " in t else 1.0)), t))

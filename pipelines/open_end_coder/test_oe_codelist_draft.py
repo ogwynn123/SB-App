@@ -112,5 +112,59 @@ class KeywordsByMeaningTests(unittest.TestCase):
             self.assertTrue(code.label and len(code.label) <= 60, code.label)
 
 
+class DetailAndLabelTests(unittest.TestCase):
+    TEXTS = (
+        ["He is too old", "Too old to serve", "His age, he is old", "He is old and tired", "Old age"]
+        + ["In office too long", "Been there too long", "Too many years in office", "He has been there forever, too long"]
+        + ["Gas prices", "Inflation and gas prices", "Cost of groceries and gas prices", "Gas prices are too high"]
+        + ["I have not heard enough", "Nothing", "Don't know", "Purple"]
+    )
+
+    def draft(self, **options):
+        with mock.patch.object(embed_drafter, "embed", fake_embed):
+            return embed_drafter.draft_code_list(self.TEXTS, "Why is your opinion less favorable?", **options)
+
+    def themes(self, codes):
+        return [c for c in codes if c.label not in embed_drafter.STANDARD_OR_OTHER]
+
+    def test_every_detail_level_drafts_a_list(self):
+        for detail in embed_drafter.DETAIL_LEVELS:
+            codes = self.draft(detail=detail)
+            self.assertTrue(self.themes(codes), detail)
+            self.assertEqual({i for c in codes for i in c.members}, set(range(len(self.TEXTS))), detail)
+
+    def test_target_count_caps_the_number_of_codes(self):
+        self.assertLessEqual(len(self.themes(self.draft(target_codes=1, target_floor=-1.0))), 1)
+
+    def test_agglomerate_stops_at_max_groups(self):
+        groups = embed_drafter.agglomerate(np.eye(4), -1.0, max_groups=2)
+        self.assertEqual(len(groups), 2)
+
+    def test_nets_group_related_codes(self):
+        codes = [DraftCode("Gas prices", [0]), DraftCode("Inflation", [1]), DraftCode("Too old", [2])]
+        centres = np.array([[1.0, 0.1, 0.0], [0.95, 0.15, 0.0], [0.0, 0.0, 1.0]])
+        embed_drafter.group_into_nets(codes, centres, 0.3)
+        self.assertEqual(codes[0].net, codes[1].net)
+        self.assertTrue(codes[0].net)
+        self.assertEqual(codes[2].net, "")
+
+    def test_codes_with_the_same_name_merge(self):
+        merged = embed_drafter._merge_same_label(
+            [DraftCode("Too old", [0, 1]), DraftCode("Too old", [2]), DraftCode("Can't be trusted", [3]), DraftCode("Cannot be trusted", [4])]
+        )
+        self.assertEqual(sorted(len(c.members) for c in merged), [2, 3])
+
+    def test_label_cleanup(self):
+        self.assertEqual(embed_drafter.clean_label("I think it is a scam"), "Scam")
+        self.assertEqual(embed_drafter.clean_label("he is too old"), "Too old")
+
+    def test_label_skips_clauses_that_repeat_the_question(self):
+        clauses = ["support any politician who supports crypto", "money out of politics"]
+        vectors = np.array([[1.0, 0.0], [0.9, 0.44]])
+        vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+        label = embed_drafter.pick_label(clauses, vectors, ["politic"], echo={"support", "crypto", "politician"})
+        self.assertEqual(label, "Money out of politics")
+
+
 if __name__ == "__main__":
     unittest.main()

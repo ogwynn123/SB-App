@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import functools
+import re
 from collections import Counter
 
 import numpy as np
@@ -22,9 +24,10 @@ from oe_codelist_draft import DraftCode, _finish, _standard_codes, normalize, sp
 from oe_embeddings import embed
 
 
-def agglomerate(vectors: np.ndarray, threshold: float) -> list[list[int]]:
+def agglomerate(vectors: np.ndarray, threshold: float, max_groups: int | None = None) -> list[list[int]]:
     """Average-linkage clustering of unit vectors; stops when no pair of groups
-    has average cosine similarity >= threshold."""
+    has average cosine similarity >= threshold, or, with max_groups, as soon as
+    there are no more than max_groups groups (then threshold is only a floor)."""
     n = len(vectors)
     if n == 0:
         return []
@@ -34,7 +37,7 @@ def agglomerate(vectors: np.ndarray, threshold: float) -> list[list[int]]:
     groups: dict[int, list[int]] = {i: [i] for i in range(n)}
     best = sim.max(1) if n > 1 else np.full(1, -np.inf)
     arg = sim.argmax(1)
-    while len(groups) > 1:
+    while len(groups) > max(1, max_groups or 1):
         i = int(np.argmax(best))
         if best[i] < threshold:
             break
@@ -58,6 +61,76 @@ def agglomerate(vectors: np.ndarray, threshold: float) -> list[list[int]]:
         best[better] = sim[better, i]
         arg[better] = i
     return list(groups.values())
+
+
+LEAD_FILLER = re.compile(
+    r"^(?:(?:i|we) (?:think|feel|believe|guess|just think)(?: that)?|because(?: of)?|it is because(?: of)?|"
+    r"(?:it|that|this) (?:is|was|seems|seems to be)|(?:he|she) (?:is|was|has been)|(?:they|these) (?:are|were)|"
+    r"seems(?: to be)?|probably|just|very|really|mainly|the fact that|a|an|the)\s+",
+    re.IGNORECASE,
+)
+
+
+def clean_label(clause: str, max_words: int | None = 7) -> str:
+    """Drop lead-in filler ("I think it is a scam" -> "Scam"), keep the substance."""
+    label = clause.strip(" .,!?-'\"")
+    for _ in range(4):
+        shorter = LEAD_FILLER.sub("", label)
+        if shorter == label or len(shorter.split()) < 1:
+            break
+        label = shorter
+    words = label.split()
+    if max_words and len(words) > max_words:
+        label = " ".join(words[:max_words])
+    return label[:1].upper() + label[1:] if label else clause
+
+
+LABEL_EDGE_WORDS = set("a an the and or but of to for in on at by with that this it is are was be so very too much".split()) - {"too", "much"}
+
+
+def pick_label(
+    clauses: list[str], vectors: np.ndarray, terms: list[str], *, slack: float = 0.04, max_words: int = 6,
+    echo: set[str] = frozenset(),
+) -> str:
+    """A short, typical way the code is put: among the most central clauses take
+    the shortest, drop lead-in filler, and if still long keep the words around
+    the theme's key word ("... very much out of touch with" -> "Out of touch")."""
+    from oe_codelist_draft import STOPWORDS, light_stem
+
+    centroid = vectors.mean(0)
+    centroid /= np.linalg.norm(centroid) or 1
+    scores = vectors @ centroid
+    counts = Counter(clauses)
+    ranked = sorted(range(len(clauses)), key=lambda k: -(scores[k] + 0.02 * counts[clauses[k]]))
+    best = scores[ranked[0]] + 0.02 * counts[clauses[ranked[0]]]
+    near = [k for k in ranked[:12] if scores[k] + 0.02 * counts[clauses[k]] >= best - slack]
+
+    def echo_share(text: str) -> float:  # "Support any politician who supports" mostly repeats the question
+        words = [light_stem(w) for w in text.lower().split() if w not in STOPWORDS]
+        return sum(w in echo for w in words) / len(words) if words else 1.0
+
+    def shorten(k: int) -> str:
+        label = clean_label(clauses[k], max_words=None)
+        words = label.split()
+        if len(words) > max_words and terms:
+            key = {part for term in terms for part in term.split()}
+            hits = [i for i, w in enumerate(words) if light_stem(w.lower().strip(".,'")) in key]
+            if hits:
+                start = max(0, hits[0] - 3)
+                words = words[start:start + max_words]
+                while words and words[0].lower() in LABEL_EDGE_WORDS:
+                    words = words[1:]
+                while words and words[-1].lower() in LABEL_EDGE_WORDS:
+                    words = words[:-1]
+                label = " ".join(words)
+                label = label[:1].upper() + label[1:]
+        return clean_label(label, max_words=max_words + 1)
+
+    # Shortest of the most typical clauses first, then the rest by how typical they are.
+    order = sorted(near, key=lambda k: (len(clean_label(clauses[k]).split()) < 2, len(clean_label(clauses[k]).split()), -scores[k]))
+    order += [k for k in ranked[:12] if k not in near]
+    labels = [shorten(k) for k in order]
+    return next((label for label in labels if echo_share(label) <= 0.4), labels[0])
 
 
 def _central_label(clauses: list[str], vectors: np.ndarray) -> str:
@@ -146,14 +219,31 @@ def draft_keywords_by_meaning(
     attach: float | None = 0.78,
     cohesion: float | None = 0.83,
     topic_share: float = 0.60,  # broad words are allowed; the cohesion check drops filler
+    labels: str = "short",
+    house_labels: list[str] | None = None,
+    house_match: float = 0.85,
+    min_count: int | None = None,
+    min_share: float = 0.01,
+    net: float | None = 0.30,
+    relative_merge: float | None = 0.45,
+    target_codes: int | None = None,
+    target_floor: float = 0.25,  # never merge codes less alike than this to reach the target
 ) -> list[DraftCode]:
     """Word themes (sharp codes), then meaning: drop themes whose wording agrees
     but meaning does not ("never", "instead"), merge codes that say the same
     thing in different words, file leftover responses under the closest code,
-    and name each code with its most central short clause."""
-    from oe_codelist_draft import draft_keyword_themes_v2, light_stem
+    and name each code with its most central short clause.
 
-    draft = draft_keyword_themes_v2(texts, question, topic_share=topic_share)
+    Granularity: ``min_count`` (or ``min_share`` of responses) is the smallest
+    code; ``relative_merge`` is how alike two codes must be, on what sets them
+    apart from the other codes, to become one (higher = more, finer codes;
+    None falls back to the plain similarity ``merge``); ``target_codes`` instead
+    merges the most alike codes until about that many remain; ``net`` groups
+    related codes under a broader NET (None = no NETs)."""
+    from oe_codelist_draft import draft_keyword_themes_v2, light_stem, question_echo
+
+    echo = question_echo(question) - {"not", "no"}
+    draft = draft_keyword_themes_v2(texts, question, topic_share=topic_share, min_count=min_count, min_share=min_share)
     themes = [c for c in draft if c.label not in STANDARD_OR_OTHER]
     fixed = [c for c in draft if c.label in STANDARD_OR_OTHER and c.label != "Other"]
     other = set(next((c.members for c in draft if c.label == "Other"), []))
@@ -161,40 +251,57 @@ def draft_keywords_by_meaning(
         return draft
     response_vectors = embed([normalize(t) for t in texts], cache=True)
 
-    def carriers(code: DraftCode) -> list[str]:
+    def carriers(code: DraftCode) -> tuple[list[str], list[int]]:
         """The clauses that carry the theme's words, not whole multi-theme answers."""
         wanted = [set(term.split()) for term in code.terms]
-        found = []
+        clauses, owners = [], []
         for i in code.members:
             for clause in split_clauses(texts[i]):
                 words = {light_stem(w) for w in clause.split()}
                 if any(term <= words for term in wanted):
-                    found.append(clause)
-        return found
+                    clauses.append(clause)
+                    owners.append(i)
+        return clauses, owners
 
-    kept, centroids, clause_sets = [], [], []
+    # Each candidate: (members, clauses, clause vectors, terms).
+    candidates = []
     for code in themes:
-        clauses = carriers(code)
-        vectors = embed(clauses, cache=True) if clauses else response_vectors[code.members]
-        mean = vectors.mean(0)
-        # |mean of unit vectors| is high only when the clauses agree in meaning.
-        if cohesion is not None and np.linalg.norm(mean) < cohesion:
+        clauses, owners = carriers(code)
+        if not clauses:
+            clauses, owners = [normalize(texts[i]) for i in code.members], list(code.members)
+        vectors = embed(clauses, cache=True)
+        spread = np.linalg.norm(vectors.mean(0))  # high only when the clauses agree in meaning
+        if cohesion is not None and spread < cohesion:
             other.update(code.members)
             continue
-        kept.append(code)
-        centroids.append(mean / (np.linalg.norm(mean) or 1))
-        clause_sets.append((clauses, vectors))
-    if not kept:
+        candidates.append((set(code.members), clauses, vectors, code.terms))
+    if not candidates:
         return draft_keyword_themes_v2(texts, question)
-    centroid_matrix = np.stack(centroids)
-    groups = agglomerate(centroid_matrix, merge) if merge is not None else [[k] for k in range(len(kept))]
+    centroid_matrix = np.stack([c[2].mean(0) / (np.linalg.norm(c[2].mean(0)) or 1) for c in candidates])
+    if relative_merge is not None and len(candidates) > 2:
+        # Compare candidates on what sets them apart: remove what all of them
+        # share (each counts once, so a dominant theme is not erased).
+        apart = centroid_matrix - centroid_matrix.mean(0)
+        apart /= np.linalg.norm(apart, axis=1, keepdims=True).clip(min=1e-9)
+        groups = agglomerate(apart, target_floor, target_codes) if target_codes else agglomerate(apart, relative_merge)
+    elif merge is not None:
+        groups = agglomerate(centroid_matrix, merge)
+    else:
+        groups = [[k] for k in range(len(candidates))]
     codes: list[DraftCode] = []
+    group_centroids = []
     for group in groups:
-        clauses = [c for k in group for c in clause_sets[k][0]]
-        vectors = np.concatenate([clause_sets[k][1] for k in group])
-        members = {i for k in group for i in kept[k].members}
-        label = _central_label(clauses, vectors) if clauses else kept[group[0]].label
-        codes.append(DraftCode(label, sorted(members), [t for k in group for t in kept[k].terms]))
+        clauses = [c for k in group for c in candidates[k][1]]
+        vectors = np.concatenate([candidates[k][2] for k in group])
+        members = set().union(*(candidates[k][0] for k in group))
+        terms = [t for k in group for t in candidates[k][3]]
+        if labels == "central":
+            label = _central_label(clauses, vectors)
+        else:
+            label = pick_label(clauses, vectors, terms, echo=echo)
+        codes.append(DraftCode(label, sorted(members), terms))
+        mean = vectors.mean(0)
+        group_centroids.append(mean / (np.linalg.norm(mean) or 1))
     coded = {i for code in codes for i in code.members}
     other -= coded
     leftover = []
@@ -209,13 +316,96 @@ def draft_keywords_by_meaning(
                 leftover.append(i)
     else:
         leftover = sorted(other)
+    if labels == "house" and house_labels:
+        _house_names(codes, np.stack(group_centroids), house_labels, house_match)
+    codes = _merge_same_label(codes)
     for code in codes:
         code.members.sort()
+    if net is not None and len(codes) > 1:
+        centres = []
+        for code in codes:
+            clauses, _owners = carriers(code)
+            vectors = embed(clauses, cache=True) if clauses else response_vectors[code.members]
+            centres.append(vectors.mean(0))
+        group_into_nets(codes, np.stack(centres), net)
     result = sorted(codes, key=lambda c: -len(c.members)) + fixed
     if leftover:
         result.append(DraftCode("Other", leftover))
     return result
 
+
+def group_into_nets(codes: list[DraftCode], centres: np.ndarray, threshold: float) -> None:
+    """Group related codes under a NET (a broader theme), named after the code
+    nearest the group's centre. Codes alone in their group get no NET.
+
+    All codes share the question's topic, so similarity is taken after removing
+    what the codes have in common (each code counts once, so a big theme cannot
+    swallow the rest)."""
+    centres = centres - centres.mean(0)
+    centres /= np.linalg.norm(centres, axis=1, keepdims=True).clip(min=1e-9)
+    for group in agglomerate(centres, threshold):
+        if len(group) < 2:
+            continue
+        centre = centres[group].mean(0)
+        name = codes[max(group, key=lambda k: float(centres[k] @ centre) + 1e-6 * len(codes[k].members))].label
+        for k in group:
+            codes[k].net = name
+
+
+# About how many codes to draft; fewer candidates than that are never padded out.
+DETAIL_LEVELS = {
+    "broad": {"target_codes": 12, "net": 0.20},
+    "standard": {"target_codes": 25},
+    "fine": {"target_codes": 40, "net": 0.35},
+}
+
+
+def draft_code_list(texts: list[str], question: str, *, detail: str = "standard", **options) -> list[DraftCode]:
+    """The first-code-list drafter at a chosen level of detail; explicit options win."""
+    return draft_keywords_by_meaning(texts, question, **{**DETAIL_LEVELS[detail], **options})
+
+
+def _house_names(codes: list[DraftCode], centroids: np.ndarray, house_labels: list[str], minimum: float) -> None:
+    """Rename codes with the closest past analyst label when it is a close match;
+    each house label is used once (largest code first)."""
+    label_vectors = embed(house_labels, cache=True)
+    sims = centroids @ label_vectors.T
+    used: set[int] = set()
+    for k in sorted(range(len(codes)), key=lambda k: -len(codes[k].members)):
+        for j in np.argsort(-sims[k])[:5]:
+            if sims[k, j] < minimum:
+                break
+            if int(j) not in used:
+                used.add(int(j))
+                codes[k].label = house_labels[int(j)]
+                break
+
+
+def _merge_same_label(codes: list[DraftCode]) -> list[DraftCode]:
+    """Codes that end up with the same name ("Too old" twice, "Can't be trusted"
+    / "Cannot be trusted") are one theme to a reader: merge them."""
+    from oe_codelist_kb import catalogue_key
+
+    merged: dict[str, DraftCode] = {}
+    for code in sorted(codes, key=lambda c: -len(c.members)):
+        key = catalogue_key(code.label.replace("can't", "cannot").replace("Can't", "Cannot")) or code.label
+        if key in merged:
+            keep = merged[key]
+            keep.members = sorted(set(keep.members) | set(code.members))
+            keep.terms = keep.terms + code.terms
+        else:
+            merged[key] = code
+    return list(merged.values())
+
+
+def draft_keywords_by_meaning_house(texts: list[str], question: str, *, knowledge, **options) -> list[DraftCode]:
+    """keywords_by_meaning, named in house wording learned from past coded jobs."""
+    names = sorted({entry.label for entry in knowledge.labels if entry.weight >= 5})
+    options.setdefault("labels", "house")
+    return draft_keywords_by_meaning(texts, question, house_labels=names, **options)
+
+
+draft_keywords_by_meaning_house.uses_knowledge = True
 
 STANDARD_OR_OTHER = {"Other", "Nothing", "Don't know", "Have not heard enough / need more info"}
 
@@ -223,4 +413,8 @@ DRAFTERS = {
     "embedding_clusters": draft_embedding_clusters,
     "embedding_responses": draft_embedding_responses,
     "keywords_by_meaning": draft_keywords_by_meaning,
+    "keywords_by_meaning_house": draft_keywords_by_meaning_house,
+    "code_list_broad": functools.partial(draft_code_list, detail="broad"),
+    "code_list_standard": functools.partial(draft_code_list, detail="standard"),
+    "code_list_fine": functools.partial(draft_code_list, detail="fine"),
 }

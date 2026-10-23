@@ -37,6 +37,7 @@ class DraftCode:
     label: str
     members: list[int]
     terms: list[str] = field(default_factory=list)  # words that define a word theme
+    net: str = ""  # broader group (NET) the code sits under, if any
 
 
 Drafter = Callable[[list[str], str], list[DraftCode]]
@@ -124,6 +125,77 @@ def reviewer_view(
     return (coherent / len(drafted) if drafted else 0.0), surfaced
 
 
+def duplicates_and_labels(
+    predicted: list[DraftCode], truth_groups: dict[str, list[int]], labels: dict[str, str]
+) -> tuple[float, float]:
+    """(dup, label) over drafted codes that are mostly one analyst code.
+
+    dup = share of those codes repeating an analyst code a larger drafted code
+    already covers (a reviewer has to merge them);
+    label = mean meaning similarity (local embeddings) of the drafted label to
+    that analyst code's label; NaN when embeddings are unavailable."""
+    owner: dict[int, list[str]] = {}
+    for code, members in truth_groups.items():
+        for i in members:
+            owner.setdefault(i, []).append(code)
+    drafted = sorted((c for c in predicted if c.label not in NON_THEME_LABELS and c.members), key=lambda c: -len(c.members))
+    pairs: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    repeats = 0
+    for code in drafted:
+        counts: dict[str, int] = {}
+        for i in code.members:
+            for truth in owner.get(i, []):
+                counts[truth] = counts.get(truth, 0) + 1
+        if not counts:
+            continue
+        top = max(counts, key=counts.get)
+        if counts[top] < 0.5 * len(code.members) or top in STANDARD_CODES:
+            continue
+        repeats += top in seen
+        seen.add(top)
+        if labels.get(top):
+            pairs.append((code.label, labels[top]))
+    dup = repeats / (len(seen) + repeats) if seen else 0.0
+    if not pairs:
+        return dup, float("nan")
+    try:
+        from oe_embeddings import embed
+    except ImportError:
+        return dup, float("nan")
+    a = embed([p[0] for p in pairs], cache=True)
+    b = embed([p[1] for p in pairs], cache=True)
+    return dup, float(np.mean(np.sum(a * b, axis=1)))
+
+
+def internal_quality(predicted: list[DraftCode], vectors: np.ndarray) -> dict[str, float]:
+    """Measures that need no analyst answer key (vectors: one unit row per response).
+
+    coded = share of responses not left in Other;
+    together = mean similarity of a response to its code's centre (higher = tighter codes);
+    distinct = 1 - mean similarity of each code's centre to its nearest other code
+    (higher = codes say different things)."""
+    n = len(vectors)
+    # Every answer shares the question's topic; measure what differs between them.
+    vectors = vectors - vectors.mean(0)
+    vectors = vectors / np.linalg.norm(vectors, axis=1, keepdims=True).clip(min=1e-9)
+    themes = [c for c in predicted if c.label not in NON_THEME_LABELS and c.members]
+    other = next((c.members for c in predicted if c.label == "Other"), [])
+    result = {"coded": 1 - len(other) / n if n else 0.0, "together": 0.0, "distinct": 0.0, "codes": float(len(themes))}
+    if not themes:
+        return result
+    centres = np.stack([vectors[c.members].mean(0) for c in themes])
+    centres /= np.linalg.norm(centres, axis=1, keepdims=True).clip(min=1e-9)
+    sizes = np.array([len(c.members) for c in themes], dtype=float)
+    fits = np.array([float((vectors[c.members] @ centres[k]).mean()) for k, c in enumerate(themes)])
+    result["together"] = float((fits * sizes).sum() / sizes.sum())
+    if len(themes) > 1:
+        sims = centres @ centres.T
+        np.fill_diagonal(sims, -1)
+        result["distinct"] = float(1 - sims.max(1).mean())
+    return result
+
+
 STANDARD_CODES = {"94", "95", "96", "97", "98", "99"}
 NON_THEME_LABELS = {"Other", "Nothing", "Don't know", "Have not heard enough / need more info"}
 
@@ -146,6 +218,7 @@ def score(
     *,
     verbose: bool = False,
     knowledge_from: list[dict] | None = None,
+    with_labels: bool = True,
 ) -> dict[str, float]:
     """Score a drafter. Knowledge-based drafters (``drafter.uses_knowledge``) learn
     from ``knowledge_from`` with the question's own job left out."""
@@ -172,20 +245,31 @@ def score(
         major, _ = theme_recall(predicted_groups, truth_groups, max(MIN_THEME_SIZE, round(0.03 * n)))
         list_f = 2 * code_prec * themes / (code_prec + themes) if code_prec + themes else 0.0
         coherent, surfaced = reviewer_view(draft, truth_groups)
+        if with_labels:
+            from oe_codelist_draft import normalize
+            from oe_embeddings import embed
+
+            inner = internal_quality(draft, embed([normalize(t) for t in texts], cache=True))
+        else:
+            inner = {"coded": 0.0, "together": 0.0, "distinct": 0.0}
+        dup, label_sim = duplicates_and_labels(draft, truth_groups, record.get("labels", {})) if with_labels else (0.0, float("nan"))
         coverage = len({i for g in predicted_groups for i in g}) / n if n else 0.0
         rows.append({
             "question": f"{record['job']} {record['question']}",
             "n": n, "precision": p, "recall": r, "f": f, "themes": themes,
             "theme_count": theme_count, "codes": len(predicted_groups), "code_prec": code_prec, "list_f": list_f, "major": major,
             "truth_codes": len(truth_groups), "coverage": coverage,
-            "coherent": coherent, "surfaced": surfaced,
+            "coherent": coherent, "surfaced": surfaced, "dup": dup, "label": label_sim,
+            "coded": inner["coded"], "together": inner["together"], "distinct": inner["distinct"],
         })
         if verbose:
             print(f"  {rows[-1]['question']:<16} n={n:<5} P={p:.2f} R={r:.2f} F={f:.2f} "
                   f"themes={themes:.2f}/{theme_count:<3} codes={len(predicted_groups):<4} vs {len(truth_groups)}")
     summary = {key: float(np.mean([row[key] for row in rows]))
                for key in ("precision", "recall", "f", "themes", "coverage", "code_prec", "list_f", "major",
-                           "coherent", "surfaced")}
+                           "coherent", "surfaced", "dup", "coded", "together", "distinct")}
+    label_values = [row["label"] for row in rows if row["label"] == row["label"]]
+    summary["label"] = float(np.mean(label_values)) if label_values else float("nan")
     summary["code_ratio"] = float(np.mean([row["codes"] / row["truth_codes"] for row in rows]))
     return summary
 
@@ -233,13 +317,13 @@ def main() -> int:
     args = parser.parse_args()
     questions = load_questions(args.sample)
     print(f"{len(questions)} questions{f', {args.sample} responses each' if args.sample else ''}")
-    print(f"{'drafter':<22} {'P':>5} {'R':>5} {'F':>5} {'code prec':>9} {'themes':>7} {'list F':>7} {'major':>6} {'codes/analyst':>14} {'coherent':>9} {'surfaced':>9}")
+    print(f"{'drafter':<22} {'P':>5} {'R':>5} {'F':>5} {'code prec':>9} {'themes':>7} {'list F':>7} {'major':>6} {'codes/analyst':>14} {'coherent':>9} {'surfaced':>9} {'dup':>5} {'label':>6} {'coded':>6} {'together':>8} {'distinct':>8}")
     for name in args.drafters:
         if args.verbose:
             print(f"-- {name}")
         s = score(drafters[name], questions, verbose=args.verbose)
         print(f"{name:<22} {s['precision']:5.2f} {s['recall']:5.2f} {s['f']:5.2f} {s['code_prec']:9.2f} "
-              f"{s['themes']:7.2f} {s['list_f']:7.2f} {s['major']:6.2f} {s['code_ratio']:14.2f} {s['coherent']:9.2f} {s['surfaced']:9.2f}")
+              f"{s['themes']:7.2f} {s['list_f']:7.2f} {s['major']:6.2f} {s['code_ratio']:14.2f} {s['coherent']:9.2f} {s['surfaced']:9.2f} {s['dup']:5.2f} {s['label']:6.3f} {s['coded']:6.2f} {s['together']:8.2f} {s['distinct']:8.2f}")
     return 0
 
 
