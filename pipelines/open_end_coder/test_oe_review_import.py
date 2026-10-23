@@ -84,15 +84,15 @@ class ReviewImportTests(unittest.TestCase):
         self.assertIn("4 coded responses", report.read_text(encoding="utf-8"))
         self.assertTrue(assignments.exists())
 
-    def test_apply_to_session_keeps_analyst_codes_and_checks_verbatims(self):
+    def test_apply_to_session_keeps_existing_codes_and_checks_verbatims(self):
         data = self.folder / "data.csv"
         with data.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             writer.writerow(["survnum", "q5", "c5_1", "c5_2", "c5_3"])
-            writer.writerow([101, "He does a good job for vets", 98, "", ""])
-            writer.writerow([102, "Too old", 98, "", ""])
-            writer.writerow([103, "Something else entirely", 98, "", ""])
-            writer.writerow([104, "Old republican", 98, "", ""])
+            writer.writerow([101, "He does a good job for vets", "", "", ""])
+            writer.writerow([102, "Too old", 97, "", ""])  # already coded in the data file
+            writer.writerow([103, "Something else entirely", "", "", ""])
+            writer.writerow([104, "Old republican", "", "", ""])
         questions = review_import.read_review(write_review(self.folder / "review.xlsx"))
         with oe.CodingSession(self.folder / "s.oe_session.sqlite") as session:
             session.import_data(data, key_column="survnum")
@@ -103,11 +103,11 @@ class ReviewImportTests(unittest.TestCase):
             after = {r.record_key: r.final_codes for r in session.list_responses(question.id)}
             codes = {c.code: c for c in session.list_codes(question.id)}
         self.assertEqual(after["101"], ("1", "2"))
-        self.assertEqual(after["102"], ("3",))
-        self.assertEqual(after["103"], ("98",))      # verbatim differs: left alone
-        self.assertEqual(after["104"], ("3",))       # analyst-coded: kept
+        self.assertEqual(after["102"], ("97",))      # coded in the data file: kept
+        self.assertEqual(after["103"], ())           # verbatim differs: left alone
+        self.assertEqual(after["104"], ("3",))       # coded in the coder: kept
         self.assertEqual(summary.verbatim_mismatch, ["103"])
-        self.assertEqual(summary.kept_analyst_codes, 1)
+        self.assertEqual(summary.kept_analyst_codes, 2)
         self.assertEqual(codes["1"].label, "Doing a good job")
         self.assertEqual(codes["1"].supercategory, "Positive - record")
         self.assertEqual(codes["3"].direction, "-")

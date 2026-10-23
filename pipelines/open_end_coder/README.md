@@ -191,7 +191,7 @@ Open-End Coder's codelist import reads, an assignments CSV and a report. With
 `--session` it also writes the codes, NETs (NET names with Positive/Negative
 set the +/- direction) and respondents' codes into an Open-End Coder session,
 matched by survnum in the latest wave after checking the verbatim. Responses an
-analyst already coded are kept unless `--overwrite-coded` is given; every
+that already have codes (in the data file or set in the coder) are kept unless `--overwrite-coded` is given; every
 change is in the session's audit log.
 
 Supporting modules:

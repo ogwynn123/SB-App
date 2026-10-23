@@ -13,8 +13,8 @@ This reads and checks both, then writes:
 With --session it also applies the review to an Open-End Coder session:
 codes and NETs are added or updated, and each respondent's codes are set,
 matched by survnum (latest wave in trended files) with the verbatim checked
-first. Responses an analyst already coded are left alone unless
---overwrite-coded is given. Every change goes through the session's audit log.
+first. Responses that already have codes (in the data file or set in the
+coder) are left alone unless --overwrite-coded is given. Every change goes through the session's audit log.
 
     py -3 oe_review_import.py review.xlsx --out ../../workspace/NPA3887 [--session path.oe_session.sqlite]
 """
@@ -242,7 +242,7 @@ def render_report(questions: dict[str, ReviewQuestion], applied: list[ApplySumma
     for summary in applied or []:
         lines.append("")
         lines.append(f"Applied {summary.question}: {summary.codes_written} codes written, {summary.assigned} responses coded, "
-                     f"{summary.kept_analyst_codes} kept as the analyst coded them")
+                     f"{summary.kept_analyst_codes} already coded and left as they were")
         for label, keys in (("not in the session", summary.not_found), ("verbatim differs, skipped", summary.verbatim_mismatch),
                             ("locked prior wave, skipped", summary.locked)):
             if keys:
@@ -280,7 +280,7 @@ def apply_to_session(session: oe.CodingSession, questions: dict[str, ReviewQuest
             if row.verbatim and not _same_text(row.verbatim, response.verbatim):
                 summary.verbatim_mismatch.append(row.survnum)
                 continue
-            if response.override_active and not overwrite_coded:
+            if (response.override_active or response.original_codes) and not overwrite_coded:
                 summary.kept_analyst_codes += 1
                 continue
             try:
@@ -298,7 +298,8 @@ def main() -> int:
     parser.add_argument("review", help="Review workbook (.xlsx) with 'Qn final list' and 'Qn recoded' sheets")
     parser.add_argument("--out", required=True, help="Folder for the codelist, assignments and report files")
     parser.add_argument("--session", help="Open-End Coder session (.sqlite) to apply the review to")
-    parser.add_argument("--overwrite-coded", action="store_true", help="Also replace responses an analyst already coded")
+    parser.add_argument("--overwrite-coded", action="store_true",
+                        help="Also replace responses that already have codes (from the data file or the coder)")
     args = parser.parse_args()
     review_path = Path(args.review)
     questions = read_review(review_path)
