@@ -87,6 +87,26 @@ class SplitByLeadTests(unittest.TestCase):
         self.assertEqual(len(parts), 1)
         self.assertEqual(parts[0].lead, "")
 
+    def test_split_halves_share_a_net_named_after_the_topic(self):
+        leads = ["positive"] * 5 + ["negative"] * 5
+        vectors = np.array([[1.0, 0.0]] * 5 + [[0.0, 1.0]] * 5)
+        parts = embed_drafter.split_by_lead([DraftCode("Police", list(range(10)))], leads, vectors, 3, 0.25, lambda c: ([], []))
+        self.assertEqual({p.net for p in parts}, {"Police"})
+
+    def test_keep_whole_vetoes_a_split(self):
+        leads = ["positive"] * 5 + ["negative"] * 5
+        vectors = np.array([[1.0, 0.0]] * 5 + [[0.0, 1.0]] * 5)
+        parts = embed_drafter.split_by_lead([DraftCode("Republican", list(range(10)))], leads, vectors, 3, 0.25,
+                                            lambda c: ([], []), keep_whole=lambda code: code.label == "Republican")
+        self.assertEqual(len(parts), 1)
+
+    def test_both_sides_themes_come_from_balanced_past_codes(self):
+        items = ([{"text": "r", "codes": ["1"], "lead": "positive"}] * 4 + [{"text": "r", "codes": ["1"], "lead": "negative"}] * 4
+                 + [{"text": "g", "codes": ["2"], "lead": "positive"}] * 8)
+        record = {"lead_in": {"kind": "direction"}, "labels": {"1": "Republican", "2": "Doing a good job"}, "items": items}
+        self.assertEqual(embed_drafter.both_sides_themes([record]), ["Republican"])
+        self.assertEqual(embed_drafter.both_sides_themes([{**record, "lead_in": None}]), [])
+
     def test_same_name_on_different_sides_is_not_merged(self):
         merged = embed_drafter._merge_same_label(
             [DraftCode("Doing a good job", [0], lead="positive"), DraftCode("Doing a good job", [1], lead="negative")]

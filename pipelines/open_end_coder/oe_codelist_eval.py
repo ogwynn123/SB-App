@@ -238,7 +238,10 @@ def score(
             pool = [r for r in (knowledge_from or questions) if r["job"] != record["job"]]
             draft = drafter(texts, question, knowledge=build_knowledge(pool))
         elif getattr(drafter, "uses_lead", False):
-            draft = drafter(texts, question, leads=[item.get("lead", "") for item in record["items"]])
+            extra = {}
+            if getattr(drafter, "uses_records", False):  # past jobs only, never this one
+                extra["knowledge_records"] = [r for r in (knowledge_from or questions) if r["job"] != record["job"]]
+            draft = drafter(texts, question, leads=[item.get("lead", "") for item in record["items"]], **extra)
         else:
             draft = drafter(texts, question)
         predicted_groups = [sorted(set(code.members)) for code in draft]

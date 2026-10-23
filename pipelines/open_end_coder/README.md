@@ -124,9 +124,19 @@ Passing those as `leads` to `draft_code_list` splits codes that clearly come
 from both sides, as analysts code "good on X" apart from "bad on X": "He wants
 to defund the police" becomes a negative code and a positive "He supports law
 enforcement". "Mixed" respondents join the side their answer is closer to.
-Each split code records its side in `lead`. On 16 recent questions with a
-varying direction, this raised the share of a code's responses on one side
-from 76% to 91% (analysts' codes: 87%), at the cost of a few more codes.
+Each split code records its side in `lead`, and the two halves sit under a NET
+named after the topic. On 16 recent questions with a varying direction, this
+raised the share of a code's responses on one side from 76% to 91% (analysts'
+codes: 87%), at the cost of a few more codes.
+
+Some remarks are coded the same whoever makes them ("Republican", "Lowering
+taxes", "Seen ads"). Tests against the analysts' coding showed that neither
+meaning nor tone reliably spots these: splitting matched the analysts' choice
+78% of the time, and those tests did worse. So
+`draft_code_list_with_house_lead` keeps a code whole only when its name nearly
+matches a past analyst code that drew evenly from both sides (learned at run
+time from the coded jobs, so it grows with the corpus). The rest split, with
+both halves side by side, so a wrong split is a one-step merge for the reviewer.
 Open ends asked of one side only (such as "[IF Q8=2]") are left as they are.
 
 The model downloads once into `SurveyPlatform/.models` (git-ignored). Embeddings
