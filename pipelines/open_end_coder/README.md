@@ -174,6 +174,26 @@ everybody"), only within the same side of the lead-in; the bundle keeps its
 largest code's name and the code list's "Bundled from" column shows what went in.
 If the workbook is open in Excel, the runner saves beside it with the time added.
 
+### Bringing a review back in
+
+After an analyst or Claude in the browser reviews the draft, import the review
+workbook. It needs, per question, a `Q14 final list` sheet (columns Code, Label,
+NET; NET rows and notes are skipped) and a `Q14 recoded` sheet (survnum,
+Verbatim, New c14_1..3):
+
+```bash
+py -3 oe_review_import.py review.xlsx --out ../../workspace/NPA3887 [--session path.oe_session.sqlite]
+```
+
+It checks the workbook (codes not on the list, more than 3 codes, duplicate or
+missing survnums, missing or shared labels) and writes a codelist CSV the
+Open-End Coder's codelist import reads, an assignments CSV and a report. With
+`--session` it also writes the codes, NETs (NET names with Positive/Negative
+set the +/- direction) and respondents' codes into an Open-End Coder session,
+matched by survnum in the latest wave after checking the verbatim. Responses an
+analyst already coded are kept unless `--overwrite-coded` is given; every
+change is in the session's audit log.
+
 Supporting modules:
 
 - `oe_codelist_draft.py`: text handling, non-answer rules, word-based drafters.
@@ -181,6 +201,7 @@ Supporting modules:
 - `oe_embeddings.py`: local embedding and cache.
 - `oe_lead_in.py`: the lead-in question and each respondent's direction or side.
 - `oe_never_split.txt`: the editable list of remarks never split by side.
+- `oe_draft_codelist.py` / `oe_review_import.py`: draft a job into a review workbook; bring a review back.
 - `oe_eval_corpus.py`: builds `corpus/oe/*.json` from analyst-coded archive jobs (read-only).
 - `oe_codelist_eval.py`: scores drafters. Past analyst lists are guiding examples,
   not the target, so it reports measures that need no answer key (share coded,
