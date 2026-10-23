@@ -30,7 +30,7 @@ import argparse
 import csv
 import json
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -99,6 +99,40 @@ def draft_question(rows: list[dict[str, str]], question: dict, detail: str, know
     return kept, texts, answers, number_codes(codes)
 
 
+def summarise(texts: list[str], answers: list[str], numbered: list[tuple[str, object]], top: int = 15) -> dict:
+    """Headline figures for one question's draft: themes, NETs, splits, and the
+    main codes among respondents on each side of the lead-in."""
+    n = len(texts)
+    codes_of: dict[int, list[str]] = defaultdict(list)
+    for number, code in sorted(numbered, key=lambda nc: int(nc[0])):
+        for i in code.members:
+            if len(codes_of[i]) < MAX_CODES:
+                codes_of[i].append(number)
+    label = {number: code.label for number, code in numbered}
+    themes = [(number, code) for number, code in numbered if number not in STANDARD_NUMBERS.values()]
+    nets: dict[str, set[int]] = defaultdict(set)
+    for _number, code in themes:
+        if code.net:
+            nets[code.net].update(code.members)
+    by_answer: dict[str, Counter] = defaultdict(Counter)
+    for i, answer in enumerate(answers):
+        for number in codes_of.get(i, []):
+            if number not in STANDARD_NUMBERS.values():
+                by_answer[answer][number] += 1
+    answer_counts = Counter(answers)
+    return {
+        "n": n,
+        "themed": sum(1 for i in range(n) if any(c not in STANDARD_NUMBERS.values() for c in codes_of.get(i, []))),
+        "answers": dict(answer_counts),
+        "nets": sorted(((name, len(members)) for name, members in nets.items()), key=lambda x: -x[1]),
+        "top": [(number, code.label, code.lead, len(code.members))
+                for number, code in sorted(themes, key=lambda nc: -len(nc[1].members))[:top]],
+        "standard": [(number, code.label, len(code.members)) for number, code in numbered if number in STANDARD_NUMBERS.values()],
+        "by_answer": {answer: [(label[c], k) for c, k in counts.most_common(6)] for answer, counts in by_answer.items() if answer},
+        "splits": [(code.net, code.label, code.lead, len(code.members)) for _number, code in themes if code.lead],
+    }
+
+
 def write_workbook(out: Path, spec: dict, results: list) -> None:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font
@@ -120,6 +154,49 @@ def write_workbook(out: Path, spec: dict, results: list) -> None:
             about.append(["  lead-in", question["lead"]["column"]])
     about.column_dimensions["A"].width = 14
     about.column_dimensions["B"].width = 110
+
+    summary = book.create_sheet("Summary")
+    bold = Font(bold=True)
+    for question, (kept, texts, answers, numbered) in zip(spec["questions"], results):
+        figures = summarise(texts, answers, numbered)
+        n = figures["n"] or 1
+        summary.append([f"{question['column']}: {question.get('text', '')}"])
+        summary.cell(summary.max_row, 1).font = Font(bold=True, size=12)
+        summary.append(["Responses", figures["n"], "With a theme code", figures["themed"], f"{figures['themed'] / n:.0%}"])
+        if figures["answers"] and any(figures["answers"]):
+            summary.append(["Lead-in", *[f"{k}: {v}" for k, v in sorted(figures["answers"].items(), key=lambda kv: -kv[1]) if k]])
+        summary.append([])
+        summary.append(["NETs", "Responses", "%"])
+        summary.cell(summary.max_row, 1).font = bold
+        for name, count in figures["nets"]:
+            summary.append([name, count, round(100 * count / n, 1)])
+        summary.append([])
+        summary.append(["Top codes", "Code", "Side", "Responses", "%"])
+        summary.cell(summary.max_row, 1).font = bold
+        for number, label, lead, count in figures["top"]:
+            summary.append([label, int(number), SIDE_MARK.get(lead, ""), count, round(100 * count / n, 1)])
+        for answer, top in sorted(figures["by_answer"].items(), key=lambda kv: -figures["answers"].get(kv[0], 0)):
+            k = figures["answers"].get(answer, 0) or 1
+            summary.append([])
+            summary.append([f"Main codes, lead-in {answer} (n={figures['answers'].get(answer, 0)})", "Responses", "%"])
+            summary.cell(summary.max_row, 1).font = bold
+            for label, count in top:
+                summary.append([label, count, round(100 * count / k, 1)])
+        if figures["splits"]:
+            summary.append([])
+            summary.append(["Split by side (topic NET)", "Code label", "Side", "Responses"])
+            summary.cell(summary.max_row, 1).font = bold
+            for net, label, lead, count in figures["splits"]:
+                summary.append([net, label, SIDE_MARK.get(lead, ""), count])
+        summary.append([])
+        summary.append(["Standard codes", "Code", "Responses", "%"])
+        summary.cell(summary.max_row, 1).font = bold
+        for number, label, count in figures["standard"]:
+            summary.append([label, int(number), count, round(100 * count / n, 1)])
+        summary.append([])
+        summary.append([])
+    for column, width in zip("ABCDE", (52, 34, 10, 12, 10)):
+        summary.column_dimensions[column].width = width
 
     for question, (kept, texts, answers, numbered) in zip(spec["questions"], results):
         name = question["column"]
