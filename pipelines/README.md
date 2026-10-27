@@ -14,6 +14,7 @@ This directory contains the production pipelines:
 | `catalogger` | Repository dashboard and catalog | `..\run_survey_platform_gui.bat` | `..\docs\REPOSITORY_STRUCTURE.md` |
 | `questionnaire_channel_builder` | Phone/SMS questionnaire drafts | CLI | `README.md` |
 | `survey_writer` | Survey Writer drafting helper | `open_survey_writer_gui.bat` | `README.md` |
+| `weighting` | Sample Weighting (rake to yellow targets in a weighting workbook) | `open_weighting_gui.bat` | |
 
 The former aggregated OE codebook editor remains available through
 `open_end_coder\Launch_OE_Codebook_Legacy_GUI.bat`.
