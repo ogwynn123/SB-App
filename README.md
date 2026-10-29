@@ -154,7 +154,7 @@ Launcher:
 
 Select the survey ID and project root, then open a specialist workflow. The
 `Project Startup` workflow creates the standard `Job`, `Data`, `Data\Partial`
-(with `Banners`, `OEs` and `Results` inside), and `Job\Table Gen` paths without
+(with `Banners`, `OEs` and `Results` inside), `Job\Table Gen`, and `Reports` paths without
 replacing existing folders, then copies the
 newest `Qst` DOCX ending in `Final` (optionally followed by a date such as
 `Final 10.19.26`; Spanish versions are skipped) into Table Gen, and adds

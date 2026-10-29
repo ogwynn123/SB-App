@@ -207,6 +207,7 @@ def _startup_first(context: launcher.ProjectContext) -> StepOutcome:
         context.project_root / "Data" / "Partial" / "Results",
         context.project_root / "Job",
         context.project_root / "Job" / "Table Gen",
+        context.project_root / "Reports",
     }
     _require(set(result.created_directories) == expected, "Project Startup did not create the exact standard layout.")
     _require(result.docx_action == "copied", f"Expected DOCX action 'copied'; got {result.docx_action!r}.")

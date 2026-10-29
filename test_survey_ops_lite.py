@@ -63,13 +63,14 @@ class SurveyLauncherTests(unittest.TestCase):
 
         result = core.run_project_startup(context)
 
-        self.assertEqual(len(result.created_directories), 7)
+        self.assertEqual(len(result.created_directories), 8)
         self.assertTrue((root / "Job").is_dir())
         self.assertTrue((root / "Data").is_dir())
         self.assertTrue((root / "Data" / "Partial").is_dir())
         for name in ("Banners", "OEs", "Results"):
             self.assertTrue((root / "Data" / "Partial" / name).is_dir(), name)
         self.assertTrue((root / "Job" / "Table Gen").is_dir())
+        self.assertTrue((root / "Reports").is_dir())
         self.assertEqual(result.source_docx, latest)
         self.assertEqual(result.docx_action, "copied")
         expected_docs = [
@@ -101,6 +102,7 @@ class SurveyLauncherTests(unittest.TestCase):
         table_gen.mkdir(parents=True)
         for name in ("Banners", "OEs", "Results"):
             (partial / name).mkdir(parents=True)
+        (root / "Reports").mkdir()
         marker = partial / "keep.txt"
         marker.write_text("keep", encoding="utf-8")
         source = qst / "NPA9988 Final.docx"
@@ -114,7 +116,7 @@ class SurveyLauncherTests(unittest.TestCase):
         result = core.run_project_startup(context)
 
         self.assertEqual(result.created_directories, ())
-        self.assertEqual(len(result.existing_directories), 7)
+        self.assertEqual(len(result.existing_directories), 8)
         self.assertEqual(result.docx_action, "destination_conflict")
         self.assertEqual(destination.read_bytes(), b"local edit")
         self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
@@ -274,6 +276,148 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertNotIn("3+\tVoters who", highlighted)  # page 3 is left alone
         self.assertNotIn("As with any ", highlighted)
         self.assertEqual(changes.notes, ())
+
+    def _intake_project(self, survey_id: str) -> core.ProjectContext:
+        root = self._case_dir() / "Archive" / "Stelson" / "2026" / f"{survey_id} Track Week 2"
+        (root / "Qst").mkdir(parents=True)
+        self._questionnaire(root / "Qst" / f"{survey_id} Stelson PA-10 Final.docx", f"{survey_id}\tOctober 2026\tPA-10")
+        return core.ProjectContext.from_values(survey_id, root)
+
+    def test_data_intake_names_reports_and_counts_up(self) -> None:
+        import data_intake
+
+        context = self._intake_project("NPA9910")
+        downloads = self._case_dir()
+        report_target, zip_target = data_intake.TARGETS
+        first = downloads / "p3794 PA-10 1315Oct2026 1.xlsx"
+        first.write_bytes(b"night 1")
+        second = downloads / "p3794 PA-10 1315Oct2026 2.xlsx"
+        second.write_bytes(b"night 2")
+
+        self.assertIsNotNone(data_intake.check_source(zip_target, first))  # only .zip goes in the zip box
+        self.assertEqual(data_intake.report_name_stem(context), "NPA9910 Stelson PA-10")
+        first_dest = data_intake.destination_for(context, report_target, first)
+        self.assertEqual(first_dest, context.project_root / "Reports" / "NPA9910 Stelson PA-10 1.xlsx")
+        self.assertEqual(data_intake.place_file(first, first_dest), "copied")
+        self.assertTrue(first.exists())  # copied, not moved
+
+        second_dest = data_intake.destination_for(context, report_target, second)
+        self.assertEqual(second_dest.name, "NPA9910 Stelson PA-10 2.xlsx")
+        data_intake.place_file(second, second_dest)
+        # Dropping the first report again finds its copy instead of making a third.
+        again = data_intake.destination_for(context, report_target, first)
+        self.assertEqual(again, first_dest)
+        self.assertEqual(data_intake.place_file(first, again), "identical")
+
+    def test_data_intake_unzips_and_renames_csv_and_codelist(self) -> None:
+        import zipfile
+
+        import data_intake
+
+        context = self._intake_project("NPA9912")
+        archive = self._case_dir() / "export.zip"
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.writestr("export/p3794_data.csv", "a,b\n1,2\n")
+            bundle.writestr("export/p3794 codes.xlsx", b"xlsx bytes")
+            bundle.writestr("export/readme.txt", "notes")
+            bundle.writestr("__MACOSX/export/._p3794_data.csv", "junk")
+        data = context.project_root / "Data"
+        data.mkdir()
+        (data / "NPA9912.csv").write_text("older delivery", encoding="utf-8")
+
+        kept = data_intake.unzip_data(context, archive)  # existing different CSV is not replaced
+        self.assertEqual((data / "NPA9912.csv").read_text(encoding="utf-8"), "older delivery")
+        self.assertEqual(kept.kept, [data / "NPA9912.csv"])
+        self.assertEqual((data / "NPA9912 Working Codelist.xlsx").read_bytes(), b"xlsx bytes")
+        self.assertTrue((data / "readme.txt").exists())
+        self.assertFalse(any("MACOSX" in p.name or p.name.startswith("._") for p in data.iterdir()))
+
+        replaced = data_intake.unzip_data(context, archive, replace=lambda _path: True)
+        self.assertEqual((data / "NPA9912.csv").read_text(encoding="utf-8"), "a,b\n1,2\n")
+        self.assertIn(("p3794_data.csv", data / "NPA9912.csv"), replaced.renamed)
+
+        two_csvs = self._case_dir() / "two.zip"
+        with zipfile.ZipFile(two_csvs, "w") as bundle:
+            bundle.writestr("one.csv", "1")
+            bundle.writestr("two.csv", "2")
+        result = data_intake.unzip_data(context, two_csvs)
+        self.assertTrue((data / "one.csv").exists() and (data / "two.csv").exists())
+        self.assertTrue(any("2 .csv files" in note for note in result.notes))
+
+    def test_data_intake_window_adds_dropped_files(self) -> None:
+        import tkinter as tk
+
+        import data_intake
+
+        import zipfile
+
+        context = self._intake_project("NPA9911")
+        root_dir = context.project_root
+        downloads = self._case_dir()
+        (downloads / "report.xlsx").write_bytes(b"r")
+        with zipfile.ZipFile(downloads / "data.zip", "w") as bundle:
+            bundle.writestr("data.csv", "x")
+            bundle.writestr("codes.xlsx", "c")
+        try:
+            tk_root = tk.Tk()
+        except tk.TclError:
+            self.skipTest("No display for Tk")
+        tk_root.withdraw()
+        self.addCleanup(tk_root.destroy)
+        logged: list[str] = []
+
+        dialog = data_intake.DataIntakeDialog(tk_root, context, log=logged.append)
+        report_target, zip_target = data_intake.TARGETS
+        dialog._choose(report_target, [downloads / "report.xlsx"])
+        dialog._choose(zip_target, [downloads / "data.zip"])
+        dialog.add_files()
+
+        self.assertEqual((root_dir / "Reports" / "NPA9911 Stelson PA-10 1.xlsx").read_bytes(), b"r")
+        self.assertTrue((root_dir / "Data" / "data.zip").exists())
+        self.assertEqual((root_dir / "Data" / "NPA9911.csv").read_text(encoding="utf-8"), "x")
+        self.assertTrue((root_dir / "Data" / "NPA9911 Working Codelist.xlsx").exists())
+        self.assertTrue(any("NPA9911.csv" in line for line in logged))
+        dialog.destroy()
+
+    def test_from_outlook_fills_boxes_from_attachments(self) -> None:
+        import tkinter as tk
+
+        import data_intake
+
+        context = self._intake_project("NPA9913")
+        saved = self._case_dir()
+        report = saved / "PA-10 1315Oct2026 1.xlsx"
+        report.write_bytes(b"r")
+        archive = saved / "p3794 export.zip"
+        archive.write_bytes(b"z")
+        self.assertEqual(data_intake.sort_attachments([report, archive]), {"zip": [archive], "report": [report]})
+        try:
+            tk_root = tk.Tk()
+        except tk.TclError:
+            self.skipTest("No display for Tk")
+        tk_root.withdraw()
+        self.addCleanup(tk_root.destroy)
+        dialog = data_intake.DataIntakeDialog(tk_root, context)
+
+        with patch.object(data_intake, "save_outlook_attachments", return_value=("Nightly", [report, archive])):
+            dialog.from_outlook()
+        self.assertEqual(dialog.chosen, {"report": report, "zip": archive})
+
+        dialog.chosen = {"report": None, "zip": None}
+        with patch.object(data_intake, "save_outlook_attachments", side_effect=RuntimeError("Outlook is not open.")), \
+                patch.object(data_intake.messagebox, "showwarning") as warning:
+            dialog.from_outlook()
+        warning.assert_called_once()
+        self.assertEqual(dialog.chosen, {"report": None, "zip": None})
+
+        second = saved / "PA-10 1315Oct2026 2.xlsx"
+        second.write_bytes(b"r2")
+        with patch.object(data_intake, "save_outlook_attachments", return_value=("Nightly", [report, second])), \
+                patch.object(dialog, "_pick", return_value=second) as pick:
+            dialog.from_outlook()
+        pick.assert_called_once()
+        self.assertEqual(dialog.chosen["report"], second)
+        dialog.destroy()
 
     def test_prior_cover_searches_sibling_year_subfolders(self) -> None:
         year = self._case_dir() / "Archive" / "Client" / "2026"

@@ -28,6 +28,7 @@ STARTUP_DIRECTORIES: tuple[tuple[str, ...], ...] = (
     ("Data", "Partial", "OEs"),
     ("Data", "Partial", "Results"),
     ("Job", "Table Gen"),
+    ("Reports",),
 )
 # Older jobs keep open ends in "Open Ends"; startup reuses that instead of adding an empty OEs beside it.
 STARTUP_DIRECTORY_ALIASES: dict[tuple[str, ...], tuple[tuple[str, ...], ...]] = {

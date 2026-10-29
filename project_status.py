@@ -131,7 +131,8 @@ def data_status(context: ProjectContext) -> StatusItem:
     current, timeseries, files = _data_files(context)
     newest = _newest(files)
     if newest is None:
-        return StatusItem("data", "Data", TODO, f"No {context.survey_id} data in Data yet",
+        return StatusItem("data", "Data", TODO,
+                          f"No {context.survey_id} data in Data yet (double-click to add the report and zip)",
                           resolve_relative_directory(context.project_root, ("Data",)))
     parts = [f"{current.name} {_when(current)}"] if current is not None else []
     if newest is not current:

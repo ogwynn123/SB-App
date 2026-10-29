@@ -302,6 +302,9 @@ class SurveyLauncherApp:
         item = self.status_items.get(str(selected[0])) if selected else None
         if item is None:
             return
+        if item.key == "data":
+            self.open_data_intake()
+            return
         tool_keys = {tool.key for tool in self.tools}
         if item.state in {"todo", "attention"} and item.tool_key in tool_keys:
             self.tool_tree.selection_set(item.tool_key)
@@ -363,6 +366,17 @@ class SurveyLauncherApp:
         tool = self.selected_tool()
         label = ACTION_BUTTON_LABELS.get(tool.internal_action, "Open Tool") if tool is not None else "Open Tool"
         self.launch_button.configure(text=label)
+
+    def open_data_intake(self) -> None:
+        """Data step: drop the field report (to Reports) and the data zip (to Data)."""
+        from data_intake import DataIntakeDialog
+
+        context = self._require_context()
+        if context is None:
+            return
+        dialog = DataIntakeDialog(self.root, context, log=self.log)
+        self.root.wait_window(dialog)
+        self._refresh_status()
 
     def _require_context(self) -> ProjectContext | None:
         fields_changed = (

@@ -40,6 +40,29 @@ its tool, or any other line to open its file.
 | Preliminary QC | newest `Job\QC\*\prelim_qc_issues.csv` | data or job changed after the QC, or critical issues |
 | Final deliverables | `Results`, `Tab`, `Cover` DOCX in the project folder | |
 
+Double-clicking the **Data** line opens an "Add data files" window
+(`data_intake.py`) with two boxes; drag a file from Explorer onto each, or use
+Browse, then Add Files. Files are copied, never moved.
+
+- **Field report** is copied to `Reports` as `NPA#### {Client} {District} N`
+  with its own extension, numbered from 1 (`NPA3887 Stelson PA-10 1.xlsx`,
+  then `2`, ...). The client is the folder above the year folder; the district
+  is the Final questionnaire's title-line area. Dropping a report that is
+  already there (same content) does not add another copy.
+- **Data zip** is copied to `Data` and unzipped there, flattening folders and
+  skipping `__MACOSX` extras. Its one `.csv` becomes `NPA####.csv` and its one
+  `.xlsx` becomes `NPA#### Working Codelist.xlsx`; with several of either, none
+  are renamed and the log says so. A different file already in `Data` with the
+  same name is only replaced after asking.
+
+Outlook attachments cannot be dragged straight in: Outlook sends them as
+virtual files rather than real ones. Instead, select the email in Outlook and
+click **From Outlook (selected email)**. The window reads that email's
+attachments from the Outlook already open (it never starts Outlook), skipping
+pictures in the body and signatures, saves them to a temporary folder, and puts
+the `.zip` in the zip box and the other file in the report box, asking which
+one when there are several. Add Files then works as above.
+
 Sample Append defaults to the newest `Data\NPA####ts*.csv` and remembers the
 project's column mapping (`DATA_COLUMN=SAMPLE_COLUMN`) in the project manifest.
 When any packaged EXE is older than its source, the Activity log says so and
@@ -88,6 +111,7 @@ missing folders in this layout:
       Results\
   Job\
     Table Gen\
+  Reports\
 ```
 
 Existing folders and their contents are preserved. A job that already keeps its
