@@ -797,6 +797,58 @@ def build_mapping(
     return mapping, method, score
 
 
+def merge_folder_defaults(merge_dir: Path, survey_id: str) -> dict[str, Path]:
+    """Default merge paths from a project's Data\\Merge folder, for the fields found.
+
+    primary: NPA####.csv (or .xlsx) for the current survey; secondary: the
+    earlier wave's trend file (NPA####tsSB.*, else the newest other
+    NPA####ts*.*); output: NPA####ts.csv; primary_survey_json /
+    secondary_survey_json: each survey's NPA####...JSON.json (newest if several).
+    """
+    match = re.search(r"(\d+)", survey_id or "")
+    if match is None or not merge_dir.is_dir():
+        return {}
+    code = match.group(1)
+    files = [p for p in merge_dir.iterdir() if p.is_file() and not p.name.startswith("~$")]
+
+    def newest(paths: list[Path]) -> Path | None:
+        return max(paths, key=lambda p: p.stat().st_mtime_ns) if paths else None
+
+    found: dict[str, Path] = {}
+    primary = next(
+        (p for ext in (".csv", ".xlsx") for p in files if p.name.casefold() == f"npa{code}{ext}"), None
+    )
+    if primary is not None:
+        found["primary"] = primary
+    trend_re = re.compile(r"^npa(\d+)ts", re.IGNORECASE)
+    earlier = [
+        p
+        for p in files
+        if p.suffix.casefold() in (".csv", ".xlsx")
+        and (m := trend_re.match(p.stem))
+        and m.group(1) != code
+        and "backup" not in p.stem.casefold()
+    ]
+    secondary = newest([p for p in earlier if p.stem.casefold().endswith("sb")]) or newest(earlier)
+    if secondary is not None:
+        found["secondary"] = secondary
+    found["output"] = merge_dir / f"NPA{code}ts.csv"
+
+    def survey_json(survey_code: str) -> Path | None:
+        return newest(
+            [p for p in files if p.name.casefold().startswith(f"npa{survey_code}") and p.name.endswith("JSON.json")]
+        )
+
+    primary_json = survey_json(code)
+    if primary_json is not None:
+        found["primary_survey_json"] = primary_json
+    secondary_code = trend_re.match(secondary.stem).group(1) if secondary is not None else None
+    secondary_json = survey_json(secondary_code) if secondary_code else None
+    if secondary_json is not None:
+        found["secondary_survey_json"] = secondary_json
+    return found
+
+
 def extract_survey_code(stem: str) -> str | None:
     match = re.search(r"(?i)npa(\d{4,})", stem)
     if not match:

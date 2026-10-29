@@ -319,6 +319,32 @@ class SheetMergingGuiTests(unittest.TestCase):
         self.assertEqual(filtered["q3"], "4900_q3")
         self.assertEqual(filtered["q4"], "q3")
 
+    def test_launch_fills_empty_paths_from_merge_folder(self) -> None:
+        import os
+        import tkinter as tk
+        from unittest.mock import patch
+
+        project = Path(self._tmpdir()) / "NPA3887 Track Week 2"
+        merge = project / "Data" / "Merge"
+        merge.mkdir(parents=True)
+        for name in ("NPA3887.csv", "NPA3880tsSB.csv", "NPA3887 FinalJSON.json", "NPA3880 FinalJSON.json"):
+            (merge / name).write_text("survnum\n1\n", encoding="utf-8")
+        try:
+            root = tk.Tk()
+        except tk.TclError:
+            self.skipTest("No display for Tk")
+        root.withdraw()
+        self.addCleanup(root.destroy)
+        environment = {"SURVEY_PLATFORM_PROJECT_ROOT": str(project), "SURVEY_PLATFORM_SURVEY_ID": "NPA3887"}
+        with patch.dict(os.environ, environment), patch("sheetMerging_gui.load_config", return_value={}):
+            gui = SheetMergeGUI(root)
+
+        self.assertEqual(Path(gui.primary_path_var.get()), merge / "NPA3887.csv")
+        self.assertEqual(Path(gui.secondary_path_var.get()), merge / "NPA3880tsSB.csv")
+        self.assertEqual(Path(gui.output_path_var.get()), merge / "NPA3887ts.csv")
+        self.assertEqual(Path(gui.primary_survey_json_var.get()).name, "NPA3887 FinalJSON.json")
+        self.assertEqual(Path(gui.secondary_survey_json_var.get()).name, "NPA3880 FinalJSON.json")
+
     def test_build_preview_export_text(self) -> None:
         gui = SheetMergeGUI.__new__(SheetMergeGUI)
         rows = [

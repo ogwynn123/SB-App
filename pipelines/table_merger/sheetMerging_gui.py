@@ -23,6 +23,7 @@ from sheet_merge_core import (
     DEFAULT_CONFIG,
     DEFAULT_ROW_ORDER,
     MergeOptions,
+    merge_folder_defaults,
     apply_ab_dependent_mapping,
     apply_oth1_dependent_mapping,
     analyze_merge,
@@ -218,8 +219,42 @@ class SheetMergeGUI:
         self.log(f"Build: {APP_BUILD_TAG}")
         if self._faulthandler_log_path is not None:
             self.log(f"Crash log (faulthandler): {self._faulthandler_log_path}")
+        self._prefill_from_merge_folder()
         self.refresh_inputs()
         self._sync_output_state()
+
+    def _prefill_from_merge_folder(self) -> None:
+        """Opened from the launcher: fill empty paths from the project's Data\\Merge folder."""
+        survey_id = os.environ.get("SURVEY_PLATFORM_SURVEY_ID", "").strip()
+        if self.launch_project_root is None or not survey_id:
+            return
+        merge_dir = next(
+            (
+                child
+                for data in self.launch_project_root.iterdir()
+                if data.is_dir() and data.name.casefold() == "data"
+                for child in data.iterdir()
+                if child.is_dir() and child.name.casefold() == "merge"
+            ),
+            None,
+        ) if self.launch_project_root.is_dir() else None
+        if merge_dir is None:
+            return
+        fields = {
+            "primary": self.primary_path_var,
+            "secondary": self.secondary_path_var,
+            "output": self.output_path_var,
+            "primary_survey_json": self.primary_survey_json_var,
+            "secondary_survey_json": self.secondary_survey_json_var,
+        }
+        filled = []
+        for key, path in merge_folder_defaults(merge_dir, survey_id).items():
+            var = fields[key]
+            if not var.get().strip():
+                var.set(str(path))
+                filled.append(f"{key.replace('_', ' ')}: {path.name}")
+        if filled:
+            self.log(f"Filled from {merge_dir}: " + "; ".join(filled))
 
     def _build_ui(self) -> None:
         style = ttk.Style()

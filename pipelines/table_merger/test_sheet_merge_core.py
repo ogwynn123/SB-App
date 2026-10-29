@@ -1217,6 +1217,37 @@ class SheetMergeCoreTests(unittest.TestCase):
         self.assertNotIn("secondary_q5a", cols)
         self.assertEqual(cols.count("q5a"), 1)
 
+    def test_merge_folder_defaults_pick_current_and_earlier_wave_files(self) -> None:
+        from sheet_merge_core import merge_folder_defaults
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            merge = Path(temp_dir) / "Merge"
+            merge.mkdir()
+            for name in (
+                "NPA3887.csv",
+                "NPA3887ts.csv",  # last run's output: not a secondary candidate
+                "NPA3880ts.csv",
+                "NPA3880tsSB.csv",
+                "NPA3880tsSB - backup.csv",
+                "NPA3887 Stelson PA-10 Track Week 2 Final 10.19.26JSON.json",
+                "NPA3880 Stelson PA-10 Track Week 3 FinalJSON.json",
+            ):
+                (merge / name).write_text("x", encoding="utf-8")
+
+            found = merge_folder_defaults(merge, "NPA3887")
+
+            self.assertEqual(
+                {key: path.name for key, path in found.items()},
+                {
+                    "primary": "NPA3887.csv",
+                    "secondary": "NPA3880tsSB.csv",
+                    "output": "NPA3887ts.csv",
+                    "primary_survey_json": "NPA3887 Stelson PA-10 Track Week 2 Final 10.19.26JSON.json",
+                    "secondary_survey_json": "NPA3880 Stelson PA-10 Track Week 3 FinalJSON.json",
+                },
+            )
+            self.assertEqual(merge_folder_defaults(Path(temp_dir) / "missing", "NPA3887"), {})
+
     def test_merge_writes_master_and_survey_catalog_json_with_history(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "NPA_Surveys"
