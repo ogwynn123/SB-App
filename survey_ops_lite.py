@@ -428,6 +428,8 @@ class SurveyLauncherApp:
 
         for path in result.created_directories:
             self.log(f"Created folder: {path}")
+        if result.prior_job is not None:
+            self.log(f"Earlier job for this client: {result.prior_job.name} (Data\\Merge is ready for the trend merge)")
         if not result.created_directories:
             self.log("All required project folders already existed.")
 

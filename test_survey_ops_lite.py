@@ -495,6 +495,54 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertEqual(dialog.chosen["report"], second)
         dialog.destroy()
 
+    def test_startup_creates_merge_folder_when_client_has_earlier_job(self) -> None:
+        from project_status import merge_status
+
+        year = self._case_dir() / "Archive" / "Client" / "2026"
+        prior = self._job(year / "NPA9890 Week 3")
+        (prior / "Job" / "Table Gen").mkdir(parents=True)
+        (prior / "Job" / "Table Gen" / "NPA9890 Client Week 3 FinalJSON.json").write_text("{}", encoding="utf-8")
+        (prior / "Data").mkdir()
+        for name in ("NPA9890.csv", "NPA9890ts.csv", "NPA9890tsSB.csv", "NPA9890tsSBw2018added.csv"):
+            (prior / "Data" / name).write_text(name, encoding="utf-8")
+        tracking = self._job(year / "NPA9895 Week 2")
+        context = core.ProjectContext.from_values("NPA9895", tracking)
+
+        result = core.run_project_startup(context)
+
+        self.assertEqual(result.prior_job, prior)
+        merge = tracking / "Data" / "Merge"
+        self.assertIn(merge, result.created_directories)
+        self.assertEqual(
+            sorted(p.name for p in merge.iterdir()), ["NPA9890 Client Week 3 FinalJSON.json", "NPA9890tsSB.csv"]
+        )
+        self.assertTrue((prior / "Data" / "NPA9890tsSB.csv").exists())  # copied, not moved
+        self.assertTrue(any("Copied NPA9890tsSB.csv" in note for note in result.document_notes))
+        status = merge_status(context)
+        self.assertEqual(status.state, "todo")
+        self.assertIn("earlier job: NPA9890 Week 3", status.summary)
+        self.assertEqual(core.run_project_startup(context).created_directories, ())  # second run: nothing new
+
+        first = self._job(self._case_dir() / "Archive" / "New Client" / "2026" / "NPA9896")
+        first_context = core.ProjectContext.from_values("NPA9896", first)
+        self.assertIsNone(core.run_project_startup(first_context).prior_job)
+        self.assertFalse((first / "Data" / "Merge").exists())
+        self.assertEqual(merge_status(first_context).state, "info")
+
+    def test_prior_merge_inputs_pick_the_sample_balanced_file(self) -> None:
+        job = self._job(self._case_dir() / "NPA9880 Week 4")
+        (job / "Data").mkdir()
+        for name in ("NPA9880tsRR.csv", "NPA9880tsRR - backup sb.csv", "NPA9880tsRRsb.csv"):
+            (job / "Data" / name).write_text("x", encoding="utf-8")
+        files, notes = core.prior_merge_inputs(job)
+        self.assertEqual([p.name for p in files], ["NPA9880tsRRsb.csv"])
+        self.assertIn("no questionnaire JSON", notes[0])
+
+        (job / "Data" / "NPA9880tsSB1sb.csv").write_text("x", encoding="utf-8")
+        files, notes = core.prior_merge_inputs(job)
+        self.assertEqual(files, [])
+        self.assertTrue(any("several sample-balanced files" in note for note in notes))
+
     def test_prior_cover_searches_sibling_year_subfolders(self) -> None:
         year = self._case_dir() / "Archive" / "Client" / "2026"
         self._job(year / "Primary" / "NPA9940", "NPA9940 Client Primary Cover.docx")

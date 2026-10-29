@@ -366,6 +366,7 @@ class ProjectStartupResult:
     pdf_detail: str = ""
     pdf_paths: tuple[Path, ...] = ()  # questionnaire PDFs written or copied by this run
     document_notes: tuple[str, ...] = ()
+    prior_job: Path | None = None  # the client's earlier job, when one was found
 
 
 # Word documents Project Startup adds to the project root, named
@@ -602,15 +603,17 @@ def find_prior_cover(project_root: Path, survey_id: str) -> Path | None:
     Stelson\\2026\\NPA3887 Track Week 2\\Job\\OG Clean\\NPA3887pt, searches from
     the enclosing job folder, so it finds the same prior cover the job would.
     """
-    match = re.search(r"\d+", survey_id)
-    if match is None:
-        return None
-    current = int(match.group(0))
+    return _search_prior_jobs(project_root, survey_id, _cover_in)
 
+
+def _client_search_levels(project_root: Path) -> tuple[list[Path], bool]:
+    """Folders to search for earlier jobs, nearest first, and whether a year folder was found.
+
+    From the job's parent up to and including the client folder above the year
+    folder, at most three levels. A test project inside a job searches from
+    the enclosing job folder.
+    """
     base = next((p for p in project_root.parents if _PROJECT_FOLDER_RE.match(p.name)), project_root)
-
-    # Search levels, nearest first: the job's parent, then up to and
-    # including the client folder above the year folder (at most three levels).
     levels: list[Path] = []
     level = base.parent
     while len(levels) < 3:
@@ -618,11 +621,22 @@ def find_prior_cover(project_root: Path, survey_id: str) -> Path | None:
         if _YEAR_FOLDER_RE.match(level.name):
             if len(levels) < 3:
                 levels.append(level.parent)
-            break
+            return levels, True
         level = level.parent
+    return levels, False
 
+
+def _search_prior_jobs(project_root: Path, survey_id: str, accept, require_year_layout: bool = False):
+    """accept(folder) for the highest-numbered earlier job that it accepts, at the nearest level."""
+    match = re.search(r"\d+", survey_id)
+    if match is None:
+        return None
+    current = int(match.group(0))
+    levels, has_year = _client_search_levels(project_root)
+    if require_year_layout and not has_year:
+        return None
     for level in levels:
-        best: tuple[int, Path] | None = None
+        best = None
         for pattern in ("*", "*/*", "*/*/*"):
             try:
                 folders = list(level.glob(pattern))
@@ -635,12 +649,61 @@ def find_prior_cover(project_root: Path, survey_id: str) -> Path | None:
                 number = int(number_match.group(1))
                 if number >= current or (best is not None and number <= best[0]):
                     continue
-                cover = _cover_in(folder)
-                if cover is not None:
-                    best = (number, cover)
+                found = accept(folder)
+                if found is not None:
+                    best = (number, found)
         if best is not None:
             return best[1]
     return None
+
+
+def prior_merge_inputs(prior_job: Path) -> tuple[list[Path], list[str]]:
+    """The earlier job's files the first trend merge needs, and notes on any not found.
+
+    - Its Table Gen questionnaire JSON (Job\\Table Gen\\*JSON.json, newest if several).
+    - Its sample-balanced trend file: NPA####tsSB.csv, else the one other
+      NPA####ts...sb file (e.g. NPA3864tsRRsb.csv), ignoring backups.
+    """
+    files: list[Path] = []
+    notes: list[str] = []
+    table_gen = resolve_relative_directory(prior_job, ("Job", "Table Gen"))
+    jsons = [p for p in (table_gen.glob("*JSON.json") if table_gen else []) if p.is_file()]
+    if jsons:
+        files.append(max(jsons, key=lambda p: p.stat().st_mtime_ns))
+    else:
+        notes.append(f"{prior_job.name} has no questionnaire JSON in Job\\Table Gen to copy.")
+
+    number = _PROJECT_FOLDER_RE.match(prior_job.name)
+    data = resolve_relative_directory(prior_job, ("Data",))
+    if number and data:
+        prefix = f"npa{number.group(1)}ts"
+        trend = [p for p in data.glob("*.csv") if p.stem.casefold().startswith(prefix)]
+        exact = [p for p in trend if p.stem.casefold() == f"{prefix}sb"]
+        variants = [
+            p for p in trend if p.stem.casefold().endswith("sb") and "backup" not in p.stem.casefold() and p not in exact
+        ]
+        chosen = exact or (variants if len(variants) == 1 else [])
+        if chosen:
+            files.append(chosen[0])
+        elif variants:
+            notes.append(
+                f"{prior_job.name} has several sample-balanced files ({', '.join(p.name for p in variants)}); "
+                "copy the right one to Data\\Merge by hand."
+            )
+        else:
+            notes.append(f"{prior_job.name} has no sample-balanced trend file (NPA####tsSB.csv) to copy.")
+    else:
+        notes.append(f"{prior_job.name} has no Data folder to copy a trend file from.")
+    return files, notes
+
+
+def find_prior_job(project_root: Path, survey_id: str) -> Path | None:
+    """The client's most recent earlier job folder (NPA3880 Track Week 3 for NPA3887).
+
+    Searches like find_prior_cover, but only inside the archive's client/year
+    folder layout, so folders outside it are never scanned.
+    """
+    return _search_prior_jobs(project_root, survey_id, lambda folder: folder, require_year_layout=True)
 
 
 def _write_cover(path: Path, project_root: Path, survey_id: str) -> str:
@@ -796,6 +859,24 @@ def run_project_startup(context: ProjectContext, use_word: bool = False) -> Proj
             continue
         created.append(ensure_relative_directory(context.project_root, parts))
 
+    # A client with an earlier job is a trend job: give it Data\Merge for the merge.
+    prior_job = find_prior_job(context.project_root, context.survey_id)
+    merge_notes: list[str] = []
+    if prior_job is not None:
+        merge = resolve_relative_directory(context.project_root, ("Data", "Merge"))
+        if merge is None:
+            merge = ensure_relative_directory(context.project_root, ("Data", "Merge"))
+            created.append(merge)
+            # A new Merge folder gets the earlier wave's inputs (copied; the earlier job keeps its files).
+            inputs, merge_notes = prior_merge_inputs(prior_job)
+            for source_file in inputs:
+                target = merge / source_file.name
+                if not target.exists():
+                    shutil.copy2(source_file, target)
+                    merge_notes.append(f"Copied {source_file.name} from {prior_job.name} to Data\\Merge.")
+        else:
+            existing.append(merge)
+
     source = find_latest_final_docx(context)
     destination: Path | None = None
     action = "no_final_docx"
@@ -856,7 +937,8 @@ def run_project_startup(context: ProjectContext, use_word: bool = False) -> Proj
         pdf_status=pdf_status,
         pdf_detail=pdf_detail,
         pdf_paths=tuple(pdf_paths),
-        document_notes=tuple(document_notes),
+        document_notes=tuple(document_notes) + tuple(merge_notes),
+        prior_job=prior_job,
     )
 
 

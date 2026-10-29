@@ -141,6 +141,18 @@ missing folders in this layout:
   Reports\
 ```
 
+When the client has an earlier job (found the same way as the prior cover,
+below, and only inside the archive's client/year folders), Project Startup
+also creates `Data\Merge` for the trend merge and copies the earlier wave's
+merge inputs into it (copied, so the earlier job keeps them): its Table Gen
+questionnaire JSON (`Job\Table Gen\*JSON.json`, newest if several) and its
+sample-balanced trend file (`NPA####tsSB.csv`, else its one other
+`NPA####ts...sb` file such as `NPA3864tsRRsb.csv`, ignoring backups; with
+several candidates none is copied and the log says so). This only happens when
+startup creates the folder, and never overwrites a file. Until the first merge runs, the
+status panel's Merge (trend) line is then To do ("Trend merge not run yet
+(earlier job: ...)") instead of `-`.
+
 Existing folders and their contents are preserved. A job that already keeps its
 open ends in `Data\Partial\Open Ends` keeps using it; no empty `OEs` folder is
 added beside it. Project Startup recursively

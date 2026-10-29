@@ -19,6 +19,7 @@ from typing import Iterable
 
 from survey_launcher_core import (
     ProjectContext,
+    find_prior_job,
     inspect_project_startup,
     is_final_questionnaire_name,
     resolve_relative_directory,
@@ -145,6 +146,13 @@ def merge_status(context: ProjectContext) -> StatusItem:
     merge_dir = resolve_relative_directory(context.project_root, ("Data", "Merge"))
     run = _newest(_glob(merge_dir, "merge_runs/*.json"))
     if run is None and timeseries is None:
+        if merge_dir is not None:
+            # Project Startup makes Data\Merge when the client has an earlier job: a trend job.
+            prior = find_prior_job(context.project_root, context.survey_id)
+            earlier = f" (earlier job: {prior.name})" if prior is not None else ""
+            return StatusItem("merge", "Merge (trend)", TODO,
+                              f"Trend merge not run yet{earlier}; run Table Merger once to set the mapping",
+                              merge_dir, "table_merger")
         return StatusItem("merge", "Merge (trend)", INFO, "No timeseries merge for this project", None, "table_merger")
     # The newest of the merge record and the ts file (balancing/appends rewrite the ts file).
     last_merge = _newest(p for p in (run, timeseries) if p is not None)
