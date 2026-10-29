@@ -381,7 +381,79 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertEqual((root_dir / "Data" / "NPA9911.csv").read_text(encoding="utf-8"), "x")
         self.assertTrue((root_dir / "Data" / "NPA9911 Working Codelist.xlsx").exists())
         self.assertTrue(any("NPA9911.csv" in line for line in logged))
+        self.assertTrue((root_dir / "Data" / "Partial" / "NPA9911 Stelson PA-10 Day 1.docx").exists())
         dialog.destroy()
+
+    def test_partial_day_document_counts_field_days(self) -> None:
+        import data_intake
+
+        context = self._intake_project("NPA9914")
+        partial = context.project_root / "Data" / "Partial"
+        base = "NPA9914 Stelson PA-10"
+
+        day1, created = data_intake.partial_day_document(context, date(2026, 10, 20))
+        self.assertEqual((day1, created), (partial / f"{base} Day 1.docx", True))
+        again, created = data_intake.partial_day_document(context, date(2026, 10, 20))
+        self.assertEqual((again, created), (day1, False))  # same day: no Day 2
+
+        (partial / f"{base} Day 2 SB1.docx").write_bytes(b"made by hand")  # variants count
+        day3, created = data_intake.partial_day_document(context, date(2026, 10, 21))
+        self.assertEqual((day3, created), (partial / f"{base} Day 3.docx", True))
+        self.assertEqual("".join(p.text for p in Document(str(day3)).paragraphs), "")
+        self.assertEqual((partial / f"{base} Day 2 SB1.docx").read_bytes(), b"made by hand")
+
+    def _first_merge(self, data: Path) -> None:
+        """Run one real merge the way the Table Merger window does, leaving a merge_runs record."""
+        import subprocess
+
+        merge = data / "Merge"
+        merge.mkdir(parents=True)
+        (merge / "NPA9915.csv").write_text("survnum,q1,q2,qold\n1,1,2,x\n2,2,1,y\n", encoding="utf-8")
+        (merge / "NPA9900ts.csv").write_text(
+            "survnum,TIMESERIES,q1,q2,legacy\n10,1,1,1,a\n11,1,2,2,b\n", encoding="utf-8"
+        )
+        subprocess.run(
+            [
+                sys.executable, str(APP_ROOT / "pipelines" / "table_merger" / "unified_merge.py"),
+                "--primary", str(merge / "NPA9915.csv"), "--secondary", str(merge / "NPA9900ts.csv"),
+                "--primary-join", "survnum", "--secondary-join", "survnum",
+                "--output", str(merge / "NPA9915ts.csv"), "--map", "q2=q2", "--block-primary", "qold",
+                "--report-dir", str(merge / "compilingReports"), "--archive-dir", str(merge / "surveyInput"),
+                "--ignore-config",
+            ],
+            cwd=str(merge), check=True, capture_output=True,
+        )
+
+    def test_new_data_reruns_last_merge_with_same_mapping_and_columns(self) -> None:
+        import pandas as pd
+
+        import merge_autorun
+
+        context = self._intake_project("NPA9915")
+        data = context.project_root / "Data"
+        self.assertEqual(merge_autorun.rerun_last_merge(context, data / "NPA9915.csv").status, "no_previous_merge")
+        self._first_merge(data)
+        first_run = merge_autorun.latest_merge_run(context)
+        # The analyst renamed a column in the trend file after the first merge.
+        trend = data / "Merge" / "NPA9915ts.csv"
+        frame = pd.read_csv(trend, dtype=str, keep_default_na=False)
+        renamed_from = frame.columns[-1]
+        frame.rename(columns={renamed_from: "LEGACY_RENAMED"}).to_csv(trend, index=False)
+        previous_columns = list(pd.read_csv(trend, nrows=0).columns)
+
+        new_day = data / "NPA9915.csv"
+        new_day.write_text("survnum,q1,q2,qold\n1,1,2,x\n2,2,1,y\n3,1,1,z\n", encoding="utf-8")
+        result = merge_autorun.rerun_last_merge(context, new_day)
+
+        self.assertEqual(result.status, "merged", result.detail)
+        self.assertEqual(result.mapping_differences, [])
+        self.assertNotEqual(merge_autorun.latest_merge_run(context), first_run)
+        merged = pd.read_csv(trend, dtype=str, keep_default_na=False)
+        self.assertEqual(list(merged.columns), previous_columns)  # names and order kept
+        self.assertEqual(len(merged), 2 + 3)  # earlier wave + all of today's rows
+        self.assertTrue((result.backup_dir / "NPA9915ts.csv").exists())
+        self.assertEqual((data / "Merge" / "NPA9915.csv").read_text(encoding="utf-8"), new_day.read_text(encoding="utf-8"))
+        self.assertTrue(any("LEGACY_RENAMED" in line for line in result.log_lines))
 
     def test_from_outlook_fills_boxes_from_attachments(self) -> None:
         import tkinter as tk

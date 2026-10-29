@@ -3,7 +3,8 @@
 Two drop boxes. The field report is copied to <project>\\Reports as
 "NPA3887 Stelson PA-10 10.29.26.xlsx" (survey ID, client, district, today's
 date). The data zip is copied to <project>\\Data and unzipped there; its CSV
-becomes "NPA3887.csv" and its XLSX "NPA3887 Working Codelist.xlsx". Files are
+becomes "NPA3887.csv" and its XLSX "NPA3887 Working Codelist.xlsx", and a blank
+"Data\\Partial\\<questionnaire name> Day N.docx" is made for the day. Files are
 copied, never moved, and an existing different file is only replaced after
 asking. Files can be dragged in from Explorer (Windows' own WM_DROPFILES, so no
 extra package is needed) or picked with Browse.
@@ -97,6 +98,42 @@ def next_report_name(
     while (reports_folder / candidate).exists():
         candidate, copy = f"{name} ({copy}){suffix}", copy + 1
     return candidate
+
+
+def partial_day_document(context: ProjectContext, today: date | None = None) -> tuple[Path, bool]:
+    """Today's 'Data\\Partial\\<questionnaire name> Day N.docx'; returns (path, created).
+
+    N is one past the highest Day already in Data\\Partial (variants such as
+    'Day 2 SB1' count), so each field day gets the next number. The project
+    manifest records which date each Day was made for, so adding data again
+    the same day reuses that day's document instead of making Day N+1.
+    """
+    from docx import Document
+
+    from survey_launcher_core import load_manifest, save_manifest
+
+    today = today or date.today()
+    partial = ensure_relative_directory(context.project_root, ("Data", "Partial"))
+    source = find_latest_final_docx(context)
+    base = questionnaire_base_name(source.stem, context.survey_id) if source else context.survey_id
+    manifest = load_manifest(context)
+    days = manifest.setdefault("partial_days", {})
+    for number, made_on in days.items():
+        if made_on == today.isoformat():
+            path = partial / f"{base} Day {number}.docx"
+            if path.exists():
+                return path, False
+
+    pattern = re.compile(rf"^{re.escape(base)} Day (\d+)\b", re.IGNORECASE)
+    on_disk = [int(m.group(1)) for p in partial.glob("*.docx") if (m := pattern.match(p.stem))]
+    number = max([*on_disk, *(int(n) for n in days if n.isdigit())], default=0) + 1
+    path = partial / f"{base} Day {number}.docx"
+    if path.exists():
+        return path, False
+    Document().save(str(path))
+    days[str(number)] = today.isoformat()
+    save_manifest(context, manifest)
+    return path, True
 
 
 @dataclass
@@ -484,6 +521,9 @@ class DataIntakeDialog(tk.Toplevel):
             self.log(f"{target.label}: {message}")
             if target.key == "zip" and outcome != "exists":
                 message += "\n" + self._unzip(destination)
+                day_doc, created = partial_day_document(self.context)
+                self.log(f"Partial: {'created' if created else 'today is already'} Data\\Partial\\{day_doc.name}")
+                message += f"\n{'Created' if created else 'Today:'} {day_doc.name}"
             self.labels[target.key].set(message)
             self.chosen[target.key] = None
 
@@ -512,4 +552,34 @@ class DataIntakeDialog(tk.Toplevel):
         summary = f"Unzipped {len(result.extracted)} file(s)"
         if result.renamed:
             summary += ": " + ", ".join(path.name for _original, path in result.renamed)
+        new_data = next((p for _o, p in result.renamed if p.name == f"{self.context.survey_id}.csv"), None)
+        if new_data is not None:
+            summary += "\n" + self._rerun_merge(new_data)
         return summary
+
+    def _rerun_merge(self, new_data: Path) -> str:
+        """New current-wave data arrived: rerun the last trend merge with the same mapping."""
+        from merge_autorun import rerun_last_merge
+
+        self.config(cursor="watch")
+        self.update_idletasks()
+        try:
+            result = rerun_last_merge(self.context, new_data)
+        finally:
+            self.config(cursor="")
+        self.log(f"Merge: {result.detail}")
+        if result.backup_dir:
+            self.log(f"Merge: previous files backed up in {result.backup_dir}")
+        for line in result.log_lines:
+            self.log(f"Merge: {line}")
+        for difference in result.mapping_differences:
+            self.log(f"Merge: mapping {difference}")
+        if result.status == "failed":
+            messagebox.showwarning("Add data files", f"The trend merge was not rerun:\n\n{result.detail}", parent=self)
+        elif result.mapping_differences:
+            messagebox.showwarning(
+                "Add data files",
+                f"{result.detail}\nSee the launcher's Activity log for the changes.",
+                parent=self,
+            )
+        return result.detail

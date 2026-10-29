@@ -56,6 +56,28 @@ Browse, then Add Files. Files are copied, never moved.
   are renamed and the log says so. A different file already in `Data` with the
   same name is only replaced after asking. The copied zip is then removed from
   `Data` (the original is untouched); a zip that cannot be read is left there.
+- **Trend merge**: when the zip updates `Data\NPA####.csv` and the Table
+  Merger has been run before (a `Data\Merge\merge_runs\merge_*.json` exists),
+  the last merge is rerun automatically (`merge_autorun.py`). The new data is
+  copied over the merge's copy of the current wave, then the same
+  command-line merge the Table Merger window uses runs with the previous run's
+  whole column mapping pinned (`manual_only`: reviewed manual mappings plus
+  exact matches), the same blocked columns, joins, row order and output, so
+  the mapping set cannot drift. The previous merge input, trend file, its
+  catalog and `timeseries_master.json` are first copied to
+  `Data\Merge\Backups\<date_time>`. If a trend file already existed, the new
+  one keeps its column names and order: shared columns keep the old order, a
+  column renamed by hand keeps its name when it is in the same position and
+  the column count is unchanged, new columns go at the end, and missing ones
+  are reported. The window and Activity log say whether the mapping stayed
+  the same (or list what changed). With no earlier merge, nothing runs.
+- **Day document**: adding a zip also creates a blank
+  `Data\Partial\<questionnaire name> Day N.docx`
+  (`NPA3887 Stelson PA-10 Track Week 2 Day 1.docx`). N is one past the highest
+  Day already in `Data\Partial`, with variants such as `Day 2 SB1` counted, so
+  each field day gets the next number. The manifest (`partial_days`) records
+  the date each Day was made, so adding data again the same day reuses that
+  day's document. Existing Day documents are never changed.
 
 Outlook attachments cannot be dragged straight in: Outlook sends them as
 virtual files rather than real ones. Instead, select the email in Outlook and
