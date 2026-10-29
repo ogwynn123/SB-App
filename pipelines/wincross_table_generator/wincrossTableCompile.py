@@ -2579,6 +2579,11 @@ def candidate_communication_target_key(target: str) -> str:
 
 
 def candidate_communication_label(target: str) -> str:
+    return candidate_last_name(target).upper()
+
+
+def candidate_last_name(target: str) -> str:
+    """Last name as written: 'Janelle Stelson' -> 'Stelson', 'Rosa DeLauro for Congress' -> 'DeLauro'."""
     cleaned = re.sub(
         r"\s+(?:for|running\s+for)\s+(?:u\.?s\.?\s+)?"
         r"(?:congress|senate|governor|mayor)\b.*$",
@@ -2590,11 +2595,60 @@ def candidate_communication_label(target: str) -> str:
     while words and words[-1].lower().strip(".") in CANDIDATE_NAME_SUFFIXES:
         words.pop()
     if not words:
-        return clean_text(target).upper()
+        return clean_text(target)
     start = len(words) - 1
     while start > 0 and words[start - 1].lower().strip(".") in CANDIDATE_NAME_PARTICLES:
         start -= 1
-    return " ".join(words[start:]).upper()
+    return " ".join(words[start:])
+
+
+def is_candidate_ad_exposure_pair(first: Question, second: Question) -> bool:
+    """Same "have you seen any ads ... about <candidate>?" question asked for two candidates."""
+    for q in (first, second):
+        lowered = normalize_apostrophes(clean_text(q.title)).lower()
+        if not is_yes_no_dk_question(q) or not re.search(r"\bhave\s+you\b", lowered):
+            return False
+        if not re.search(r"\b(?:ad|ads|advertisement|advertisements|advertising)\b", lowered):
+            return False
+    first_target = extract_about_target(first.title)
+    second_target = extract_about_target(second.title)
+    if not first_target or not second_target:
+        return False
+    if candidate_communication_target_key(first_target) == candidate_communication_target_key(second_target):
+        return False
+
+    def wording(q: Question, target: str) -> str:
+        text = normalize_apostrophes(clean_text(q.title)).replace(target, "<candidate>")
+        return re.sub(r"\s+", " ", text).strip().lower()
+
+    return wording(first, first_target) == wording(second, second_target)
+
+
+def build_candidate_ad_exposure_summary(first: Question, second: Question, first_table_idx: int) -> Table:
+    """Saw ads about either candidate, e.g. TQ17-18^9923 after Q17/Q18.
+
+    Numbered 900 above the first question's table, so later tables keep their numbers.
+    """
+    first_yes = first.options[0].value
+    second_yes = second.options[0].value
+    first_no = ",".join(option.value for option in first.options[1:])
+    second_no = ",".join(option.value for option in second.options[1:])
+    table = Table(
+        table_id=make_table_id(f"{first.qid}-{second.qid}", first_table_idx + 900),
+        banner=BANNER,
+        header=format_generated_header(f"Q{first.qid}-Q{second.qid}. Summary Table - Candidate Communication"),
+        lines=[" TOTAL ANSWERING^TN^1"],
+    )
+    table.lines.extend(
+        [
+            f" {candidate_last_name(extract_about_target(first.title))}^Q{first.qid}({first_yes})^NS",
+            f" {candidate_last_name(extract_about_target(second.title))}^Q{second.qid}({second_yes})^NS",
+            f" Both^Q{first.qid}({first_yes}) and Q{second.qid}({second_yes})^NS",
+            f" Either^Q{first.qid}({first_yes}) or Q{second.qid}({second_yes})^NS",
+            f" Neither^Q{first.qid}({first_no}) and Q{second.qid}({second_no})^NS",
+        ]
+    )
+    return table
 
 
 def candidate_communication_group(items: List[Question]) -> Optional[CandidateCommunicationGroup]:
@@ -5492,6 +5546,11 @@ def build_tables(questions: List[Question], rules: List[Rule]) -> List[Table]:
             continue
         candidate_communication_groups[i + 3] = group
         i += 4
+    candidate_ad_exposure_pairs: Dict[int, int] = {}
+    for i in range(len(questions) - 1):
+        if i + 1 not in communication_pair_indices and is_candidate_ad_exposure_pair(questions[i], questions[i + 1]):
+            candidate_ad_exposure_pairs[i + 1] = i
+    question_table_idx: Dict[int, int] = {}
     second_choice_pair_indices: Dict[int, int] = {}
     for i in range(len(questions)):
         first_choice_index = find_second_choice_first_question_index(questions, i)
@@ -5565,6 +5624,7 @@ def build_tables(questions: List[Question], rules: List[Rule]) -> List[Table]:
     for i, q in enumerate(questions):
         if i not in pid_component_indices and i not in generic_ballot_followup_indices:
             idx += 1
+            question_table_idx[i] = idx
             table_id = make_table_id(q.qid, idx)
             t = default_table(q, table_id)
 
@@ -5609,6 +5669,13 @@ def build_tables(questions: List[Question], rules: List[Rule]) -> List[Table]:
                 idx,
             )
             tables.append(extra)
+        if i in candidate_ad_exposure_pairs and candidate_ad_exposure_pairs[i] in question_table_idx:
+            first_index = candidate_ad_exposure_pairs[i]
+            tables.append(
+                build_candidate_ad_exposure_summary(
+                    questions[first_index], q, question_table_idx[first_index]
+                )
+            )
         if (
             pid_q3_idx is not None
             and pid_q2_idx is not None

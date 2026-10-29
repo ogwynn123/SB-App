@@ -635,6 +635,50 @@ class WincrossTableCompileTests(unittest.TestCase):
             ],
         )
 
+    def test_candidate_ad_exposure_pair_gets_summary_table(self) -> None:
+        def ad_question(qid: str, candidate: str) -> Question:
+            return Question(
+                qid=qid,
+                qnum=qid,
+                title=(
+                    "In the last few weeks, have you seen any ads on television, gotten anything in the mail, "
+                    f"or seen an ad on your computer or phone that was about {candidate}?"
+                ),
+                options=[ResponseOption("1", "Yes"), ResponseOption("2", "No"), ResponseOption("3", "(Don't know)")],
+                question_type="yes_no_dk",
+            )
+
+        tables = build_tables([ad_question("17", "Janelle Stelson"), ad_question("18", "Rosa DeLauro")], [])
+        ids = [table.table_id for table in tables if table.table_id.startswith("TQ1")]
+        summary = next(table for table in tables if table.table_id == "TQ17-18^9901")
+
+        self.assertEqual(ids, ["TQ17^9001", "TQ18^9002", "TQ17-18^9901"])
+        self.assertEqual(summary.banner, "OV,OI,O%,BR,RV,S2,P0,SA,SP")
+        self.assertEqual(
+            summary.lines,
+            [
+                " TOTAL ANSWERING^TN^1",
+                " Stelson^Q17(1)^NS",
+                " DeLauro^Q18(1)^NS",
+                " Both^Q17(1) and Q18(1)^NS",
+                " Either^Q17(1) or Q18(1)^NS",
+                " Neither^Q17(2,3) and Q18(2,3)^NS",
+            ],
+        )
+        self.assertIn("Q17-Q18. Summary Table - Candidate Communication", summary.header)
+
+        # Different wording (not the same question asked per candidate) gets no summary.
+        other = ad_question("18", "Rosa DeLauro")
+        other.title = "Have you seen any ads online recently about Rosa DeLauro?"
+        self.assertEqual(
+            [
+                t.table_id
+                for t in build_tables([ad_question("17", "Janelle Stelson"), other], [])
+                if t.table_id.startswith("TQ1")
+            ],
+            ["TQ17^9001", "TQ18^9002"],
+        )
+
     def test_motivation_to_vote_nets_total_and_extremely_motivated(self) -> None:
         motivation = Question(
             qid="3",
