@@ -24,8 +24,15 @@ STARTUP_DIRECTORIES: tuple[tuple[str, ...], ...] = (
     ("Job",),
     ("Data",),
     ("Data", "Partial"),
+    ("Data", "Partial", "Banners"),
+    ("Data", "Partial", "OEs"),
+    ("Data", "Partial", "Results"),
     ("Job", "Table Gen"),
 )
+# Older jobs keep open ends in "Open Ends"; startup reuses that instead of adding an empty OEs beside it.
+STARTUP_DIRECTORY_ALIASES: dict[tuple[str, ...], tuple[tuple[str, ...], ...]] = {
+    ("Data", "Partial", "OEs"): (("Data", "Partial", "Open Ends"),),
+}
 
 
 def utc_now() -> str:
@@ -396,10 +403,18 @@ def find_latest_final_docx(context: ProjectContext) -> Path | None:
     return max(candidates, key=sort_key)
 
 
+def _find_startup_directory(root: Path, parts: tuple[str, ...]) -> Path | None:
+    for candidate in (parts, *STARTUP_DIRECTORY_ALIASES.get(parts, ())):
+        found = resolve_relative_directory(root, candidate)
+        if found is not None:
+            return found
+    return None
+
+
 def inspect_project_startup(context: ProjectContext) -> ProjectStartupCheck:
     missing: list[Path] = []
     for parts in STARTUP_DIRECTORIES:
-        if resolve_relative_directory(context.project_root, parts) is None:
+        if _find_startup_directory(context.project_root, parts) is None:
             missing.append(context.project_root.joinpath(*parts))
 
     qst = resolve_relative_directory(context.project_root, ("Qst",))
@@ -429,7 +444,7 @@ def run_project_startup(context: ProjectContext) -> ProjectStartupResult:
     created: list[Path] = []
     existing: list[Path] = []
     for parts in STARTUP_DIRECTORIES:
-        found = resolve_relative_directory(context.project_root, parts)
+        found = _find_startup_directory(context.project_root, parts)
         if found is not None:
             existing.append(found)
             continue

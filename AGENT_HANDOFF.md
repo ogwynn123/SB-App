@@ -111,7 +111,9 @@ EXE before judging the launcher.
 ## Daily launcher contract
 
 `Project Startup` operates on the selected archive survey folder. It creates
-only missing `Data`, `Data\Partial`, `Job`, and `Job\Table Gen` folders. It then
+only missing `Data`, `Data\Partial`, `Data\Partial\Banners`, `Data\Partial\OEs`
+(or reuses an existing `Data\Partial\Open Ends`), `Data\Partial\Results`, `Job`,
+and `Job\Table Gen` folders. It then
 recursively finds the newest DOCX under `Qst` whose stem ends in `Final`, optionally
 followed by a date (`FINAL 9.30.26`, `Final 10-19-2026`), skipping Spanish versions, and
 copies it safely to `Job\Table Gen`: identical files are left alone, older

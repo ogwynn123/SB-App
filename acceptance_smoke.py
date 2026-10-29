@@ -202,6 +202,9 @@ def _startup_first(context: launcher.ProjectContext) -> StepOutcome:
     expected = {
         context.project_root / "Data",
         context.project_root / "Data" / "Partial",
+        context.project_root / "Data" / "Partial" / "Banners",
+        context.project_root / "Data" / "Partial" / "OEs",
+        context.project_root / "Data" / "Partial" / "Results",
         context.project_root / "Job",
         context.project_root / "Job" / "Table Gen",
     }
@@ -232,10 +235,10 @@ def _launcher_contract(context: launcher.ProjectContext, run_dir: Path) -> StepO
     expected_work_dirs = {
         "wincross": context.project_root / "Job" / "Table Gen",
         "table_merger": context.project_root / "Data",
-        "open_end_coder": context.project_root / "Data",
+        "open_end_coder": context.project_root / "Data" / "Partial" / "OEs",
         "quota_checker": context.project_root / "Data",
         "trend_table_updater": context.project_root / "Job" / "Table Gen",
-        "auto_results": context.project_root / "Data",
+        "auto_results": context.project_root / "Data" / "Partial" / "Results",
         "tomas": context.project_root / "Qst" / "Spanish Ver",
         "dashboard": context.project_root,
         "browser_workbench": context.project_root,
@@ -414,7 +417,7 @@ def _auto_results(context: launcher.ProjectContext) -> StepOutcome:
 def _open_end_coder(context: launcher.ProjectContext) -> StepOutcome:
     from oe_record_coder_core import CodingSession
 
-    oe_dir = context.project_root / "Data" / "Partial" / "Open Ends"
+    oe_dir = context.project_root / "Data" / "Partial" / "OEs"
     source = _copy_inputs(context.project_root, ("oe_sample.csv",), oe_dir)[0]
     database = oe_dir / "NPA9999.oe_session.sqlite"
     coded_output = oe_dir / "NPA9999.OE-coded.csv"

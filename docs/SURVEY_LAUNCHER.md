@@ -83,11 +83,16 @@ missing folders in this layout:
 <project root>\
   Data\
     Partial\
+      Banners\
+      OEs\
+      Results\
   Job\
     Table Gen\
 ```
 
-Existing folders and their contents are preserved. Project Startup recursively
+Existing folders and their contents are preserved. A job that already keeps its
+open ends in `Data\Partial\Open Ends` keeps using it; no empty `OEs` folder is
+added beside it. Project Startup recursively
 searches `Qst` for DOCX filenames whose stem ends in `Final`, optionally followed by
 a date (`Final 10.19.26`, `FINAL 9.30.26`, `Final 10-19-2026`), skips Spanish
 versions, selects the most

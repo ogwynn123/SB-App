@@ -60,10 +60,12 @@ class SurveyLauncherTests(unittest.TestCase):
 
         result = core.run_project_startup(context)
 
-        self.assertEqual(len(result.created_directories), 4)
+        self.assertEqual(len(result.created_directories), 7)
         self.assertTrue((root / "Job").is_dir())
         self.assertTrue((root / "Data").is_dir())
         self.assertTrue((root / "Data" / "Partial").is_dir())
+        for name in ("Banners", "OEs", "Results"):
+            self.assertTrue((root / "Data" / "Partial" / name).is_dir(), name)
         self.assertTrue((root / "Job" / "Table Gen").is_dir())
         self.assertEqual(result.source_docx, latest)
         self.assertEqual(result.docx_action, "copied")
@@ -83,7 +85,8 @@ class SurveyLauncherTests(unittest.TestCase):
         partial = root / "Data" / "Partial"
         qst.mkdir(parents=True)
         table_gen.mkdir(parents=True)
-        partial.mkdir(parents=True)
+        for name in ("Banners", "OEs", "Results"):
+            (partial / name).mkdir(parents=True)
         marker = partial / "keep.txt"
         marker.write_text("keep", encoding="utf-8")
         source = qst / "NPA9988 Final.docx"
@@ -97,7 +100,7 @@ class SurveyLauncherTests(unittest.TestCase):
         result = core.run_project_startup(context)
 
         self.assertEqual(result.created_directories, ())
-        self.assertEqual(len(result.existing_directories), 4)
+        self.assertEqual(len(result.existing_directories), 7)
         self.assertEqual(result.docx_action, "destination_conflict")
         self.assertEqual(destination.read_bytes(), b"local edit")
         self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
@@ -123,6 +126,20 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertEqual(result.docx_action, "updated")
         self.assertEqual(destination.read_bytes(), b"new source")
         self.assertEqual(result.check.status_label, "Ready")
+
+    def test_project_startup_reuses_open_ends_instead_of_adding_oes(self) -> None:
+        root = self._case_dir() / "NPA9985 Project"
+        open_ends = root / "Data" / "Partial" / "Open Ends"
+        open_ends.mkdir(parents=True)
+        context = core.ProjectContext.from_values("NPA9985", root)
+
+        result = core.run_project_startup(context)
+
+        self.assertFalse((root / "Data" / "Partial" / "OEs").exists())
+        self.assertIn(open_ends, result.existing_directories)
+        self.assertTrue((root / "Data" / "Partial" / "Banners").is_dir())
+        self.assertTrue((root / "Data" / "Partial" / "Results").is_dir())
+        self.assertEqual(core.inspect_project_startup(context).missing_directories, ())
 
     def test_dependent_tools_require_project_startup(self) -> None:
         root = self._case_dir() / "NPA9986 Project"
