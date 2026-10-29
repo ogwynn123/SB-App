@@ -800,7 +800,8 @@ def build_mapping(
 def merge_folder_defaults(merge_dir: Path, survey_id: str) -> dict[str, Path]:
     """Default merge paths from a project's Data\\Merge folder, for the fields found.
 
-    primary: NPA####.csv (or .xlsx) for the current survey; secondary: the
+    primary: <survey ID>.csv (e.g. NPA3887PT.csv for a test copy) or NPA####.csv
+    (or .xlsx) for the current survey; secondary: the
     earlier wave's trend file (NPA####tsSB.*, else the newest other
     NPA####ts*.*); output: NPA####ts.csv; primary_survey_json /
     secondary_survey_json: each survey's NPA####...JSON.json (newest if several).
@@ -815,8 +816,17 @@ def merge_folder_defaults(merge_dir: Path, survey_id: str) -> dict[str, Path]:
         return max(paths, key=lambda p: p.stat().st_mtime_ns) if paths else None
 
     found: dict[str, Path] = {}
+    # The survey ID as typed in the launcher (e.g. NPA3887PT for a test copy), then NPA####.
+    stems = [survey_id.strip().casefold(), f"npa{code}"]
     primary = next(
-        (p for ext in (".csv", ".xlsx") for p in files if p.name.casefold() == f"npa{code}{ext}"), None
+        (
+            p
+            for stem in stems
+            for ext in (".csv", ".xlsx")
+            for p in files
+            if p.name.casefold() == f"{stem}{ext}"
+        ),
+        None,
     )
     if primary is not None:
         found["primary"] = primary

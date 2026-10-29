@@ -1248,6 +1248,11 @@ class SheetMergeCoreTests(unittest.TestCase):
             )
             self.assertEqual(merge_folder_defaults(Path(temp_dir) / "missing", "NPA3887"), {})
 
+            # A test copy opened as NPA3887PT keeps its data as NPA3887pt.csv.
+            (merge / "NPA3887.csv").unlink()
+            (merge / "NPA3887pt.csv").write_text("x", encoding="utf-8")
+            self.assertEqual(merge_folder_defaults(merge, "NPA3887PT")["primary"].name, "NPA3887pt.csv")
+
     def test_merge_writes_master_and_survey_catalog_json_with_history(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "NPA_Surveys"
