@@ -76,6 +76,9 @@ get its survey prefix (`3880_q21wa`); sample and file fields such as `qsplit`,
 `sfilenum`, `SB` or the weights keep their own names, unless that name is
 already used by the current wave, in which case they are prefixed too. Columns
 already carrying a prefix (`3880_WEIGHT`, `3801_num_ab`) are left as they are.
+Non-question columns come first, then each survey's tagged columns, newest
+first; within the earlier wave's own block, its `qNwa`/`qNwb` columns come
+last (`... 3880_q21, 3880_WEIGHT, 3880_q19wa, 3880_q19wb, 3869_...`).
 
 A trend merge whose output is in `Data\Merge` (`Data\Merge\NPA####ts.csv`) is
 also copied to the project's main `Data` folder under the same name. A

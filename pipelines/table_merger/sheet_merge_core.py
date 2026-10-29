@@ -1108,25 +1108,30 @@ def build_timeseries_extra_mapping(
             continue
         pending.append((idx, secondary_col))
 
-    def _sort_key(item: tuple[int, str]) -> tuple[int, int, int]:
+    def _sort_key(item: tuple[int, str]) -> tuple[int, int, int, int]:
         idx, secondary_col = item
         prefixed_code = prefixed_survey_code(secondary_col)
         if prefixed_code is not None:
             # Any explicitly survey-prefixed column belongs with the coded
             # question block, newest survey code first.
-            return (1, -prefixed_code, idx)
+            return (1, -prefixed_code, 0, idx)
+
+        if is_w_companion_col(secondary_col):
+            # The current series' qNwa/qNwb go after all of its other tagged columns.
+            code = int(secondary_code) if secondary_code and secondary_code.isdigit() else None
+            return (1, -code, 1, idx) if code is not None else (1, 1, 1, idx)
 
         is_q_like = is_question_col_name(secondary_col) or is_companion_col_name(secondary_col)
         if not is_q_like:
             # Non-question extras first, preserving source order.
-            return (0, 0, idx)
+            return (0, 0, 0, idx)
 
         code = prefixed_question_or_companion_code(secondary_col, secondary_code)
         if code is not None:
             # Question/companion extras next, newest survey code first.
-            return (1, -code, idx)
+            return (1, -code, 0, idx)
         # Question-like columns without code trail coded question extras.
-        return (1, 1, idx)
+        return (1, 1, 0, idx)
 
     for _idx, secondary_col in sorted(pending, key=_sort_key):
         # Only question variables (qN, qNwa/qNwb, qNoth1, cN_#) get the survey prefix;

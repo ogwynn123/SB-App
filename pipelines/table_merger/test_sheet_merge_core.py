@@ -1216,6 +1216,21 @@ class SheetMergeCoreTests(unittest.TestCase):
         self.assertNotIn("secondary_q5a", cols)
         self.assertEqual(cols.count("q5a"), 1)
 
+    def test_current_series_wa_wb_extras_come_last_in_their_block(self) -> None:
+        from sheet_merge_core import build_timeseries_extra_mapping
+
+        extras = build_timeseries_extra_mapping(
+            primary_cols=["survnum", "q1"],
+            secondary_cols=["survnum", "q19wa", "q19wb", "qsplit", "q18", "3880_WEIGHT", "q21wa", "3869_q22wa", "3869_q5"],
+            mapping={"survnum": "survnum"},
+            secondary_join="survnum",
+            secondary_code="3880",
+        )
+        self.assertEqual(
+            list(extras),
+            ["qsplit", "3880_q18", "3880_WEIGHT", "3880_q19wa", "3880_q19wb", "3880_q21wa", "3869_q22wa", "3869_q5"],
+        )
+
     def test_trend_merge_in_data_merge_is_copied_to_data(self) -> None:
         from sheet_merge_core import copy_trend_file_to_data
 
