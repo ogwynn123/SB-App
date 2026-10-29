@@ -445,6 +445,8 @@ class SurveyLauncherApp:
             self.log(f"Created document: {path}")
         for path in result.existing_documents:
             self.log(f"Kept existing document: {path}")
+        for note in result.document_notes:
+            self.log(note)
         if result.source_docx is None:
             documents_message = "Working documents not created (no Final questionnaire to name them from)"
         else:

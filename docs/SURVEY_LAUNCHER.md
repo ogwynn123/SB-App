@@ -111,11 +111,27 @@ replaced; one older than its DOCX is reported in the log so it can be re-saved.
 Using that Final questionnaire's name with `Final` and any date after it
 removed (`NPA3887 Stelson PA-10 Track Week 2 Final 10.19.26` becomes
 `NPA3887 Stelson PA-10 Track Week 2`), Project Startup also adds five Word
-documents to the project root: blank `<name> Tab.docx`, `<name> Trend
-Marginals.docx`, `<name> Trend Tables.docx` and `<name> Cover.docx`, plus
-`<name> Results.docx`, which starts as a copy of the Final questionnaire. A
+documents to the project root: blank `<name> Tab.docx` and `<name> Trend
+Tables.docx`; `<name> Cover.docx`, copied from the client's previous job (see
+below); `<name> Trend Marginals.docx`, made from
+`templates\Trend Marginals Template.docx` with its `XX-NN` title set to the
+questionnaire's area; and `<name> Results.docx`, which starts as a copy of the
+Final questionnaire. The area is the last field of the questionnaire's title
+line, the one starting with the survey ID: a district such as `PA-10`, or a
+state or city such as `Illinois` or `Providence, RI`. If there is no such line,
+`XX-NN` is left in; if the template is missing, Trend Marginals starts blank. A
 document that already exists is never overwritten, and none are created when
 no Final questionnaire is found.
+
+The Cover is copied from the most recent earlier job for the same client: the
+hand-made `<name> Cover.docx` in that job's project root (drafts such as
+`Cover DRAFT` and Table Gen's `COVER.autogen.docx` are not used). Startup looks
+at the sibling job folders first (`Stelson\2026\NPA3880 Track Week 3` for
+NPA3887), then widens one level at a time up to the client folder above the
+year folders, so the first job of a year uses last year's cover and
+`Bean\2026\General` finds `Bean\2026\Primary`. At each level the highest NPA
+number below the current job with a cover wins. With no earlier cover, Cover
+starts blank. The launcher log names the cover that was copied.
 
 When the launcher runs Project Startup and has just created the Results copy,
 it opens that copy in a separate hidden Word, runs the `Normal.dotm` macro

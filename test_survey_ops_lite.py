@@ -76,9 +76,12 @@ class SurveyLauncherTests(unittest.TestCase):
             for suffix in ("Tab", "Trend Marginals", "Trend Tables", "Cover", "Results")
         ]
         self.assertEqual(list(result.created_documents), expected_docs)
-        for path in expected_docs[:-1]:
+        tab, trend_marginals, trend_tables, cover, results = expected_docs
+        for path in (tab, trend_tables, cover):
             self.assertEqual("".join(p.text for p in Document(str(path)).paragraphs), "")
-        self.assertEqual(expected_docs[-1].read_bytes(), b"latest")  # Results starts as the Final questionnaire
+        # The fixture questionnaire is not a real DOCX, so the template's XX-NN stays.
+        self.assertEqual([p.text for p in Document(str(trend_marginals)).paragraphs[:2]], ["XX-NN", "Trend Marginals"])
+        self.assertEqual(results.read_bytes(), b"latest")  # Results starts as the Final questionnaire
         self.assertEqual((root / "Job" / "Table Gen" / latest.name).read_bytes(), b"latest")
         self.assertEqual(result.check.status_label, "Ready")
 
@@ -147,6 +150,99 @@ class SurveyLauncherTests(unittest.TestCase):
         }
         for stem, expected in cases.items():
             self.assertEqual(core.questionnaire_base_name(stem, "NPA9999"), expected, stem)
+
+    def _questionnaire(self, path: Path, title_line: str) -> None:
+        document = Document()
+        document.add_paragraph("Hello, my name is ...")
+        document.add_paragraph(title_line)
+        document.add_paragraph("Democrat\t1")
+        document.save(str(path))
+
+    def test_trend_marginals_uses_template_with_the_questionnaire_area(self) -> None:
+        cases = {
+            "NPA9979\tOctober 20-22, 2026\tPA-10": "PA-10",
+            "NPA9979  July 2026\tIllinois": "Illinois",
+            "NPA9979 May 2026\t\tIA-01": "IA-01",
+        }
+        for title_line, area in cases.items():
+            root = self._case_dir() / "NPA9979 Project"
+            (root / "Qst").mkdir(parents=True)
+            self._questionnaire(root / "Qst" / "NPA9979 Poll Final.docx", title_line)
+            context = core.ProjectContext.from_values("NPA9979", root)
+
+            result = core.run_project_startup(context)
+
+            marginals = Document(str(root / "NPA9979 Poll Trend Marginals.docx"))
+            self.assertEqual(marginals.paragraphs[0].text, area, title_line)
+            self.assertTrue(marginals.paragraphs[0].runs[0].bold)  # template formatting kept
+            self.assertEqual(marginals.paragraphs[1].text, "Trend Marginals")
+            self.assertIn(f"for {area}", " ".join(result.document_notes))
+            shutil.rmtree(root)
+
+    def test_trend_marginals_falls_back_to_blank_without_template(self) -> None:
+        root = self._case_dir() / "NPA9978 Project"
+        (root / "Qst").mkdir(parents=True)
+        self._questionnaire(root / "Qst" / "NPA9978 Poll Final.docx", "NPA9978\tJune 2026\tNV-03")
+        context = core.ProjectContext.from_values("NPA9978", root)
+
+        with patch.object(core, "TREND_MARGINALS_TEMPLATE", root / "missing.docx"):
+            result = core.run_project_startup(context)
+
+        marginals = root / "NPA9978 Poll Trend Marginals.docx"
+        self.assertEqual("".join(p.text for p in Document(str(marginals)).paragraphs), "")
+        self.assertIn("template not found", " ".join(result.document_notes))
+
+    def _job(self, folder: Path, cover_name: str | None = None) -> Path:
+        folder.mkdir(parents=True, exist_ok=True)
+        if cover_name:
+            (folder / cover_name).write_bytes(f"cover of {folder.name}".encode())
+        return folder
+
+    def test_prior_cover_is_the_latest_earlier_job_for_the_client(self) -> None:
+        client = self._case_dir() / "Archive" / "Client"
+        self._job(client / "2025" / "NPA9950 Benchmark", "NPA9950 Client XX-01 Cover.docx")
+        self._job(client / "2026" / "NPA9960 Week 5", "NPA9960 Client XX-01 Week 5 Cover.docx")
+        self._job(client / "2026" / "NPA9965 Week 4", "NPA9965 Client XX-01 Week 4 Cover DRAFT.docx")
+        self._job(client / "2026" / "NPA9990 Week 1", "NPA9990 Client XX-01 Week 1 Cover.docx")  # later job
+        self._job(client.parent / "Other Client" / "2026" / "NPA9969", "NPA9969 Other Cover.docx")
+        current = self._job(client / "2026" / "NPA9970 Week 3")
+
+        self.assertEqual(
+            core.find_prior_cover(current, "NPA9970"),
+            client / "2026" / "NPA9960 Week 5" / "NPA9960 Client XX-01 Week 5 Cover.docx",
+        )
+        first_of_year = self._job(client / "2026" / "NPA9955 Benchmark")
+        self.assertEqual(
+            core.find_prior_cover(first_of_year, "NPA9955"),
+            client / "2025" / "NPA9950 Benchmark" / "NPA9950 Client XX-01 Cover.docx",
+        )
+
+    def test_prior_cover_searches_sibling_year_subfolders(self) -> None:
+        year = self._case_dir() / "Archive" / "Client" / "2026"
+        self._job(year / "Primary" / "NPA9940", "NPA9940 Client Primary Cover.docx")
+        current = self._job(year / "General" / "NPA9945")
+
+        self.assertEqual(core.find_prior_cover(current, "NPA9945"), year / "Primary" / "NPA9940" / "NPA9940 Client Primary Cover.docx")
+
+    def test_project_startup_copies_prior_cover_or_makes_blank(self) -> None:
+        year = self._case_dir() / "Archive" / "Client" / "2026"
+        self._job(year / "NPA9930 Week 4", "NPA9930 Client Week 4 Cover.docx")
+        root = self._job(year / "NPA9935 Week 3")
+        (root / "Qst").mkdir()
+        (root / "Qst" / "NPA9935 Client Week 3 Final.docx").write_bytes(b"qst")
+        context = core.ProjectContext.from_values("NPA9935", root)
+
+        result = core.run_project_startup(context)
+
+        self.assertEqual((root / "NPA9935 Client Week 3 Cover.docx").read_bytes(), b"cover of NPA9930 Week 4")
+        self.assertIn("Cover copied from the prior job", " ".join(result.document_notes))
+
+        lonely = self._job(self._case_dir() / "Archive" / "New Client" / "2026" / "NPA9936")
+        (lonely / "Qst").mkdir()
+        (lonely / "Qst" / "NPA9936 New Final.docx").write_bytes(b"qst")
+        blank = core.run_project_startup(core.ProjectContext.from_values("NPA9936", lonely))
+        self.assertEqual("".join(p.text for p in Document(str(lonely / "NPA9936 New Cover.docx")).paragraphs), "")
+        self.assertIn("created a blank Cover", " ".join(blank.document_notes))
 
     def test_project_startup_keeps_existing_documents_and_skips_without_final(self) -> None:
         root = self._case_dir() / "NPA9984 Project"

@@ -364,13 +364,26 @@ class ProjectStartupResult:
     pdf_status: str = "not_run"  # created | exists | stale | failed | not_run
     pdf_detail: str = ""
     pdf_paths: tuple[Path, ...] = ()  # questionnaire PDFs written or copied by this run
+    document_notes: tuple[str, ...] = ()
 
 
 # Word documents Project Startup adds to the project root, named
-# "<questionnaire name before Final> <suffix>.docx". All start blank except
-# Results, which starts as a copy of the Final questionnaire.
+# "<questionnaire name before Final> <suffix>.docx". Results starts as a copy of
+# the Final questionnaire, Trend Marginals from its template, Cover as a copy of
+# the client's previous job's cover; Tab and Trend Tables are blank.
 STARTUP_DOCUMENT_SUFFIXES: tuple[str, ...] = ("Tab", "Trend Marginals", "Trend Tables", "Cover", "Results")
 RESULTS_DOCUMENT_SUFFIX = "Results"
+TREND_MARGINALS_SUFFIX = "Trend Marginals"
+TREND_MARGINALS_TEMPLATE = APP_ROOT / "templates" / "Trend Marginals Template.docx"
+COVER_SUFFIX = "Cover"
+_PROJECT_FOLDER_RE = re.compile(r"^NPA(\d+)\b", re.IGNORECASE)
+_YEAR_FOLDER_RE = re.compile(r"^(19|20)\d{2}$")
+# Template text replaced with the questionnaire's area: a district ("PA-10"),
+# or a state or city on statewide and local polls ("Illinois", "Providence, RI").
+AREA_PLACEHOLDER = "XX-NN"
+# The questionnaire's title line starts with the survey ID and ends with the
+# area: "NPA3887<tab>October 20-22, 2026<tab>PA-10", "NPA3830  July 2026<tab>Illinois".
+_TITLE_LINE_RE = re.compile(r"^\s*NPA\d+", re.IGNORECASE)
 # Normal.dotm macro run on a new Results copy. It must not show dialogs: Word
 # runs hidden, so a MsgBox would hang startup. EmptyResults_Safe_v2 itself ends
 # in a MsgBox; the Silent variant calls the same replacement routines without it.
@@ -544,21 +557,141 @@ def startup_document_paths(context: ProjectContext, source_docx: Path) -> tuple[
     return tuple(context.project_root / f"{base} {suffix}.docx" for suffix in STARTUP_DOCUMENT_SUFFIXES)
 
 
-def _create_startup_documents(paths: Iterable[Path], source_docx: Path) -> tuple[list[Path], list[Path]]:
+def questionnaire_area(source_docx: Path) -> str | None:
+    """Last field of the questionnaire's title line: 'PA-10', 'Illinois', 'Providence, RI'."""
+    from docx import Document
+
+    try:
+        paragraphs = Document(str(source_docx)).paragraphs[:10]
+    except Exception:
+        return None
+    for paragraph in paragraphs:
+        if _TITLE_LINE_RE.match(paragraph.text):
+            fields = [f.strip() for f in paragraph.text.split("\t") if f.strip()]
+            return fields[-1] if len(fields) > 1 else None
+    return None
+
+
+def _cover_in(project_folder: Path) -> Path | None:
+    """The hand-made '<name> Cover.docx' in a project root (not drafts, not Table Gen output)."""
+    try:
+        covers = [
+            p
+            for p in project_folder.iterdir()
+            if p.is_file()
+            and p.suffix.casefold() == ".docx"
+            and not p.name.startswith("~$")
+            and p.stem.casefold().endswith(f" {COVER_SUFFIX.casefold()}")
+        ]
+    except OSError:
+        return None
+    return max(covers, key=lambda p: p.stat().st_mtime_ns) if covers else None
+
+
+def find_prior_cover(project_root: Path, survey_id: str) -> Path | None:
+    """Cover of the most recent earlier job for the same client.
+
+    Looks at the sibling project folders first (Stelson\\2026\\NPA3880 for
+    NPA3887), then widens one level at a time, up to the client folder (the one
+    holding the year folders), so the first job of a year finds last year's
+    cover and Bean\\2026\\General finds Bean\\2026\\Primary. At each level the
+    highest NPA number below the current job that has a cover wins.
+    """
+    match = re.search(r"\d+", survey_id)
+    if match is None:
+        return None
+    current = int(match.group(0))
+
+    # Search levels, nearest first: the project's parent, then up to and
+    # including the client folder above the year folder (at most three levels).
+    levels: list[Path] = []
+    level = project_root.parent
+    while len(levels) < 3:
+        levels.append(level)
+        if _YEAR_FOLDER_RE.match(level.name):
+            if len(levels) < 3:
+                levels.append(level.parent)
+            break
+        level = level.parent
+
+    for level in levels:
+        best: tuple[int, Path] | None = None
+        for pattern in ("*", "*/*", "*/*/*"):
+            try:
+                folders = list(level.glob(pattern))
+            except OSError:
+                continue
+            for folder in folders:
+                number_match = _PROJECT_FOLDER_RE.match(folder.name)
+                if not number_match or not folder.is_dir():
+                    continue
+                number = int(number_match.group(1))
+                if number >= current or (best is not None and number <= best[0]):
+                    continue
+                cover = _cover_in(folder)
+                if cover is not None:
+                    best = (number, cover)
+        if best is not None:
+            return best[1]
+    return None
+
+
+def _write_cover(path: Path, project_root: Path, survey_id: str) -> str:
+    from docx import Document
+
+    prior = find_prior_cover(project_root, survey_id)
+    if prior is None:
+        Document().save(str(path))
+        return "No cover found in an earlier job for this client; created a blank Cover."
+    shutil.copy2(prior, path)
+    return f"Cover copied from the prior job: {prior}"
+
+
+def _write_trend_marginals(path: Path, source_docx: Path) -> str:
+    """Create Trend Marginals from its template with XX-NN set to the area; returns a log note."""
+    from docx import Document
+
+    if not TREND_MARGINALS_TEMPLATE.exists():
+        Document().save(str(path))
+        return f"Trend Marginals template not found ({TREND_MARGINALS_TEMPLATE}); created a blank document."
+    area = questionnaire_area(source_docx)
+    document = Document(str(TREND_MARGINALS_TEMPLATE))
+    if area:
+        for paragraph in document.paragraphs:
+            for run in paragraph.runs:
+                if AREA_PLACEHOLDER in run.text:
+                    run.text = run.text.replace(AREA_PLACEHOLDER, area)
+    document.save(str(path))
+    if area:
+        return f"Trend Marginals made from the template for {area}."
+    return (
+        "Trend Marginals made from the template; the questionnaire has no title line "
+        f"ending in a district or area, so {AREA_PLACEHOLDER} was left in."
+    )
+
+
+def _create_startup_documents(
+    paths: Iterable[Path], source_docx: Path, context: ProjectContext
+) -> tuple[list[Path], list[Path], list[str]]:
     from docx import Document
 
     created: list[Path] = []
     existing: list[Path] = []
+    notes: list[str] = []
     for path in paths:
         if path.exists():
             existing.append(path)
             continue
         if path.stem.endswith(f" {RESULTS_DOCUMENT_SUFFIX}"):
             shutil.copy2(source_docx, path)
+        elif path.stem.endswith(f" {TREND_MARGINALS_SUFFIX}"):
+            notes.append(_write_trend_marginals(path, source_docx))
+        elif path.stem.endswith(f" {COVER_SUFFIX}"):
+            notes.append(_write_cover(path, context.project_root, context.survey_id))
         else:
             Document().save(str(path))
         created.append(path)
-    return created, existing
+    return created, existing, notes
 
 
 def _find_startup_directory(root: Path, parts: tuple[str, ...]) -> Path | None:
@@ -671,13 +804,16 @@ def run_project_startup(context: ProjectContext, use_word: bool = False) -> Proj
 
     created_docs: list[Path] = []
     existing_docs: list[Path] = []
+    document_notes: list[str] = []
     macro_status, macro_detail = "not_run", ""
     pdf_status, pdf_detail, pdf_paths = "not_run", "", []
     if source is not None:
         # The Table Gen DOCX only gets the PDF when it is the same questionnaire.
         table_gen_copy = destination if action in ("copied", "updated", "already_current") else None
         pdf_status, pdf_detail, pdf_paths = _questionnaire_pdf(source, table_gen_copy, use_word)
-        created_docs, existing_docs = _create_startup_documents(startup_document_paths(context, source), source)
+        created_docs, existing_docs, document_notes = _create_startup_documents(
+            startup_document_paths(context, source), source, context
+        )
         new_results = [p for p in created_docs if p.stem.endswith(f" {RESULTS_DOCUMENT_SUFFIX}")]
         if new_results and use_word:
             ok, macro_detail = run_word_macro(new_results[0], RESULTS_EMPTY_MACRO)
@@ -701,6 +837,7 @@ def run_project_startup(context: ProjectContext, use_word: bool = False) -> Proj
         pdf_status=pdf_status,
         pdf_detail=pdf_detail,
         pdf_paths=tuple(pdf_paths),
+        document_notes=tuple(document_notes),
     )
 
 
