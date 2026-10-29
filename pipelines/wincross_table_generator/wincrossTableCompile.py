@@ -2332,7 +2332,8 @@ def rule_motivation_to_vote(table: Table, q: Question) -> None:
         f" (Don't know)^({dk_value})^NS",
     ])
     table.lines.append(" ^ ^NS,DV")
-    table.lines.append(" TOTAL MOTIVATED (8-10)^(8-10)^NS")
+    table.lines.append(" TOTAL MOTIVATED (6-10)^(6-10)^NS")
+    table.lines.append(" EXTREMELY MOTIVATED (10)^(10)^NS")
 
 def rule_likelihood_to_vote(table: Table, q: Question) -> None:
     if len(q.options) != 6:
@@ -4505,6 +4506,20 @@ def append_candidate_consideration_lines(
     target_ref = q_selector_ref(vote_q, target_selector)
     complement_ref = q_selector_ref(vote_q, complement_selector)
     consider_ref = q_selector_ref(followup_q, might_consider.value)
+
+    # Percent the answer rows on the "not <candidate>" row (the voters who were
+    # asked), e.g. "Might consider^Q10(1)^7,NS". WinCross numbers rows after
+    # TOTAL ANSWERING, and four rows are added below the answers.
+    answer_indices = [
+        index
+        for index, line in enumerate(table.lines)
+        if not line.strip().upper().startswith("TOTAL ANSWERING")
+    ]
+    base_row = len(answer_indices) + 4
+    for index in answer_indices:
+        label_and_selector, _, options = table.lines[index].rpartition("^")
+        if options == "NS":
+            table.lines[index] = f"{label_and_selector}^{base_row},NS"
 
     table.lines.extend(
         [

@@ -30,6 +30,7 @@ from wincrossTableCompile import (  # noqa: E402
     rule_favorability_0_10,
     rule_focus_importance_0_10,
     rule_more_less_favorability_4pt,
+    rule_motivation_to_vote,
     rule_party_on_file,
     rule_persuasion_summary,
     rule_past_presidential_vote,
@@ -621,6 +622,37 @@ class WincrossTableCompileTests(unittest.TestCase):
                 " VOTING MENDOZA^Q7(1,2)^NS",
                 " VOTING FOR/WOULD CONSIDER^Q7(1,2) OR Q10(1)^NS",
                 " not MENDOZA^Q7(3-5)^HR,NS",
+            ],
+        )
+        # The answer rows percent on row 7, the "not <candidate>" row.
+        self.assertEqual(
+            q9_table.lines[:4],
+            [
+                " TOTAL ANSWERING^TN^1",
+                " Might consider^Q9(1)^7,NS",
+                " No chance^(2)^7,NS",
+                " (Don't know)^(3)^7,NS",
+            ],
+        )
+
+    def test_motivation_to_vote_nets_total_and_extremely_motivated(self) -> None:
+        motivation = Question(
+            qid="3",
+            qnum="3",
+            title="Please rate your level of motivation to vote on a scale from zero to ten.",
+            options=[ResponseOption(str(v), str(v)) for v in range(0, 11)] + [ResponseOption("11", "(Don't know)")],
+        )
+
+        table = next(
+            t for t in build_tables([motivation], [rule_motivation_to_vote]) if t.table_id.startswith("TQ3^")
+        )
+
+        self.assertEqual(
+            table.lines[-3:],
+            [
+                " ^ ^NS,DV",
+                " TOTAL MOTIVATED (6-10)^(6-10)^NS",
+                " EXTREMELY MOTIVATED (10)^(10)^NS",
             ],
         )
 
