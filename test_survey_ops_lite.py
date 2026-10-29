@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from docx import Document
+from docx.enum.text import WD_BREAK
 
 
 APP_ROOT = Path(__file__).resolve().parent
@@ -227,6 +228,52 @@ class SurveyLauncherTests(unittest.TestCase):
             core.find_prior_cover(test_folder, "NPA9925"),
             year / "NPA9920 Week 3" / "NPA9920 Client Week 3 Cover.docx",
         )
+
+    def _cover(self, path: Path) -> None:
+        from docx.enum.section import WD_SECTION
+
+        document = Document()
+        for text in ("\tTABULAR REPORT", "\tNPA9900", "\tPREPARED FOR:", "PA-10", "\tOCTOBER 13-15, 2026"):
+            document.add_paragraph(text)
+        document.add_section(WD_SECTION.NEW_PAGE)
+        document.add_paragraph("OVERVIEW")
+        first = document.add_paragraph("The following is a survey among 400 likely voters in the ")
+        first.add_run("10th District using landline (1")
+        first.add_run("3%) and text (87%).  It was conducted September 29-October 1, 2026.")
+        document.add_paragraph("In 95 cases out of 100, results fall within ±4.9 percentage points of the population.")
+        document.add_paragraph("As with any survey, the release of selected figures could be damaging.")
+        document.add_paragraph(
+            "The data have been weighted by sex, age, and 2024 vote to better reflect the composition of the electorate."
+        )
+        document.add_paragraph("SUBGROUP DEFINITIONS").runs[0].add_break(WD_BREAK.PAGE)
+        document.add_paragraph("3+\tVoters who voted in 3 or more of the 2024, 2022, 2020 or 2018 elections.")
+        document.save(str(path))
+
+    def test_copied_cover_gets_new_survey_id_and_highlights(self) -> None:
+        import cover_prep
+
+        path = self._case_dir() / "cover.docx"
+        self._cover(path)
+
+        changes = cover_prep.prepare_copied_cover(path, "NPA9905")
+
+        document = Document(str(path))
+        texts = [p.text for p in document.paragraphs]
+        highlighted = {
+            p.text[:12]: "".join(r.text for r in p.runs if r.font.highlight_color)
+            for p in document.paragraphs
+            if any(r.font.highlight_color for r in p.runs)
+        }
+        self.assertIn("\tNPA9905", texts)
+        self.assertNotIn("\tNPA9900", texts)
+        self.assertEqual(changes.survey_ids_replaced, 1)
+        self.assertEqual(highlighted["\tOCTOBER 13-"], "OCTOBER 13-15, 2026")
+        self.assertEqual(highlighted["The followin"], "40010th13%87%September 29-October 1, 2026")
+        self.assertEqual(highlighted["In 95 cases "], "±4.9")  # 95 and 100 are not touched
+        self.assertEqual(highlighted["The data hav"], "weighted by sex, age, and 2024 vote")
+        self.assertNotIn("3+\tVoters who", highlighted)  # page 3 is left alone
+        self.assertNotIn("As with any ", highlighted)
+        self.assertEqual(changes.notes, ())
 
     def test_prior_cover_searches_sibling_year_subfolders(self) -> None:
         year = self._case_dir() / "Archive" / "Client" / "2026"

@@ -650,7 +650,19 @@ def _write_cover(path: Path, project_root: Path, survey_id: str) -> str:
         Document().save(str(path))
         return "No cover found in an earlier job for this client; created a blank Cover."
     shutil.copy2(prior, path)
-    return f"Cover copied from the prior job: {prior}"
+    note = f"Cover copied from the prior job: {prior}"
+    try:
+        from cover_prep import prepare_copied_cover
+
+        changes = prepare_copied_cover(path, survey_id)
+    except Exception as exc:  # the copy is still usable; report and move on
+        return f"{note}. Could not mark it up for this survey: {exc}"
+    note += (
+        f". Survey ID updated in {changes.survey_ids_replaced} place(s); "
+        f"{changes.highlights} item(s) highlighted to update (dates, sample numbers, "
+        "margin of error, weighting)."
+    )
+    return " ".join([note, *changes.notes])
 
 
 def _write_trend_marginals(path: Path, source_docx: Path) -> str:

@@ -131,7 +131,17 @@ NPA3887), then widens one level at a time up to the client folder above the
 year folders, so the first job of a year uses last year's cover and
 `Bean\2026\General` finds `Bean\2026\Primary`. At each level the highest NPA
 number below the current job with a cover wins. With no earlier cover, Cover
-starts blank. The launcher log names the cover that was copied. A test
+starts blank. The launcher log names the cover that was copied.
+
+The copied cover is then marked up for the new survey (`cover_prep.py`), on its
+first two pages only: every `NPA####` becomes the new survey ID, and these are
+highlighted in yellow for the analyst to update: dates (`OCTOBER 13-15, 2026`,
+`SEPTEMBER 29-OCTOBER 1, 2026`, `JULY 2026`); every other number in page 2's
+first paragraph (sample size, mode percentages, ...); the margin of error
+before "percentage points" in the second paragraph; and, in the last
+paragraph, "weighted by ..." up to "to better reflect". Text is otherwise
+unchanged. If the cover's page 2 does not have the usual paragraphs, only page
+1 is updated and the log says so. A test
 project inside a real job, such as `NPA3887 Track Week 2\Job\OG Clean\NPA3887pt`,
 searches from the enclosing job folder, so it gets the same prior cover.
 
