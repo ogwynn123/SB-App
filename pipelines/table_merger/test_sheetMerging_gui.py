@@ -267,6 +267,58 @@ class SheetMergingGuiTests(unittest.TestCase):
         self.assertEqual(filtered["q16b"], "q23d")
         self.assertTrue(any(primary == "q16a" for primary, _secondary, _score in low_pairs))
 
+    def test_semantic_matching_finds_older_wave_json_in_the_archive(self) -> None:
+        """NPA3887 brings back a question the last wave dropped: q3 must match 3869_q3, not q3."""
+        platform_root = Path(__file__).resolve().parents[2]
+        if str(platform_root) not in sys.path:
+            sys.path.insert(0, str(platform_root))
+        import survey_tool_cli as semantic
+
+        motivation = {
+            "type": "question", "qnum": "3", "qid": "3",
+            "text": "Please rate your level of motivation to vote on a scale from zero to ten.",
+            "response_options": [{"value": str(v), "text": str(v)} for v in range(11)],
+        }
+        direction = {
+            "type": "question", "qnum": "4", "qid": "4",
+            "text": "Would you say things in the nation today are headed in the right direction or off on the wrong track?",
+            "response_options": [{"value": "1", "text": "Right direction"}, {"value": "2", "text": "Wrong track"}],
+        }
+
+        def write(path: Path, *questions: dict) -> Path:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"elements": list(questions)}), encoding="utf-8")
+            return path
+
+        year = Path(self._tmpdir()) / "Archive" / "Client" / "2026"
+        write(year / "NPA4900 Week 5" / "Job" / "Table Gen" / "NPA4900 Client Week 5 FinalJSON.json", motivation, direction)
+        # A test copy under OG Clean with different wording must not be used.
+        write(year / "NPA4900 Week 5" / "Job" / "OG Clean" / "NPA4900pt" / "NPA4900 bad JSON.json", direction)
+        merge = year / "NPA4910 Week 2" / "Data" / "Merge"
+        primary_json = write(merge / "NPA4910 Client Week 2 FinalJSON.json", motivation, direction)
+        secondary_json = write(merge / "NPA4905 Client Week 3 FinalJSON.json", dict(direction, qnum="3", qid="3"))
+
+        secondary_cols = ["id", "q3", "4900_q3"]
+        by_col, found, missing = semantic.discover_prefixed_secondary_signatures(
+            secondary_cols, primary_json, secondary_json
+        )
+        self.assertEqual(found["4900"].name, "NPA4900 Client Week 5 FinalJSON.json")
+        self.assertEqual(missing, [])
+
+        filtered, _low, _additions = semantic.evaluate_mapping_with_json(
+            mapping={"id": "id", "q3": "q3"},  # what name-only matching proposes
+            primary_cols=["id", "q3", "q4"],
+            secondary_cols=secondary_cols,
+            primary_join="id",
+            secondary_join="id",
+            primary_sigs=semantic.load_question_signatures(primary_json),
+            secondary_sigs=semantic.load_question_signatures(secondary_json),
+            threshold=60,
+            secondary_sigs_by_col=by_col,
+        )
+        self.assertEqual(filtered["q3"], "4900_q3")
+        self.assertEqual(filtered["q4"], "q3")
+
     def test_build_preview_export_text(self) -> None:
         gui = SheetMergeGUI.__new__(SheetMergeGUI)
         rows = [

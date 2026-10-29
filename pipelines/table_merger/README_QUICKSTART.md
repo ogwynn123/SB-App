@@ -55,6 +55,15 @@ For battery questions, semantic matching is item-focused. A shared lead-in and
 response scale can support a match, but cannot make different battery
 statements map to one another.
 
+Columns carried forward from older waves (such as `3869_q3` in a trend file)
+are scored against that older survey's own questionnaire. Its JSON is looked
+for in an `NPA_Surveys\NPA####` folder, then beside the two JSONs above, then
+in the client's archive job folders (`<client>\<year>\NPA####...\Job\Table
+Gen\*JSON.json`). So a question the last wave dropped but this wave brought
+back, like NPA3887's motivation question, maps to the older wave's column
+instead of whatever the last wave numbered the same. Surveys from before the
+platform have no JSON and still need manual mapping.
+
 If JSON files are not set, Auto Fill still works in non-semantic mode.
 
 ## 4. Output Behavior

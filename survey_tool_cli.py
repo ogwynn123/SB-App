@@ -4283,6 +4283,45 @@ def _q_similarity(a: QuestionSignature, b: QuestionSignature) -> int:
     return int(round(0.35 * prompt + 0.65 * opt))
 
 
+_ARCHIVE_JOB_RE = re.compile(r"^NPA(\d+)\b", re.IGNORECASE)
+_ARCHIVE_YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+
+
+def _resolve_archive_survey_json(code: str, near: tuple[Path, ...]) -> Path | None:
+    """An older survey's questionnaire JSON from the NPA archive, for scoring `3869_q3`.
+
+    Looks beside the merge's own JSONs first (Project Startup copies the earlier
+    wave's JSON into Data\\Merge), then in the client's job folders:
+    <client>\\<year>[\\<sub>]\\NPA<code>...\\Job\\Table Gen\\*JSON.json, where the
+    client folder is the one above the year folder the merge's files sit in.
+    Test copies under OG Clean are skipped; the newest match wins.
+    """
+    pattern = f"NPA{code}*JSON.json"
+    for path in near:
+        beside = [p for p in path.parent.glob(pattern) if p.is_file()]
+        if beside:
+            return max(beside, key=lambda p: p.stat().st_mtime_ns)
+    for path in near:
+        year = next((p for p in path.parents if _ARCHIVE_YEAR_RE.match(p.name)), None)
+        if year is None:
+            continue
+        client = year.parent
+        found: list[Path] = []
+        for job_glob in (f"*/NPA{code}*", f"*/*/NPA{code}*"):
+            try:
+                jobs = list(client.glob(job_glob))
+            except OSError:
+                continue
+            for job in jobs:
+                match = _ARCHIVE_JOB_RE.match(job.name)
+                if not job.is_dir() or not match or match.group(1) != code:
+                    continue
+                found.extend(p for p in (job / "Job" / "Table Gen").glob("*JSON.json") if p.is_file())
+        if found:
+            return max(found, key=lambda p: p.stat().st_mtime_ns)
+    return None
+
+
 def discover_prefixed_secondary_signatures(
     secondary_cols: list[str],
     primary_json: Path,
@@ -4306,14 +4345,14 @@ def discover_prefixed_secondary_signatures(
         return {}, {}, []
 
     npa_root = _discover_npa_surveys_root(primary_json, secondary_json)
-    if npa_root is None:
-        return {}, {}, sorted(prefixed_codes.keys())
 
     discovered: dict[str, Path] = {}
     missing: list[str] = []
     loaded: dict[str, dict[str, QuestionSignature]] = {}
     for code in sorted(prefixed_codes.keys()):
-        json_path = _resolve_survey_json(npa_root, code)
+        json_path = _resolve_survey_json(npa_root, code) if npa_root is not None else None
+        if json_path is None:
+            json_path = _resolve_archive_survey_json(code, (primary_json, secondary_json))
         if json_path is None:
             missing.append(code)
             continue
