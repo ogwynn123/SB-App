@@ -131,7 +131,9 @@ NPA3887), then widens one level at a time up to the client folder above the
 year folders, so the first job of a year uses last year's cover and
 `Bean\2026\General` finds `Bean\2026\Primary`. At each level the highest NPA
 number below the current job with a cover wins. With no earlier cover, Cover
-starts blank. The launcher log names the cover that was copied.
+starts blank. The launcher log names the cover that was copied. A test
+project inside a real job, such as `NPA3887 Track Week 2\Job\OG Clean\NPA3887pt`,
+searches from the enclosing job folder, so it gets the same prior cover.
 
 When the launcher runs Project Startup and has just created the Results copy,
 it opens that copy in a separate hidden Word, runs the `Normal.dotm` macro

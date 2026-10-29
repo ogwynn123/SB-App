@@ -217,6 +217,17 @@ class SurveyLauncherTests(unittest.TestCase):
             client / "2025" / "NPA9950 Benchmark" / "NPA9950 Client XX-01 Cover.docx",
         )
 
+    def test_prior_cover_from_a_test_folder_inside_the_job(self) -> None:
+        year = self._case_dir() / "Archive" / "Client" / "2026"
+        self._job(year / "NPA9920 Week 3", "NPA9920 Client Week 3 Cover.docx")
+        job = self._job(year / "NPA9925 Week 2", "NPA9925 Client Week 2 Cover.docx")  # the real job's own cover
+        test_folder = self._job(job / "Job" / "OG Clean" / "NPA9925pt")
+
+        self.assertEqual(
+            core.find_prior_cover(test_folder, "NPA9925"),
+            year / "NPA9920 Week 3" / "NPA9920 Client Week 3 Cover.docx",
+        )
+
     def test_prior_cover_searches_sibling_year_subfolders(self) -> None:
         year = self._case_dir() / "Archive" / "Client" / "2026"
         self._job(year / "Primary" / "NPA9940", "NPA9940 Client Primary Cover.docx")

@@ -596,16 +596,22 @@ def find_prior_cover(project_root: Path, survey_id: str) -> Path | None:
     holding the year folders), so the first job of a year finds last year's
     cover and Bean\\2026\\General finds Bean\\2026\\Primary. At each level the
     highest NPA number below the current job that has a cover wins.
+
+    A test project inside a real job, such as
+    Stelson\\2026\\NPA3887 Track Week 2\\Job\\OG Clean\\NPA3887pt, searches from
+    the enclosing job folder, so it finds the same prior cover the job would.
     """
     match = re.search(r"\d+", survey_id)
     if match is None:
         return None
     current = int(match.group(0))
 
-    # Search levels, nearest first: the project's parent, then up to and
+    base = next((p for p in project_root.parents if _PROJECT_FOLDER_RE.match(p.name)), project_root)
+
+    # Search levels, nearest first: the job's parent, then up to and
     # including the client folder above the year folder (at most three levels).
     levels: list[Path] = []
-    level = project_root.parent
+    level = base.parent
     while len(levels) < 3:
         levels.append(level)
         if _YEAR_FOLDER_RE.match(level.name):
