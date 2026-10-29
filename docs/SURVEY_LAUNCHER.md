@@ -44,16 +44,18 @@ Double-clicking the **Data** line opens an "Add data files" window
 (`data_intake.py`) with two boxes; drag a file from Explorer onto each, or use
 Browse, then Add Files. Files are copied, never moved.
 
-- **Field report** is copied to `Reports` as `NPA#### {Client} {District} N`
-  with its own extension, numbered from 1 (`NPA3887 Stelson PA-10 1.xlsx`,
-  then `2`, ...). The client is the folder above the year folder; the district
-  is the Final questionnaire's title-line area. Dropping a report that is
-  already there (same content) does not add another copy.
+- **Field report** is copied to `Reports` as `NPA#### {Client} {District}
+  MM.DD.YY` with its own extension and today's date
+  (`NPA3887 Stelson PA-10 10.29.26.xlsx`); a second, different report on the
+  same day gets ` (2)`. The client is the folder above the year folder; the
+  district is the Final questionnaire's title-line area. Dropping a report that
+  is already there (same content) does not add another copy.
 - **Data zip** is copied to `Data` and unzipped there, flattening folders and
   skipping `__MACOSX` extras. Its one `.csv` becomes `NPA####.csv` and its one
   `.xlsx` becomes `NPA#### Working Codelist.xlsx`; with several of either, none
   are renamed and the log says so. A different file already in `Data` with the
-  same name is only replaced after asking.
+  same name is only replaced after asking. The copied zip is then removed from
+  `Data` (the original is untouched); a zip that cannot be read is left there.
 
 Outlook attachments cannot be dragged straight in: Outlook sends them as
 virtual files rather than real ones. Instead, select the email in Outlook and
@@ -61,7 +63,10 @@ click **From Outlook (selected email)**. The window reads that email's
 attachments from the Outlook already open (it never starts Outlook), skipping
 pictures in the body and signatures, saves them to a temporary folder, and puts
 the `.zip` in the zip box and the other file in the report box, asking which
-one when there are several. Add Files then works as above.
+one when there are several. Add Files then works as above. This needs classic
+Outlook: the new Outlook app (`olk.exe`) does not let other programs read
+emails, so with it the button says so and attachments have to be dragged to the
+Desktop or a folder first.
 
 Sample Append defaults to the newest `Data\NPA####ts*.csv` and remembers the
 project's column mapping (`DATA_COLUMN=SAMPLE_COLUMN`) in the project manifest.

@@ -6,6 +6,7 @@ import shutil
 import sys
 import unittest
 import uuid
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -283,7 +284,7 @@ class SurveyLauncherTests(unittest.TestCase):
         self._questionnaire(root / "Qst" / f"{survey_id} Stelson PA-10 Final.docx", f"{survey_id}\tOctober 2026\tPA-10")
         return core.ProjectContext.from_values(survey_id, root)
 
-    def test_data_intake_names_reports_and_counts_up(self) -> None:
+    def test_data_intake_names_reports_with_todays_date(self) -> None:
         import data_intake
 
         context = self._intake_project("NPA9910")
@@ -297,12 +298,13 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertIsNotNone(data_intake.check_source(zip_target, first))  # only .zip goes in the zip box
         self.assertEqual(data_intake.report_name_stem(context), "NPA9910 Stelson PA-10")
         first_dest = data_intake.destination_for(context, report_target, first)
-        self.assertEqual(first_dest, context.project_root / "Reports" / "NPA9910 Stelson PA-10 1.xlsx")
+        today = date.today().strftime("%m.%d.%y")
+        self.assertEqual(first_dest, context.project_root / "Reports" / f"NPA9910 Stelson PA-10 {today}.xlsx")
         self.assertEqual(data_intake.place_file(first, first_dest), "copied")
         self.assertTrue(first.exists())  # copied, not moved
 
         second_dest = data_intake.destination_for(context, report_target, second)
-        self.assertEqual(second_dest.name, "NPA9910 Stelson PA-10 2.xlsx")
+        self.assertEqual(second_dest.name, f"NPA9910 Stelson PA-10 {today} (2).xlsx")  # second report, same day
         data_intake.place_file(second, second_dest)
         # Dropping the first report again finds its copy instead of making a third.
         again = data_intake.destination_for(context, report_target, first)
@@ -372,8 +374,10 @@ class SurveyLauncherTests(unittest.TestCase):
         dialog._choose(zip_target, [downloads / "data.zip"])
         dialog.add_files()
 
-        self.assertEqual((root_dir / "Reports" / "NPA9911 Stelson PA-10 1.xlsx").read_bytes(), b"r")
-        self.assertTrue((root_dir / "Data" / "data.zip").exists())
+        today = date.today().strftime("%m.%d.%y")
+        self.assertEqual((root_dir / "Reports" / f"NPA9911 Stelson PA-10 {today}.xlsx").read_bytes(), b"r")
+        self.assertFalse((root_dir / "Data" / "data.zip").exists())  # removed after unzipping
+        self.assertTrue((downloads / "data.zip").exists())  # the original stays
         self.assertEqual((root_dir / "Data" / "NPA9911.csv").read_text(encoding="utf-8"), "x")
         self.assertTrue((root_dir / "Data" / "NPA9911 Working Codelist.xlsx").exists())
         self.assertTrue(any("NPA9911.csv" in line for line in logged))

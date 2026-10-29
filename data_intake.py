@@ -1,8 +1,8 @@
 """'Add data files' window for the launcher's Data step.
 
 Two drop boxes. The field report is copied to <project>\\Reports as
-"NPA3887 Stelson PA-10 1.xlsx" (survey ID, client, district, then the next free
-number). The data zip is copied to <project>\\Data and unzipped there; its CSV
+"NPA3887 Stelson PA-10 10.29.26.xlsx" (survey ID, client, district, today's
+date). The data zip is copied to <project>\\Data and unzipped there; its CSV
 becomes "NPA3887.csv" and its XLSX "NPA3887 Working Codelist.xlsx". Files are
 copied, never moved, and an existing different file is only replaced after
 asking. Files can be dragged in from Explorer (Windows' own WM_DROPFILES, so no
@@ -18,6 +18,7 @@ import sys
 import tkinter as tk
 import zipfile
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
@@ -44,7 +45,7 @@ class IntakeTarget:
 
 
 TARGETS: tuple[IntakeTarget, ...] = (
-    IntakeTarget("report", "Field report", ("Reports",), hint="Copied to Reports as NPA#### Client District N"),
+    IntakeTarget("report", "Field report", ("Reports",), hint="Copied to Reports as NPA#### Client District MM.DD.YY"),
     IntakeTarget("zip", "Data zip", ("Data",), (".zip",), hint=".zip; copied to Data and unzipped"),
 )
 
@@ -84,16 +85,18 @@ def report_name_stem(context: ProjectContext) -> str:
     return " ".join(part for part in (context.survey_id, client_name(context), area) if part)
 
 
-def next_report_name(context: ProjectContext, reports_folder: Path, suffix: str) -> str:
-    """'NPA3887 Stelson PA-10 1.xlsx', or the next number up if earlier reports are there."""
-    stem = report_name_stem(context)
-    pattern = re.compile(rf"^{re.escape(stem)} (\d+)$", re.IGNORECASE)
-    used = [
-        int(match.group(1))
-        for path in reports_folder.iterdir()
-        if path.is_file() and (match := pattern.match(path.stem))
-    ] if reports_folder.is_dir() else []
-    return f"{stem} {max(used, default=0) + 1}{suffix}"
+def next_report_name(
+    context: ProjectContext, reports_folder: Path, suffix: str, today: date | None = None
+) -> str:
+    """'NPA3887 Stelson PA-10 10.29.26.xlsx' (today's date, MM.DD.YY).
+
+    A second, different report on the same day becomes '... 10.29.26 (2).xlsx'.
+    """
+    name = f"{report_name_stem(context)} {(today or date.today()).strftime('%m.%d.%y')}"
+    candidate, copy = f"{name}{suffix}", 2
+    while (reports_folder / candidate).exists():
+        candidate, copy = f"{name} ({copy}){suffix}", copy + 1
+    return candidate
 
 
 @dataclass
@@ -184,7 +187,12 @@ $out = $env:SURVEYPLATFORM_OUT
 try {
     $outlook = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')
 } catch {
-    Write-Output 'ERROR:Outlook is not open. Open Outlook, select the email, and try again.'
+    if (Get-Process olk -ErrorAction SilentlyContinue) {
+        # The new Outlook app has no automation interface, so no program can read its emails.
+        Write-Output 'ERROR:You are using the new Outlook, which does not let other programs read emails. Drag the attachments to the Desktop (or a folder) first and drop them from there, or switch to classic Outlook to use this button.'
+    } else {
+        Write-Output 'ERROR:Outlook is not open. Open Outlook, select the email, and try again.'
+    }
     exit 2
 }
 $explorer = $outlook.ActiveExplorer()
@@ -492,6 +500,9 @@ class DataIntakeDialog(tk.Toplevel):
         except zipfile.BadZipFile:
             self.log(f"Data zip: {archive.name} is not a readable zip; not unzipped.")
             return "Not a readable zip; not unzipped."
+        # The files are out, so the copied zip in Data is no longer needed (the original stays put).
+        archive.unlink(missing_ok=True)
+        self.log(f"Data zip: removed the copied {archive.name} from Data after unzipping")
         for original, renamed in result.renamed:
             self.log(f"Data zip: {original} -> Data\\{renamed.name}")
         for path in result.kept:
