@@ -403,8 +403,10 @@ class SurveyLauncherApp:
         self.log(f"Opened {tool.label} in {work_dir}")
 
     def run_project_startup(self, context: ProjectContext, tool: ToolSpec) -> None:
+        self.status_var.set("Running Project Startup (a new Results document is emptied in Word)...")
+        self.root.update_idletasks()
         try:
-            result = run_project_startup(context)
+            result = run_project_startup(context, empty_results_with_word=True)
             record_tool_launch(context, tool, context.project_root)
         except Exception as exc:
             messagebox.showerror("Project Startup", f"Project startup failed:\n{exc}")
@@ -427,6 +429,23 @@ class SurveyLauncherApp:
             self.log(f"{docx_message}: {result.destination_docx}")
         else:
             self.log(docx_message)
+        for path in result.created_documents:
+            self.log(f"Created document: {path}")
+        for path in result.existing_documents:
+            self.log(f"Kept existing document: {path}")
+        if result.source_docx is None:
+            documents_message = "Working documents not created (no Final questionnaire to name them from)"
+        else:
+            documents_message = (
+                f"Created documents: {len(result.created_documents)} "
+                f"(kept existing: {len(result.existing_documents)})"
+            )
+            if result.results_macro_status == "emptied":
+                documents_message += "\nResults document emptied with EmptyResults_Safe_v2_Silent"
+            elif result.results_macro_status == "failed":
+                documents_message += f"\nResults document NOT emptied: {result.results_macro_detail}"
+        if result.results_macro_detail:
+            self.log(f"Results macro: {result.results_macro_detail}")
 
         self.settings = remember_project(context, settings_path=self.settings_path)
         self._refresh_recent_projects()
@@ -436,7 +455,8 @@ class SurveyLauncherApp:
             "Project Startup",
             f"Created folders: {len(result.created_directories)}\n"
             f"Existing folders: {len(result.existing_directories)}\n"
-            f"{docx_message}\n\n"
+            f"{docx_message}\n"
+            f"{documents_message}\n\n"
             f"Status: {result.check.status_label}",
         )
 

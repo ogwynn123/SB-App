@@ -357,6 +357,99 @@ class ProjectStartupResult:
     destination_docx: Path | None
     docx_action: str
     check: ProjectStartupCheck
+    created_documents: tuple[Path, ...] = ()
+    existing_documents: tuple[Path, ...] = ()
+    results_macro_status: str = "not_run"  # emptied | not_run | failed
+    results_macro_detail: str = ""
+
+
+# Word documents Project Startup adds to the project root, named
+# "<questionnaire name before Final> <suffix>.docx". All start blank except
+# Results, which starts as a copy of the Final questionnaire.
+STARTUP_DOCUMENT_SUFFIXES: tuple[str, ...] = ("Tab", "Trend Marginals", "Trend Tables", "Cover", "Results")
+RESULTS_DOCUMENT_SUFFIX = "Results"
+# Normal.dotm macro run on a new Results copy. It must not show dialogs: Word
+# runs hidden, so a MsgBox would hang startup. EmptyResults_Safe_v2 itself ends
+# in a MsgBox; the Silent variant calls the same replacement routines without it.
+RESULTS_EMPTY_MACRO = "EmptyResults_Safe_v2_Silent"
+WORD_MACRO_TIMEOUT_SECONDS = 300
+
+# Opens one document in a separate hidden Word, runs a macro, saves and closes.
+# If COM hands back a Word the user already has open, only this document is
+# closed and Word is left running. Close and Quit take [ref] arguments because
+# PowerShell otherwise binds them to Word's Close/Quit events and Word stays
+# running in the background.
+_WORD_MACRO_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+$path = $env:SURVEYPLATFORM_DOC
+$macro = $env:SURVEYPLATFORM_MACRO
+$code = 0
+$word = New-Object -ComObject Word.Application
+$ownsWord = ($word.Documents.Count -eq 0)
+$doc = $null
+try {
+    if ($ownsWord) { $word.Visible = $false }
+    $word.DisplayAlerts = 0
+    $doc = $word.Documents.Open($path, $false, $false, $false)
+    $doc.Activate()
+    $ran = $true
+    try {
+        [void]$word.Run($macro)
+    } catch {
+        Write-Output "MACRO_ERROR: $($_.Exception.Message)"
+        $ran = $false
+        $code = 3
+    }
+    if ($ran) {
+        $doc.Save()
+        Write-Output 'OK'
+    }
+} catch {
+    Write-Output "WORD_ERROR: $($_.Exception.Message)"
+    $code = 4
+} finally {
+    $noSave = 0
+    if ($doc -ne $null) { try { $doc.Close([ref]$noSave) } catch { Write-Output "CLOSE_ERROR: $($_.Exception.Message)" } }
+    if ($ownsWord) { try { $word.Quit([ref]$noSave) } catch { Write-Output "QUIT_ERROR: $($_.Exception.Message)" } }
+    [void][Runtime.InteropServices.Marshal]::ReleaseComObject($word)
+    [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
+}
+exit $code
+"""
+
+
+def run_word_macro(document: Path, macro: str, timeout: int = WORD_MACRO_TIMEOUT_SECONDS) -> tuple[bool, str]:
+    """Run a Word macro (e.g. from Normal.dotm) on document and save it. Returns (ok, detail)."""
+    env = dict(os.environ, SURVEYPLATFORM_DOC=str(document), SURVEYPLATFORM_MACRO=macro)
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", _WORD_MACRO_SCRIPT],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except FileNotFoundError:
+        return False, "PowerShell is not available, so Word could not be run."
+    except subprocess.TimeoutExpired:
+        return False, (
+            f"Word did not finish {macro} within {timeout} seconds (a Word dialog may be open). "
+            "Check Task Manager for a leftover WINWORD.EXE."
+        )
+    output = (proc.stdout + proc.stderr).strip()
+    leftover = " Word may still be running in the background." if "QUIT_ERROR" in output else ""
+    if proc.returncode == 0 and "OK" in proc.stdout:
+        return True, f"Ran {macro}.{leftover}"
+    if "MACRO_ERROR" in output:
+        detail = output.split("MACRO_ERROR:", 1)[1].strip().splitlines()[0]
+        return False, f"Word could not run {macro} (is it in Normal.dotm?): {detail}"
+    if "WORD_ERROR" in output:
+        detail = output.split("WORD_ERROR:", 1)[1].strip().splitlines()[0]
+        return False, f"Word could not open or save the document: {detail}"
+    last_line = output.splitlines()[-1] if output else f"exit code {proc.returncode}"
+    return False, f"Word automation failed: {last_line}"
 
 
 # "... Final", optionally followed by a date: "Final 10.19.26", "FINAL 9.30.26",
@@ -403,6 +496,35 @@ def find_latest_final_docx(context: ProjectContext) -> Path | None:
     return max(candidates, key=sort_key)
 
 
+def questionnaire_base_name(stem: str, fallback: str) -> str:
+    """'NPA3887 Stelson PA-10 Track Week 2 Final 10.19.26' -> 'NPA3887 Stelson PA-10 Track Week 2'."""
+    match = FINAL_QUESTIONNAIRE_RE.search(stem.strip())
+    base = stem.strip()[: match.start()] if match else stem.strip()
+    return base.rstrip(" _-") or fallback
+
+
+def startup_document_paths(context: ProjectContext, source_docx: Path) -> tuple[Path, ...]:
+    base = questionnaire_base_name(source_docx.stem, context.survey_id)
+    return tuple(context.project_root / f"{base} {suffix}.docx" for suffix in STARTUP_DOCUMENT_SUFFIXES)
+
+
+def _create_startup_documents(paths: Iterable[Path], source_docx: Path) -> tuple[list[Path], list[Path]]:
+    from docx import Document
+
+    created: list[Path] = []
+    existing: list[Path] = []
+    for path in paths:
+        if path.exists():
+            existing.append(path)
+            continue
+        if path.stem.endswith(f" {RESULTS_DOCUMENT_SUFFIX}"):
+            shutil.copy2(source_docx, path)
+        else:
+            Document().save(str(path))
+        created.append(path)
+    return created, existing
+
+
 def _find_startup_directory(root: Path, parts: tuple[str, ...]) -> Path | None:
     for candidate in (parts, *STARTUP_DIRECTORY_ALIASES.get(parts, ())):
         found = resolve_relative_directory(root, candidate)
@@ -440,7 +562,13 @@ def inspect_project_startup(context: ProjectContext) -> ProjectStartupCheck:
     return ProjectStartupCheck(tuple(missing), source, destination, status)
 
 
-def run_project_startup(context: ProjectContext) -> ProjectStartupResult:
+def run_project_startup(context: ProjectContext, empty_results_with_word: bool = False) -> ProjectStartupResult:
+    """Create the standard layout, copy the Final DOCX, and add the working documents.
+
+    With empty_results_with_word, a newly created Results copy is emptied by
+    running RESULTS_EMPTY_MACRO in Word. The launcher turns this on; tests and
+    scripted runs leave it off so they never start Word.
+    """
     created: list[Path] = []
     existing: list[Path] = []
     for parts in STARTUP_DIRECTORIES:
@@ -475,6 +603,20 @@ def run_project_startup(context: ProjectContext) -> ProjectStartupResult:
             else:
                 action = "destination_conflict"
 
+    created_docs: list[Path] = []
+    existing_docs: list[Path] = []
+    macro_status, macro_detail = "not_run", ""
+    if source is not None:
+        created_docs, existing_docs = _create_startup_documents(startup_document_paths(context, source), source)
+        new_results = [p for p in created_docs if p.stem.endswith(f" {RESULTS_DOCUMENT_SUFFIX}")]
+        if new_results and empty_results_with_word:
+            ok, macro_detail = run_word_macro(new_results[0], RESULTS_EMPTY_MACRO)
+            macro_status = "emptied" if ok else "failed"
+        elif new_results:
+            macro_detail = "Results copy left as the questionnaire (Word step not requested)."
+        else:
+            macro_detail = "Results document already existed; left unchanged."
+
     return ProjectStartupResult(
         created_directories=tuple(created),
         existing_directories=tuple(existing),
@@ -482,6 +624,10 @@ def run_project_startup(context: ProjectContext) -> ProjectStartupResult:
         destination_docx=destination,
         docx_action=action,
         check=inspect_project_startup(context),
+        created_documents=tuple(created_docs),
+        existing_documents=tuple(existing_docs),
+        results_macro_status=macro_status,
+        results_macro_detail=macro_detail,
     )
 
 

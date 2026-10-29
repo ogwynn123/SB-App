@@ -210,6 +210,10 @@ def _startup_first(context: launcher.ProjectContext) -> StepOutcome:
     }
     _require(set(result.created_directories) == expected, "Project Startup did not create the exact standard layout.")
     _require(result.docx_action == "copied", f"Expected DOCX action 'copied'; got {result.docx_action!r}.")
+    expected_docs = [
+        context.project_root / f"NPA9999 Acceptance {suffix}.docx" for suffix in launcher.STARTUP_DOCUMENT_SUFFIXES
+    ]
+    _require(list(result.created_documents) == expected_docs, "Project Startup did not create the five working documents.")
     _require(result.check.status_label == "Ready", f"Project Startup status is {result.check.status_label!r}.")
     launcher.record_tool_launch(
         context,
@@ -223,6 +227,7 @@ def _startup_first(context: launcher.ProjectContext) -> StepOutcome:
 def _startup_repeat(context: launcher.ProjectContext) -> StepOutcome:
     result = launcher.run_project_startup(context)
     _require(not result.created_directories, "The repeated startup unexpectedly created folders.")
+    _require(not result.created_documents, "The repeated startup unexpectedly created documents.")
     _require(result.docx_action == "already_current", f"Repeated startup action was {result.docx_action!r}.")
     _require(result.check.status_label == "Ready", "Repeated startup did not remain Ready.")
     return StepOutcome("Second run was idempotent and preserved all existing content.")

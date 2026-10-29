@@ -157,7 +157,10 @@ Select the survey ID and project root, then open a specialist workflow. The
 (with `Banners`, `OEs` and `Results` inside), and `Job\Table Gen` paths without
 replacing existing folders, then copies the
 newest `Qst` DOCX ending in `Final` (optionally followed by a date such as
-`Final 10.19.26`; Spanish versions are skipped) into Table Gen. WinCross uses that output
+`Final 10.19.26`; Spanish versions are skipped) into Table Gen, and adds
+`Tab`, `Trend Marginals`, `Trend Tables`, `Cover` and `Results` Word documents
+to the project root named after that questionnaire (blank, except Results,
+which starts as a copy of the questionnaire). WinCross uses that output
 folder and receives the selected survey context. See `docs\SURVEY_LAUNCHER.md`
 for the folder and manifest contract.
 

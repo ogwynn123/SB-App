@@ -100,6 +100,35 @@ recently modified match, and copies it into `Job\Table Gen`. It updates an older
 copy, leaves an identical copy alone, and does not overwrite a newer differing
 Table Gen copy.
 
+Using that Final questionnaire's name with `Final` and any date after it
+removed (`NPA3887 Stelson PA-10 Track Week 2 Final 10.19.26` becomes
+`NPA3887 Stelson PA-10 Track Week 2`), Project Startup also adds five Word
+documents to the project root: blank `<name> Tab.docx`, `<name> Trend
+Marginals.docx`, `<name> Trend Tables.docx` and `<name> Cover.docx`, plus
+`<name> Results.docx`, which starts as a copy of the Final questionnaire. A
+document that already exists is never overwritten, and none are created when
+no Final questionnaire is found.
+
+When the launcher runs Project Startup and has just created the Results copy,
+it opens that copy in a separate hidden Word, runs the `Normal.dotm` macro
+`EmptyResults_Safe_v2_Silent`, saves and closes it. The macro must not show
+dialogs (Word is hidden, so a message box would hang startup), which is why
+startup does not call `EmptyResults_Safe_v2` itself: that one ends with a
+`MsgBox`. Add the silent variant to the same module as `EmptyResults_Safe_v2`:
+
+```vb
+Public Sub EmptyResults_Safe_v2_Silent()
+    ReplaceParagraphCodeTokens ActiveDocument
+    ReplaceNumericOnlyTableCells ActiveDocument
+End Sub
+```
+
+If the macro is missing or Word fails, the Results copy is left as the
+questionnaire and the launcher log says why. Startup never quits a Word you
+already have open, and an existing Results document is not touched.
+`run_project_startup(..., empty_results_with_word=False)`, the default for
+scripts and tests, skips Word entirely.
+
 The launcher searches `<project root>\Qst` for questionnaire DOCX/PDF pairs
 and preloads WinCross to write RAW, JSON, TABLES, BANNERS, and COVER outputs to
 `Job\Table Gen`. Standalone WinCross launches retain the legacy behavior of

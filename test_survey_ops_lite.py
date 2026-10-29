@@ -9,6 +9,8 @@ import uuid
 from pathlib import Path
 from unittest.mock import patch
 
+from docx import Document
+
 
 APP_ROOT = Path(__file__).resolve().parent
 if str(APP_ROOT) not in sys.path:
@@ -69,6 +71,14 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertTrue((root / "Job" / "Table Gen").is_dir())
         self.assertEqual(result.source_docx, latest)
         self.assertEqual(result.docx_action, "copied")
+        expected_docs = [
+            root / f"NPA9998 Revised {suffix}.docx"
+            for suffix in ("Tab", "Trend Marginals", "Trend Tables", "Cover", "Results")
+        ]
+        self.assertEqual(list(result.created_documents), expected_docs)
+        for path in expected_docs[:-1]:
+            self.assertEqual("".join(p.text for p in Document(str(path)).paragraphs), "")
+        self.assertEqual(expected_docs[-1].read_bytes(), b"latest")  # Results starts as the Final questionnaire
         self.assertEqual((root / "Job" / "Table Gen" / latest.name).read_bytes(), b"latest")
         self.assertEqual(result.check.status_label, "Ready")
 
@@ -126,6 +136,63 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertEqual(result.docx_action, "updated")
         self.assertEqual(destination.read_bytes(), b"new source")
         self.assertEqual(result.check.status_label, "Ready")
+
+    def test_startup_document_names_drop_final_and_date(self) -> None:
+        cases = {
+            "NPA3887 Stelson PA-10 Track Week 2 Final 10.19.26": "NPA3887 Stelson PA-10 Track Week 2",
+            "NPA3830 Benchmark FINAL 9.30.26": "NPA3830 Benchmark",
+            "NPA3801 Poll_Final_20261019": "NPA3801 Poll",
+            "NPA3802 Survey Final": "NPA3802 Survey",
+            "Final": "NPA9999",
+        }
+        for stem, expected in cases.items():
+            self.assertEqual(core.questionnaire_base_name(stem, "NPA9999"), expected, stem)
+
+    def test_project_startup_keeps_existing_documents_and_skips_without_final(self) -> None:
+        root = self._case_dir() / "NPA9984 Project"
+        (root / "Qst").mkdir(parents=True)
+        context = core.ProjectContext.from_values("NPA9984", root)
+
+        without_final = core.run_project_startup(context)
+        self.assertEqual(without_final.created_documents, ())
+        self.assertEqual(list(root.glob("*.docx")), [])
+
+        (root / "Qst" / "NPA9984 Poll Final 10.1.26.docx").write_bytes(b"qst")
+        tab = root / "NPA9984 Poll Tab.docx"
+        tab.write_bytes(b"analyst edits")
+        result = core.run_project_startup(context)
+
+        self.assertEqual(result.existing_documents, (tab,))
+        self.assertEqual(len(result.created_documents), 4)
+        self.assertEqual(tab.read_bytes(), b"analyst edits")
+        self.assertEqual(core.run_project_startup(context).created_documents, ())
+
+    def test_project_startup_empties_only_a_new_results_copy_with_word(self) -> None:
+        root = self._case_dir() / "NPA9983 Project"
+        (root / "Qst").mkdir(parents=True)
+        (root / "Qst" / "NPA9983 Poll Final.docx").write_bytes(b"qst")
+        context = core.ProjectContext.from_values("NPA9983", root)
+
+        with patch.object(core, "run_word_macro", return_value=(True, "Ran it.")) as word:
+            first = core.run_project_startup(context, empty_results_with_word=True)
+            second = core.run_project_startup(context, empty_results_with_word=True)
+
+        word.assert_called_once_with(root / "NPA9983 Poll Results.docx", core.RESULTS_EMPTY_MACRO)
+        self.assertEqual(first.results_macro_status, "emptied")
+        self.assertEqual(second.results_macro_status, "not_run")
+        self.assertIn("already existed", second.results_macro_detail)
+
+    def test_project_startup_reports_word_failure_and_keeps_results_copy(self) -> None:
+        root = self._case_dir() / "NPA9982 Project"
+        (root / "Qst").mkdir(parents=True)
+        (root / "Qst" / "NPA9982 Poll Final.docx").write_bytes(b"qst")
+        context = core.ProjectContext.from_values("NPA9982", root)
+
+        with patch.object(core, "run_word_macro", return_value=(False, "Word could not run it.")):
+            result = core.run_project_startup(context, empty_results_with_word=True)
+
+        self.assertEqual(result.results_macro_status, "failed")
+        self.assertEqual((root / "NPA9982 Poll Results.docx").read_bytes(), b"qst")
 
     def test_project_startup_reuses_open_ends_instead_of_adding_oes(self) -> None:
         root = self._case_dir() / "NPA9985 Project"
