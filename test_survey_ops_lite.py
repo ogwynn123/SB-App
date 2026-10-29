@@ -173,9 +173,11 @@ class SurveyLauncherTests(unittest.TestCase):
         (root / "Qst" / "NPA9983 Poll Final.docx").write_bytes(b"qst")
         context = core.ProjectContext.from_values("NPA9983", root)
 
-        with patch.object(core, "run_word_macro", return_value=(True, "Ran it.")) as word:
-            first = core.run_project_startup(context, empty_results_with_word=True)
-            second = core.run_project_startup(context, empty_results_with_word=True)
+        with patch.object(core, "run_word_macro", return_value=(True, "Ran it.")) as word, patch.object(
+            core, "export_pdf_with_word", return_value=(False, "no Word in tests")
+        ):
+            first = core.run_project_startup(context, use_word=True)
+            second = core.run_project_startup(context, use_word=True)
 
         word.assert_called_once_with(root / "NPA9983 Poll Results.docx", core.RESULTS_EMPTY_MACRO)
         self.assertEqual(first.results_macro_status, "emptied")
@@ -188,11 +190,59 @@ class SurveyLauncherTests(unittest.TestCase):
         (root / "Qst" / "NPA9982 Poll Final.docx").write_bytes(b"qst")
         context = core.ProjectContext.from_values("NPA9982", root)
 
-        with patch.object(core, "run_word_macro", return_value=(False, "Word could not run it.")):
-            result = core.run_project_startup(context, empty_results_with_word=True)
+        with patch.object(core, "run_word_macro", return_value=(False, "Word could not run it.")), patch.object(
+            core, "export_pdf_with_word", return_value=(False, "no Word in tests")
+        ):
+            result = core.run_project_startup(context, use_word=True)
 
         self.assertEqual(result.results_macro_status, "failed")
         self.assertEqual((root / "NPA9982 Poll Results.docx").read_bytes(), b"qst")
+
+    def test_project_startup_saves_questionnaire_pdf_in_qst_and_table_gen(self) -> None:
+        root = self._case_dir() / "NPA9981 Project"
+        (root / "Qst").mkdir(parents=True)
+        source = root / "Qst" / "NPA9981 Poll Final 10.1.26.docx"
+        source.write_bytes(b"qst")
+        context = core.ProjectContext.from_values("NPA9981", root)
+
+        def fake_export(document, pdf):
+            pdf.write_bytes(b"%PDF from " + document.name.encode())
+            return True, f"Saved {pdf.name}."
+
+        with patch.object(core, "export_pdf_with_word", side_effect=fake_export) as export, patch.object(
+            core, "run_word_macro", return_value=(True, "Ran it.")
+        ):
+            first = core.run_project_startup(context, use_word=True)
+            second = core.run_project_startup(context, use_word=True)
+
+        qst_pdf = source.with_suffix(".pdf")
+        table_gen_pdf = root / "Job" / "Table Gen" / qst_pdf.name
+        export.assert_called_once_with(source, qst_pdf)
+        self.assertEqual(first.pdf_status, "created")
+        self.assertEqual(first.pdf_paths, (qst_pdf, table_gen_pdf))
+        self.assertEqual(table_gen_pdf.read_bytes(), qst_pdf.read_bytes())
+        self.assertEqual(second.pdf_status, "exists")
+        self.assertEqual(second.pdf_paths, ())
+
+    def test_project_startup_never_replaces_an_older_pdf(self) -> None:
+        root = self._case_dir() / "NPA9980 Project"
+        (root / "Qst").mkdir(parents=True)
+        source = root / "Qst" / "NPA9980 Poll Final.docx"
+        source.write_bytes(b"qst")
+        pdf = source.with_suffix(".pdf")
+        pdf.write_bytes(b"old pdf")
+        os.utime(pdf, (100, 100))
+        context = core.ProjectContext.from_values("NPA9980", root)
+
+        with patch.object(core, "export_pdf_with_word") as export, patch.object(
+            core, "run_word_macro", return_value=(True, "Ran it.")
+        ):
+            result = core.run_project_startup(context, use_word=True)
+
+        export.assert_not_called()
+        self.assertEqual(result.pdf_status, "stale")
+        self.assertEqual(pdf.read_bytes(), b"old pdf")
+        self.assertFalse((root / "Job" / "Table Gen" / pdf.name).exists())
 
     def test_project_startup_reuses_open_ends_instead_of_adding_oes(self) -> None:
         root = self._case_dir() / "NPA9985 Project"

@@ -100,6 +100,14 @@ recently modified match, and copies it into `Job\Table Gen`. It updates an older
 copy, leaves an identical copy alone, and does not overwrite a newer differing
 Table Gen copy.
 
+When run from the launcher, Project Startup also saves that questionnaire as
+PDF with Word's own PDF export (the same as Word's Save as PDF, which made most
+existing questionnaire PDFs; Acrobat is not needed). The PDF goes beside the
+Final DOCX in `Qst` with the same name, because the launcher's WinCross pairs a
+DOCX with the same-named PDF in `Qst`. It is also copied beside the Table Gen
+DOCX when that copy is the same questionnaire. An existing PDF is never
+replaced; one older than its DOCX is reported in the log so it can be re-saved.
+
 Using that Final questionnaire's name with `Final` and any date after it
 removed (`NPA3887 Stelson PA-10 Track Week 2 Final 10.19.26` becomes
 `NPA3887 Stelson PA-10 Track Week 2`), Project Startup also adds five Word
@@ -118,16 +126,35 @@ startup does not call `EmptyResults_Safe_v2` itself: that one ends with a
 
 ```vb
 Public Sub EmptyResults_Safe_v2_Silent()
+    Dim prevScreen As Boolean
+    prevScreen = Application.ScreenUpdating
+    Application.ScreenUpdating = False
+    On Error GoTo Fail
+
     ReplaceParagraphCodeTokens ActiveDocument
     ReplaceNumericOnlyTableCells ActiveDocument
+
+    Application.ScreenUpdating = prevScreen
+    Exit Sub
+
+Fail:
+    Application.ScreenUpdating = prevScreen
+    Err.Raise Err.Number, "EmptyResults_Safe_v2_Silent", Err.Description
 End Sub
 ```
+
+`ReplaceParagraphCodeTokens` should skip the project header line (the one that
+starts with the survey ID, such as `NPA3887<tab>October 20-22, 2026<tab>PA-10`),
+or its date and district are emptied too. Add
+`If IsProjectHeaderLine(Left$(bodyText, tabPos - 1)) Then GoTo NextParagraph`
+after the first-tab check, with a small `IsProjectHeaderLine` function that
+tests the text before the tab against `^\s*NPA\d+`.
 
 If the macro is missing or Word fails, the Results copy is left as the
 questionnaire and the launcher log says why. Startup never quits a Word you
 already have open, and an existing Results document is not touched.
-`run_project_startup(..., empty_results_with_word=False)`, the default for
-scripts and tests, skips Word entirely.
+`run_project_startup(..., use_word=False)`, the default for scripts and tests,
+skips Word entirely (no PDF and no Results emptying).
 
 The launcher searches `<project root>\Qst` for questionnaire DOCX/PDF pairs
 and preloads WinCross to write RAW, JSON, TABLES, BANNERS, and COVER outputs to

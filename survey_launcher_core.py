@@ -361,6 +361,9 @@ class ProjectStartupResult:
     existing_documents: tuple[Path, ...] = ()
     results_macro_status: str = "not_run"  # emptied | not_run | failed
     results_macro_detail: str = ""
+    pdf_status: str = "not_run"  # created | exists | stale | failed | not_run
+    pdf_detail: str = ""
+    pdf_paths: tuple[Path, ...] = ()  # questionnaire PDFs written or copied by this run
 
 
 # Word documents Project Startup adds to the project root, named
@@ -374,15 +377,18 @@ RESULTS_DOCUMENT_SUFFIX = "Results"
 RESULTS_EMPTY_MACRO = "EmptyResults_Safe_v2_Silent"
 WORD_MACRO_TIMEOUT_SECONDS = 300
 
-# Opens one document in a separate hidden Word, runs a macro, saves and closes.
+# Opens one document in a separate hidden Word and either runs a macro (then
+# saves) or exports it to PDF (opened read-only, so the DOCX is never changed).
 # If COM hands back a Word the user already has open, only this document is
 # closed and Word is left running. Close and Quit take [ref] arguments because
 # PowerShell otherwise binds them to Word's Close/Quit events and Word stays
 # running in the background.
-_WORD_MACRO_SCRIPT = r"""
+_WORD_SCRIPT = r"""
 $ErrorActionPreference = 'Stop'
 $path = $env:SURVEYPLATFORM_DOC
+$action = $env:SURVEYPLATFORM_ACTION
 $macro = $env:SURVEYPLATFORM_MACRO
+$pdf = $env:SURVEYPLATFORM_PDF
 $code = 0
 $word = New-Object -ComObject Word.Application
 $ownsWord = ($word.Documents.Count -eq 0)
@@ -390,19 +396,25 @@ $doc = $null
 try {
     if ($ownsWord) { $word.Visible = $false }
     $word.DisplayAlerts = 0
-    $doc = $word.Documents.Open($path, $false, $false, $false)
-    $doc.Activate()
-    $ran = $true
-    try {
-        [void]$word.Run($macro)
-    } catch {
-        Write-Output "MACRO_ERROR: $($_.Exception.Message)"
-        $ran = $false
-        $code = 3
-    }
-    if ($ran) {
-        $doc.Save()
+    if ($action -eq 'pdf') {
+        $doc = $word.Documents.Open($path, $false, $true, $false)
+        $doc.ExportAsFixedFormat($pdf, 17)
         Write-Output 'OK'
+    } else {
+        $doc = $word.Documents.Open($path, $false, $false, $false)
+        $doc.Activate()
+        $ran = $true
+        try {
+            [void]$word.Run($macro)
+        } catch {
+            Write-Output "MACRO_ERROR: $($_.Exception.Message)"
+            $ran = $false
+            $code = 3
+        }
+        if ($ran) {
+            $doc.Save()
+            Write-Output 'OK'
+        }
     }
 } catch {
     Write-Output "WORD_ERROR: $($_.Exception.Message)"
@@ -419,12 +431,12 @@ exit $code
 """
 
 
-def run_word_macro(document: Path, macro: str, timeout: int = WORD_MACRO_TIMEOUT_SECONDS) -> tuple[bool, str]:
-    """Run a Word macro (e.g. from Normal.dotm) on document and save it. Returns (ok, detail)."""
-    env = dict(os.environ, SURVEYPLATFORM_DOC=str(document), SURVEYPLATFORM_MACRO=macro)
+def _run_word(env_extra: dict[str, str], what: str, timeout: int) -> tuple[bool, str, str]:
+    """Run _WORD_SCRIPT; returns (ok, output, error detail)."""
+    env = dict(os.environ, **env_extra)
     try:
         proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", _WORD_MACRO_SCRIPT],
+            ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", _WORD_SCRIPT],
             env=env,
             capture_output=True,
             text=True,
@@ -432,24 +444,48 @@ def run_word_macro(document: Path, macro: str, timeout: int = WORD_MACRO_TIMEOUT
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except FileNotFoundError:
-        return False, "PowerShell is not available, so Word could not be run."
+        return False, "", "PowerShell is not available, so Word could not be run."
     except subprocess.TimeoutExpired:
-        return False, (
-            f"Word did not finish {macro} within {timeout} seconds (a Word dialog may be open). "
+        return False, "", (
+            f"Word did not finish {what} within {timeout} seconds (a Word dialog may be open). "
             "Check Task Manager for a leftover WINWORD.EXE."
         )
     output = (proc.stdout + proc.stderr).strip()
-    leftover = " Word may still be running in the background." if "QUIT_ERROR" in output else ""
     if proc.returncode == 0 and "OK" in proc.stdout:
-        return True, f"Ran {macro}.{leftover}"
-    if "MACRO_ERROR" in output:
-        detail = output.split("MACRO_ERROR:", 1)[1].strip().splitlines()[0]
-        return False, f"Word could not run {macro} (is it in Normal.dotm?): {detail}"
+        leftover = " Word may still be running in the background." if "QUIT_ERROR" in output else ""
+        return True, output, leftover
     if "WORD_ERROR" in output:
         detail = output.split("WORD_ERROR:", 1)[1].strip().splitlines()[0]
-        return False, f"Word could not open or save the document: {detail}"
+        return False, output, f"Word could not open or save the document: {detail}"
     last_line = output.splitlines()[-1] if output else f"exit code {proc.returncode}"
-    return False, f"Word automation failed: {last_line}"
+    return False, output, f"Word automation failed: {last_line}"
+
+
+def export_pdf_with_word(document: Path, pdf: Path, timeout: int = WORD_MACRO_TIMEOUT_SECONDS) -> tuple[bool, str]:
+    """Save document as pdf with Word's own PDF export (Word's Save as PDF). Returns (ok, detail)."""
+    ok, _output, detail = _run_word(
+        {"SURVEYPLATFORM_DOC": str(document), "SURVEYPLATFORM_ACTION": "pdf", "SURVEYPLATFORM_PDF": str(pdf)},
+        "the PDF export",
+        timeout,
+    )
+    if ok and not pdf.exists():
+        return False, "Word reported success but no PDF was written."
+    return (True, f"Saved {pdf.name}.{detail}") if ok else (False, detail)
+
+
+def run_word_macro(document: Path, macro: str, timeout: int = WORD_MACRO_TIMEOUT_SECONDS) -> tuple[bool, str]:
+    """Run a Word macro (e.g. from Normal.dotm) on document and save it. Returns (ok, detail)."""
+    ok, output, detail = _run_word(
+        {"SURVEYPLATFORM_DOC": str(document), "SURVEYPLATFORM_ACTION": "macro", "SURVEYPLATFORM_MACRO": macro},
+        macro,
+        timeout,
+    )
+    if ok:
+        return True, f"Ran {macro}.{detail}"
+    if "MACRO_ERROR" in output:
+        macro_detail = output.split("MACRO_ERROR:", 1)[1].strip().splitlines()[0]
+        return False, f"Word could not run {macro} (is it in Normal.dotm?): {macro_detail}"
+    return False, detail
 
 
 # "... Final", optionally followed by a date: "Final 10.19.26", "FINAL 9.30.26",
@@ -562,12 +598,42 @@ def inspect_project_startup(context: ProjectContext) -> ProjectStartupCheck:
     return ProjectStartupCheck(tuple(missing), source, destination, status)
 
 
-def run_project_startup(context: ProjectContext, empty_results_with_word: bool = False) -> ProjectStartupResult:
+def _questionnaire_pdf(
+    source: Path, table_gen_copy: Path | None, use_word: bool
+) -> tuple[str, str, list[Path]]:
+    """Make "<Final>.pdf" beside the Final DOCX in Qst (where the launcher's
+    Table Gen looks for DOCX/PDF pairs) and copy it beside the Table Gen DOCX.
+    An existing PDF is never replaced; one older than the DOCX is reported."""
+    pdf = source.with_suffix(".pdf")
+    written: list[Path] = []
+    if pdf.exists():
+        if pdf.stat().st_mtime_ns < source.stat().st_mtime_ns:
+            status, detail = "stale", f"{pdf.name} is older than the DOCX; left as is. Re-save it from Word if the DOCX changed."
+        else:
+            status, detail = "exists", f"{pdf.name} already exists."
+    elif use_word:
+        ok, detail = export_pdf_with_word(source, pdf)
+        status = "created" if ok else "failed"
+        if ok:
+            written.append(pdf)
+    else:
+        return "not_run", "PDF not made (Word step not requested).", written
+    if status in ("created", "exists") and table_gen_copy is not None:
+        copy = table_gen_copy.with_suffix(".pdf")
+        if not copy.exists():
+            shutil.copy2(pdf, copy)
+            written.append(copy)
+            detail += f" Copied to {copy.parent.name}."
+    return status, detail, written
+
+
+def run_project_startup(context: ProjectContext, use_word: bool = False) -> ProjectStartupResult:
     """Create the standard layout, copy the Final DOCX, and add the working documents.
 
-    With empty_results_with_word, a newly created Results copy is emptied by
-    running RESULTS_EMPTY_MACRO in Word. The launcher turns this on; tests and
-    scripted runs leave it off so they never start Word.
+    With use_word, Word also saves the Final questionnaire as PDF (Qst and
+    Table Gen) and empties a newly created Results copy with RESULTS_EMPTY_MACRO.
+    The launcher turns this on; tests and scripted runs leave it off so they
+    never start Word.
     """
     created: list[Path] = []
     existing: list[Path] = []
@@ -606,10 +672,14 @@ def run_project_startup(context: ProjectContext, empty_results_with_word: bool =
     created_docs: list[Path] = []
     existing_docs: list[Path] = []
     macro_status, macro_detail = "not_run", ""
+    pdf_status, pdf_detail, pdf_paths = "not_run", "", []
     if source is not None:
+        # The Table Gen DOCX only gets the PDF when it is the same questionnaire.
+        table_gen_copy = destination if action in ("copied", "updated", "already_current") else None
+        pdf_status, pdf_detail, pdf_paths = _questionnaire_pdf(source, table_gen_copy, use_word)
         created_docs, existing_docs = _create_startup_documents(startup_document_paths(context, source), source)
         new_results = [p for p in created_docs if p.stem.endswith(f" {RESULTS_DOCUMENT_SUFFIX}")]
-        if new_results and empty_results_with_word:
+        if new_results and use_word:
             ok, macro_detail = run_word_macro(new_results[0], RESULTS_EMPTY_MACRO)
             macro_status = "emptied" if ok else "failed"
         elif new_results:
@@ -628,6 +698,9 @@ def run_project_startup(context: ProjectContext, empty_results_with_word: bool =
         existing_documents=tuple(existing_docs),
         results_macro_status=macro_status,
         results_macro_detail=macro_detail,
+        pdf_status=pdf_status,
+        pdf_detail=pdf_detail,
+        pdf_paths=tuple(pdf_paths),
     )
 
 

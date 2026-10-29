@@ -403,10 +403,10 @@ class SurveyLauncherApp:
         self.log(f"Opened {tool.label} in {work_dir}")
 
     def run_project_startup(self, context: ProjectContext, tool: ToolSpec) -> None:
-        self.status_var.set("Running Project Startup (a new Results document is emptied in Word)...")
+        self.status_var.set("Running Project Startup (Word saves the questionnaire PDF and empties Results)...")
         self.root.update_idletasks()
         try:
-            result = run_project_startup(context, empty_results_with_word=True)
+            result = run_project_startup(context, use_word=True)
             record_tool_launch(context, tool, context.project_root)
         except Exception as exc:
             messagebox.showerror("Project Startup", f"Project startup failed:\n{exc}")
@@ -429,6 +429,18 @@ class SurveyLauncherApp:
             self.log(f"{docx_message}: {result.destination_docx}")
         else:
             self.log(docx_message)
+        for path in result.pdf_paths:
+            self.log(f"Saved questionnaire PDF: {path}")
+        if result.pdf_detail:
+            self.log(f"Questionnaire PDF: {result.pdf_detail}")
+        pdf_messages = {
+            "created": "Saved questionnaire PDF",
+            "exists": "Questionnaire PDF already existed",
+            "stale": "Questionnaire PDF is older than the DOCX (not replaced)",
+            "failed": f"Questionnaire PDF NOT saved: {result.pdf_detail}",
+        }
+        if result.pdf_status in pdf_messages:
+            docx_message += f"\n{pdf_messages[result.pdf_status]}"
         for path in result.created_documents:
             self.log(f"Created document: {path}")
         for path in result.existing_documents:
