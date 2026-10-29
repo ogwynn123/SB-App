@@ -70,6 +70,18 @@ follows its base question: if `q7 <- q6`, then `q7wa <- q6wa` and
 `q7wb <- q6wb` (method `auto_w_follow`). A manual mapping for a w column is
 kept; with its base unmapped, the w column is left unmapped.
 
+Unmapped columns from the earlier wave's file are carried forward. Only
+question variables (`qN`, `qNwa`/`qNwb`, `qNoth1`, `cN_#`) and `timeseries`
+get its survey prefix (`3880_q21wa`); sample and file fields such as `qsplit`,
+`sfilenum`, `SB` or the weights keep their own names, unless that name is
+already used by the current wave, in which case they are prefixed too. Columns
+already carrying a prefix (`3880_WEIGHT`, `3801_num_ab`) are left as they are.
+
+A trend merge whose output is in `Data\Merge` (`Data\Merge\NPA####ts.csv`) is
+also copied to the project's main `Data` folder under the same name. A
+different `Data\NPA####ts.csv` already there is first backed up to
+`Data\Merge\Backups\<date_time>\Data_NPA####ts.csv`.
+
 If JSON files are not set, Auto Fill still works in non-semantic mode.
 
 ## 4. Output Behavior

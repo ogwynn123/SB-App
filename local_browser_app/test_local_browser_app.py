@@ -57,8 +57,9 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(Path(result["output_path"]), output)
         with output.open("r", encoding="utf-8-sig", newline="") as handle:
             rows = list(csv.DictReader(handle))
-        self.assertIn("secondary_extra_note", rows[0])
-        self.assertEqual(rows[0]["secondary_extra_note"], "keep me")
+        # A non-question extra keeps its own name (only question variables are prefixed).
+        self.assertIn("extra_note", rows[0])
+        self.assertEqual(rows[0]["extra_note"], "keep me")
 
     def test_quota_review_preserves_sheet_order_and_maps_dynamic_variables(self) -> None:
         quota = self.temp_root / "quotas.xlsx"

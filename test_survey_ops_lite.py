@@ -452,6 +452,9 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertEqual(list(merged.columns), previous_columns)  # names and order kept
         self.assertEqual(len(merged), 2 + 3)  # earlier wave + all of today's rows
         self.assertTrue((result.backup_dir / "NPA9915ts.csv").exists())
+        # The main Data folder gets the realigned trend file, not the pre-alignment one.
+        self.assertEqual((data / "NPA9915ts.csv").read_bytes(), trend.read_bytes())
+        self.assertTrue(any(line.startswith("Copied to Data: ") for line in result.log_lines))
         self.assertEqual((data / "Merge" / "NPA9915.csv").read_text(encoding="utf-8"), new_day.read_text(encoding="utf-8"))
         self.assertTrue(any("LEGACY_RENAMED" in line for line in result.log_lines))
 

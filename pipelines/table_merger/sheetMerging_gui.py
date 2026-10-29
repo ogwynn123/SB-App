@@ -2356,6 +2356,8 @@ class SheetMergeGUI:
                     conflict_rows = line.split(":", 1)[1].strip()
                 elif line.startswith(("Carry-over review: ", "Carry-over report: ")):
                     carryover_lines.append(line)
+                elif line.startswith("Copied to Data: "):
+                    carryover_lines.insert(0, line)
             messagebox.showinfo(
                 "Merge complete",
                 f"Output: {output_path or '(see log)'}\n"

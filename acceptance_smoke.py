@@ -320,8 +320,13 @@ def _table_merge(context: launcher.ProjectContext) -> StepOutcome:
     )
     result = run_merge(options)
     merged = pd.read_csv(result.output_path, dtype=str)
-    expected_prefixed = {"9998_q2", "9998_q3", "9998_legacy_note"}
-    _require(expected_prefixed.issubset(set(merged.columns)), "Unmapped secondary columns were not prefixed and preserved.")
+    expected_prefixed = {"9998_q2", "9998_q3"}
+    _require(expected_prefixed.issubset(set(merged.columns)), "Unmapped secondary questions were not prefixed and preserved.")
+    # Only question variables get the survey prefix; other fields keep their names.
+    _require(
+        "legacy_note" in merged.columns and "9998_legacy_note" not in merged.columns,
+        "Unmapped non-question column was prefixed or lost.",
+    )
     by_key = merged.set_index("survnum")
     _require(pd.isna(by_key.loc["1001", "q2"]), "Blocked q2 received secondary data.")
     _require(by_key.loc["1001", "9998_q2"] == "Prior Q2 A", "Prefixed q2 lost secondary data.")
@@ -330,7 +335,7 @@ def _table_merge(context: launcher.ProjectContext) -> StepOutcome:
     _require(by_key.loc["1004", "timeseries"] == "3", "Current records did not receive the next timeseries.")
     _require(list(merged["timeseries"]) == ["1", "2", "3", "3"], "Timeseries rows are not ordered oldest to newest.")
     return StepOutcome(
-        "Merged secondary-first while preserving blocked and unmapped secondary fields under the 9998 prefix.",
+        "Merged secondary-first while preserving blocked and unmapped secondary questions under the 9998 prefix.",
         (result.output_path,),
     )
 

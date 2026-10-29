@@ -310,7 +310,8 @@ class SheetMergeCoreTests(unittest.TestCase):
         self.assertNotIn("3808_q3", merged.columns)
         self.assertNotIn("3808_q4", merged.columns)
         self.assertNotIn("3808_q5", merged.columns)
-        self.assertEqual(secondary_row["3808_historical_note"], "preserve me")
+        # Non-question columns keep their own names when carried forward.
+        self.assertEqual(secondary_row["historical_note"], "preserve me")
 
     def test_auto_mapping_prefers_exact_and_canonical_before_fuzzy(self) -> None:
         mapping, methods, _scores = build_mapping(
@@ -919,15 +920,16 @@ class SheetMergeCoreTests(unittest.TestCase):
         self.assertIn("timeseries", merged.columns)
         self.assertIn("3777_q2", merged.columns)
         self.assertIn("3777_legacy", merged.columns)
-        self.assertIn("3777_legacy_flag", merged.columns)
-        self.assertNotIn("legacy_flag", merged.columns)
+        # Only question columns get the survey prefix; legacy_flag keeps its name.
+        self.assertIn("legacy_flag", merged.columns)
+        self.assertNotIn("3777_legacy_flag", merged.columns)
         self.assertEqual(merged.iloc[0]["timeseries"], "1")
         self.assertEqual(merged.iloc[1]["timeseries"], "2")
         self.assertEqual(merged.iloc[2]["timeseries"], "3")
         self.assertEqual(merged.iloc[3]["timeseries"], "3")
         self.assertEqual(merged.iloc[0]["3777_q2"], "X")
         self.assertEqual(merged.iloc[1]["3777_legacy"], "L2")
-        self.assertEqual(merged.iloc[0]["3777_legacy_flag"], "A")
+        self.assertEqual(merged.iloc[0]["legacy_flag"], "A")
 
     def test_sb_secondary_file_is_treated_like_regular_non_ts_data(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1122,8 +1124,8 @@ class SheetMergeCoreTests(unittest.TestCase):
             idx_3696_q22aw = cols.index("3696_q22aw")
             idx_3710_q9 = cols.index("3710_q9")
             idx_3634_q12a = cols.index("3634_q12a")
-            idx_legacy = cols.index("3999_legacy_flag")
-            idx_misc = cols.index("3999_misc_note")
+            idx_legacy = cols.index("legacy_flag")  # non-question: no survey prefix
+            idx_misc = cols.index("misc_note")
 
             self.assertLess(idx_legacy, idx_3777_c1)
             self.assertLess(idx_misc, idx_3777_c1)
@@ -1213,6 +1215,42 @@ class SheetMergeCoreTests(unittest.TestCase):
         self.assertIn("3787_q5a", cols)
         self.assertNotIn("secondary_q5a", cols)
         self.assertEqual(cols.count("q5a"), 1)
+
+    def test_trend_merge_in_data_merge_is_copied_to_data(self) -> None:
+        from sheet_merge_core import copy_trend_file_to_data
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            merge = Path(temp_dir) / "NPA4000 Week 2" / "Data" / "Merge"
+            merge.mkdir(parents=True)
+            pd.DataFrame({"survnum": ["1"], "q1": ["A"]}).to_csv(merge / "NPA4000.csv", index=False)
+            pd.DataFrame({"survnum": ["2"], "timeseries": ["1"], "q1": ["B"]}).to_csv(
+                merge / "NPA3999ts.csv", index=False
+            )
+            data_copy = merge.parent / "NPA4000ts.csv"
+            data_copy.write_text("edited by hand", encoding="utf-8")
+
+            result = run_merge(
+                MergeOptions(
+                    primary_path=merge / "NPA4000.csv",
+                    secondary_path=merge / "NPA3999ts.csv",
+                    primary_join="survnum",
+                    secondary_join="survnum",
+                    output_path=merge / "NPA4000ts.csv",
+                    report_enabled=False,
+                    archive_secondary=False,
+                )
+            )
+
+            self.assertEqual(result.data_copy_path, data_copy)
+            self.assertEqual(data_copy.read_bytes(), result.output_path.read_bytes())
+            backups = list((merge / "Backups").glob("*/Data_NPA4000ts.csv"))
+            self.assertEqual([p.read_text(encoding="utf-8") for p in backups], ["edited by hand"])
+
+            # Outputs outside Data\Merge are not copied anywhere.
+            elsewhere = Path(temp_dir) / "loose" / "NPA4000ts.csv"
+            elsewhere.parent.mkdir()
+            elsewhere.write_text("x", encoding="utf-8")
+            self.assertIsNone(copy_trend_file_to_data(elsewhere))
 
     def test_wa_wb_columns_follow_their_base_question_not_exact_names(self) -> None:
         from sheet_merge_core import apply_w_dependent_mapping, build_mapping
@@ -1354,7 +1392,7 @@ class SheetMergeCoreTests(unittest.TestCase):
             survey_entry = master["surveys"]["5000"]
             self.assertIn("linked_columns", survey_entry)
             self.assertIn("q1", survey_entry["linked_columns"])
-            self.assertIn("4999_source_bucket", survey_entry["linked_columns"])
+            self.assertIn("source_bucket", survey_entry["linked_columns"])  # non-question: no prefix
             self.assertTrue(survey_entry["linked_columns"]["q1"]["manual_confirmed"])
 
             survey_json = json.loads(result.catalog_survey_path.read_text(encoding="utf-8"))

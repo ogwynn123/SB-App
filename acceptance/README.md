@@ -11,7 +11,7 @@ The fixture exercises these contracts:
 - launcher work folders, source folders, environment variables, and entrypoints agree.
 - WinCross produces a basic table from survey JSON.
 - Table Merger preserves an explicitly unmapped primary question and prefixes the
-  corresponding secondary data.
+  corresponding secondary data; unmapped non-question columns keep their names.
 - Trend Tables add a wave and recalculate NET row positions.
 - Quota Checker separates base sample and oversample records.
 - Auto Results fills a DOCX and writes a clean alignment report.

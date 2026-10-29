@@ -202,12 +202,18 @@ def rerun_last_merge(context: ProjectContext, new_data: Path, timeout: int = 900
         )
 
     column_notes = keep_previous_columns(output, backup / output.name)
+    if column_notes:
+        # The merge already copied its output to Data; refresh that copy with the realigned columns.
+        sys.path.insert(0, str(APP_ROOT / "pipelines" / "table_merger"))
+        from sheet_merge_core import copy_trend_file_to_data
+
+        copy_trend_file_to_data(output)
     new_run_path = latest_merge_run(context)
     new_run = json.loads(new_run_path.read_text(encoding="utf-8")) if new_run_path and new_run_path != run_path else {}
     before, after = _mapping_pairs(run), _mapping_pairs(new_run)
     differences = [f"no longer mapped: {p} <- {s}" for p, s in sorted(before - after)]
     differences += [f"newly mapped: {p} <- {s}" for p, s in sorted(after - before)]
-    keep = [line for line in lines if line.startswith(("Output: ", "Appended rows: ", "Carry-over"))]
+    keep = [line for line in lines if line.startswith(("Output: ", "Copied to Data: ", "Appended rows: ", "Carry-over"))]
     keep += [f"Trend file columns: {note}" for note in column_notes]
     detail = (
         f"Reran the last merge into {output.name} with the same mapping ({len(after)} columns)."

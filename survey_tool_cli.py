@@ -5434,6 +5434,8 @@ def cmd_merge(args: argparse.Namespace, cfg_all: dict, cfg_path: Path) -> int:
     result = merge.run_merge(effective_options)
     print("Merge complete.")
     print(f"Output: {result.output_path}")
+    if getattr(result, "data_copy_path", None):
+        print(f"Copied to Data: {result.data_copy_path}")
     print(f"Appended rows: {result.appended_rows}")
     print(f"Conflicts detected: {result.conflict_rows}")
     print(

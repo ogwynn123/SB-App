@@ -70,7 +70,10 @@ Browse, then Add Files. Files are copied, never moved.
   column renamed by hand keeps its name when it is in the same position and
   the column count is unchanged, new columns go at the end, and missing ones
   are reported. The window and Activity log say whether the mapping stayed
-  the same (or list what changed). With no earlier merge, nothing runs.
+  the same (or list what changed). With no earlier merge, nothing runs. Like
+  any trend merge in `Data\Merge`, the result is also copied to
+  `Data\NPA####ts.csv` (after the column realignment; a different copy
+  already there is backed up first).
 - **Day document**: adding a zip also creates a blank
   `Data\Partial\<questionnaire name> Day N.docx`
   (`NPA3887 Stelson PA-10 Track Week 2 Day 1.docx`). N is one past the highest

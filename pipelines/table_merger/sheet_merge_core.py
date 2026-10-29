@@ -4,6 +4,7 @@ Shared merge engine used by GUI and CLI frontends.
 
 from __future__ import annotations
 
+import filecmp
 import json
 import os
 import re
@@ -98,6 +99,7 @@ class MergeResult:
     catalog_master_path: Path | None = None
     catalog_survey_path: Path | None = None
     catalog_run_path: Path | None = None
+    data_copy_path: Path | None = None  # Data\NPA####ts.csv copy of a Data\Merge trend output
 
 
 @dataclass
@@ -1127,12 +1129,18 @@ def build_timeseries_extra_mapping(
         return (1, 1, idx)
 
     for _idx, secondary_col in sorted(pending, key=_sort_key):
-        desired = normalize_timeseries_extra_column(secondary_col, secondary_code)
-        if (
-            desired.casefold() in used_primary_casefold
-            and is_auto_map_excluded_col(secondary_col)
-        ):
-            # Keep split-assignment/order columns survey-scoped when they collide.
+        # Only question variables (qN, qNwa/qNwb, qNoth1, cN_#) get the survey prefix;
+        # sample/file fields like qsplit, sfilenum or SB keep their own names.
+        is_question = (
+            is_question_col_name(secondary_col)
+            or is_companion_col_name(secondary_col)
+            or is_w_companion_col(secondary_col)
+            # A carried-forward timeseries column would pass for the merge's own TIMESERIES.
+            or secondary_col.strip().casefold() == "timeseries"
+        )
+        desired = normalize_timeseries_extra_column(secondary_col, secondary_code, force_prefix=is_question)
+        if desired.casefold() in used_primary_casefold and not is_question:
+            # A non-question name already used by the current wave stays survey-scoped.
             desired = normalize_timeseries_extra_column(
                 secondary_col,
                 secondary_code,
@@ -1901,6 +1909,8 @@ def run_merge(options: MergeOptions) -> MergeResult:
         secondary_rows_used=len(secondary_used_df),
     )
 
+    data_copy_path = copy_trend_file_to_data(output_path) if context.enabled else None
+
     return MergeResult(
         output_path=output_path,
         report_path=report_path,
@@ -1915,7 +1925,29 @@ def run_merge(options: MergeOptions) -> MergeResult:
         catalog_master_path=catalog_master_path,
         catalog_survey_path=catalog_survey_path,
         catalog_run_path=catalog_run_path,
+        data_copy_path=data_copy_path,
     )
+
+
+def copy_trend_file_to_data(output_path: Path) -> Path | None:
+    """Copy a trend merge's Data\\Merge\\NPA####ts.csv up to the project's Data folder.
+
+    Only outputs inside a folder named Merge whose parent is Data are copied.
+    A different file already there is first backed up to
+    Data\\Merge\\Backups\\<date_time>\\; an identical one is left alone.
+    """
+    merge_dir = output_path.parent
+    if merge_dir.name.casefold() != "merge" or merge_dir.parent.name.casefold() != "data":
+        return None
+    target = merge_dir.parent / output_path.name
+    if target.exists():
+        if filecmp.cmp(output_path, target, shallow=False):
+            return target
+        backup = merge_dir / "Backups" / datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(target, backup / f"Data_{target.name}")
+    shutil.copy2(output_path, target)
+    return target
 
 
 def generate_sample_files(
