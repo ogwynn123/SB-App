@@ -36,7 +36,16 @@ PREFIXED_SURVEY_COL_RE = re.compile(r"^(?P<code>\d{4,})[_-].+$", re.IGNORECASE)
 NPA_SURVEYS_DIRNAME = "npa_surveys"
 MASTER_CATALOG_FILENAME = "timeseries_master.json"
 MERGE_RUNS_DIRNAME = "merge_runs"
-AUTO_MAP_EXCLUDED_BASE_COLS = {"num_ab", "s_ab", "qordera", "qorderb"}
+# Columns never matched by name. Split-assignment (num_ab, s_ab) and question-order
+# (qordera, qorderb) columns are matched by exact name like any other column; only
+# the qNwa/qNwb follow-ups are kept out (see is_w_companion_col).
+AUTO_MAP_EXCLUDED_BASE_COLS: set[str] = set()
+# Ballot follow-up columns (q7wa, q7wb, 3869_q22wa): never matched by name, they
+# follow wherever their base question qN is mapped.
+W_COMPANION_COL_RE = re.compile(
+    r"^(?:(?P<code>\d{4,})[_-])?q(?P<num>\d{1,3})(?P<w>w[a-z])$",
+    re.IGNORECASE,
+)
 
 
 DuplicatePolicy = Literal["continue", "abort"]
@@ -256,7 +265,65 @@ def auto_map_excluded_base_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", name.casefold())
 
 
+def is_w_companion_col(name: str) -> bool:
+    return W_COMPANION_COL_RE.match(name.strip()) is not None
+
+
+def apply_w_dependent_mapping(
+    *,
+    primary_cols: list[str],
+    secondary_cols: list[str],
+    primary_join: str,
+    mapping: dict[str, str],
+    method: dict[str, str],
+    score: dict[str, int | None],
+    blocked_primary_columns: set[str] | None = None,
+    protected_primary_columns: set[str] | None = None,
+) -> None:
+    """Map qNwa/qNwb by following the base qN mapping: q7 <- q6 gives q7wa <- q6wa.
+
+    Any other mapping for a w column is replaced (or removed when its base is
+    unmapped), except for protected (manual) ones.
+    """
+    blocked = {col.casefold() for col in (blocked_primary_columns or set())}
+    protected = {col.casefold() for col in (protected_primary_columns or set())}
+    secondary_by_casefold = {col.casefold(): col for col in secondary_cols}
+    for primary_col in primary_cols:
+        match = W_COMPANION_COL_RE.match(primary_col.strip())
+        if match is None or primary_col == primary_join:
+            continue
+        if primary_col.casefold() in blocked or primary_col.casefold() in protected:
+            continue
+        prefix = f"{match.group('code')}_" if match.group("code") else ""
+        base_primary = next(
+            (col for col in mapping if col.casefold() == f"{prefix}q{int(match.group('num'))}".casefold()),
+            None,
+        )
+        base_secondary = mapping.get(base_primary) if base_primary else None
+        base_identity = parse_question_identity(base_secondary) if base_secondary else None
+        candidate = None
+        if base_identity is not None and not base_identity[2]:
+            base_code, base_num, _suffix = base_identity
+            secondary_prefix = f"{base_code}_" if base_code else ""
+            wanted = f"{secondary_prefix}q{base_num}{match.group('w')}".casefold()
+            candidate = secondary_by_casefold.get(wanted)
+            used = {scol for pcol, scol in mapping.items() if pcol != primary_col}
+            if candidate in used:
+                candidate = None
+        if candidate is None:
+            if method.get(primary_col) not in (None, "manual"):
+                mapping.pop(primary_col, None)
+                method.pop(primary_col, None)
+                score.pop(primary_col, None)
+            continue
+        mapping[primary_col] = candidate
+        method[primary_col] = "auto_w_follow"
+        score[primary_col] = 100
+
+
 def is_auto_map_excluded_col(name: str) -> bool:
+    if is_w_companion_col(name):
+        return True
     norm = auto_map_excluded_base_name(name)
     for base in AUTO_MAP_EXCLUDED_BASE_COLS:
         if norm == auto_map_excluded_base_name(base):
@@ -772,6 +839,16 @@ def build_mapping(
             score=forced_score,
             blocked_primary_columns=blocked_primary_columns,
         )
+        apply_w_dependent_mapping(
+            primary_cols=primary_cols,
+            secondary_cols=secondary_cols,
+            primary_join=primary_join,
+            mapping=forced,
+            method=forced_method,
+            score=forced_score,
+            blocked_primary_columns=blocked_primary_columns,
+            protected_primary_columns={primary_col for primary_col, _ in manual_items},
+        )
         return forced, forced_method, forced_score
 
     apply_ab_dependent_mapping(
@@ -793,6 +870,16 @@ def build_mapping(
         method=method,
         score=score,
         blocked_primary_columns=blocked_primary_columns,
+    )
+    apply_w_dependent_mapping(
+        primary_cols=primary_cols,
+        secondary_cols=secondary_cols,
+        primary_join=primary_join,
+        mapping=mapping,
+        method=method,
+        score=score,
+        blocked_primary_columns=blocked_primary_columns,
+        protected_primary_columns={primary_col for primary_col, _ in manual_items},
     )
     return mapping, method, score
 

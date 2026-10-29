@@ -64,6 +64,12 @@ back, like NPA3887's motivation question, maps to the older wave's column
 instead of whatever the last wave numbered the same. Surveys from before the
 platform have no JSON and still need manual mapping.
 
+Ballot follow-up columns (`qNwa`, `qNwb`, also prefixed ones like
+`3869_q22wa`) are never matched by name. After the questions are mapped, each
+follows its base question: if `q7 <- q6`, then `q7wa <- q6wa` and
+`q7wb <- q6wb` (method `auto_w_follow`). A manual mapping for a w column is
+kept; with its base unmapped, the w column is left unmapped.
+
 If JSON files are not set, Auto Fill still works in non-semantic mode.
 
 ## 4. Output Behavior

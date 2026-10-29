@@ -26,6 +26,7 @@ from sheet_merge_core import (
     merge_folder_defaults,
     apply_ab_dependent_mapping,
     apply_oth1_dependent_mapping,
+    apply_w_dependent_mapping,
     analyze_merge,
     build_mapping,
     expand_path,
@@ -898,7 +899,7 @@ class SheetMergeGUI:
             if not pcol or not scol:
                 continue
             methods[pcol] = method
-            if method != "auto_ab_follow":
+            if method not in ("auto_ab_follow", "auto_w_follow"):
                 protected_primary.add(pcol)
         scores: dict[str, int | None] = {pcol: None for pcol in mapping}
         apply_ab_dependent_mapping(
@@ -912,11 +913,23 @@ class SheetMergeGUI:
             replace_existing=True,
             protected_primary_columns=protected_primary,
         )
+        # qNwa/qNwb follow their base whatever matched them before; only manual rows stay put.
+        apply_w_dependent_mapping(
+            primary_cols=self.primary_cols,
+            secondary_cols=self.secondary_cols,
+            primary_join=self.primary_join_var.get(),
+            mapping=mapping,
+            method=methods,
+            score=scores,
+            blocked_primary_columns=self._blocked_primary_columns(),
+            protected_primary_columns={p for p, m in methods.items() if m == "manual"},
+        )
+        follow_methods = ("auto_ab_follow", "auto_w_follow")
         updates = {
             pcol: scol
             for pcol, scol in mapping.items()
             if existing_mapping.get(pcol) != scol
-            and methods.get(pcol) == "auto_ab_follow"
+            and methods.get(pcol) in follow_methods
         }
         if not updates:
             return 0
@@ -924,12 +937,13 @@ class SheetMergeGUI:
         for row_id in self.mapping_tree.get_children(""):
             pcol, scol, current_method = self.mapping_tree.item(row_id, "values")
             pcol = str(pcol)
-            if pcol in updates and (
-                not str(scol).strip() or str(current_method) == "auto_ab_follow"
-            ):
+            replaceable = str(current_method) in follow_methods or (
+                methods.get(pcol) == "auto_w_follow" and str(current_method) != "manual"
+            )
+            if pcol in updates and (not str(scol).strip() or replaceable):
                 self.mapping_tree.item(
                     row_id,
-                    values=(pcol, updates[pcol], "auto_ab_follow"),
+                    values=(pcol, updates[pcol], methods[pcol]),
                 )
         return len(updates)
 
@@ -1227,6 +1241,18 @@ class SheetMergeGUI:
             blocked_primary_columns=blocked_primary,
         )
         self._mark_autofill_step("oth1 dependent mapping applied")
+
+        # qNwa/qNwb follow their base question, not exact names (q7 <- q6 gives q7wa <- q6wa).
+        apply_w_dependent_mapping(
+            primary_cols=self.primary_cols,
+            secondary_cols=self.secondary_cols,
+            primary_join=self.primary_join_var.get(),
+            mapping=mapping,
+            method=methods,
+            score=scores,
+            blocked_primary_columns=blocked_primary,
+            protected_primary_columns=set(manual_mapping),
+        )
 
         if self.mapping_tree is None:
             return

@@ -5298,6 +5298,17 @@ def cmd_merge(args: argparse.Namespace, cfg_all: dict, cfg_path: Path) -> int:
             score=_tmp_score,
             blocked_primary_columns=options.blocked_primary_columns,
         )
+        # And qNwa/qNwb follow it too (q7 <- q6 gives q7wa <- q6wa); --map entries win.
+        merge.apply_w_dependent_mapping(
+            primary_cols=primary_cols,
+            secondary_cols=secondary_cols,
+            primary_join=primary_join,
+            mapping=filtered,
+            method=_tmp_method,
+            score=_tmp_score,
+            blocked_primary_columns=options.blocked_primary_columns,
+            protected_primary_columns=set(options.manual_mapping),
+        )
 
         # Re-run merge in manual_only mode using semantic-vetted mapping.
         manual_without_join = {

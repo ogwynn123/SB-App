@@ -508,7 +508,7 @@ class SheetMergeCoreTests(unittest.TestCase):
         self.assertEqual(methods.get("q14a"), "manual")
         self.assertEqual(mapping.get("q14b"), "q7b")
 
-    def test_auto_mapping_excludes_split_assignment_columns(self) -> None:
+    def test_auto_mapping_matches_split_and_order_columns_by_name(self) -> None:
         mapping, _methods, _scores = build_mapping(
             primary_cols=["id", "num_ab", "s_ab", "qordera", "qorderb", "q1"],
             secondary_cols=["sid", "num_ab", "s_ab", "qordera", "qorderb", "q1"],
@@ -520,12 +520,10 @@ class SheetMergeCoreTests(unittest.TestCase):
             manual_mapping={},
         )
         self.assertEqual(mapping.get("q1"), "q1")
-        self.assertNotIn("num_ab", mapping)
-        self.assertNotIn("s_ab", mapping)
-        self.assertNotIn("qordera", mapping)
-        self.assertNotIn("qorderb", mapping)
+        for column in ("num_ab", "s_ab", "qordera", "qorderb"):
+            self.assertEqual((mapping.get(column), _methods.get(column)), (column, "auto_exact"), column)
 
-    def test_excluded_columns_append_as_prefixed_secondary_on_collision(self) -> None:
+    def test_split_and_order_columns_merge_onto_same_named_columns(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             out_dir = Path(temp_dir)
             primary_path = out_dir / "NPA3787.csv"
@@ -568,14 +566,13 @@ class SheetMergeCoreTests(unittest.TestCase):
             merged = pd.read_csv(result.output_path, dtype=str)
             cols = list(merged.columns)
 
-            self.assertIn("num_ab", cols)
-            self.assertIn("s_ab", cols)
-            self.assertIn("qordera", cols)
-            self.assertIn("qorderb", cols)
-            self.assertIn("3731_num_ab", cols)
-            self.assertIn("3731_s_ab", cols)
-            self.assertIn("3731_qordera", cols)
-            self.assertIn("3731_qorderb", cols)
+            # Split and question-order columns map onto the secondary's own columns
+            # instead of being appended under the survey prefix.
+            for column in ("num_ab", "s_ab", "qordera", "qorderb"):
+                self.assertIn(column, cols)
+                self.assertNotIn(f"3731_{column}", cols)
+            self.assertEqual(list(merged["qordera"]), ["M", "N", "U", "V"])
+            self.assertEqual(list(merged["num_ab"]), ["1", "2", "9", "8"])
 
     def test_validate_options_blocks_mismatched_output_extension(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1216,6 +1213,44 @@ class SheetMergeCoreTests(unittest.TestCase):
         self.assertIn("3787_q5a", cols)
         self.assertNotIn("secondary_q5a", cols)
         self.assertEqual(cols.count("q5a"), 1)
+
+    def test_wa_wb_columns_follow_their_base_question_not_exact_names(self) -> None:
+        from sheet_merge_core import apply_w_dependent_mapping, build_mapping
+
+        primary = ["survnum", "q7", "q7wa", "q7wb", "q8", "q8wa", "q8wb"]
+        secondary = ["survnum", "q6", "q6wa", "q6wb", "q7", "q7wa", "q7wb", "3869_q22wa"]
+
+        # Name-only: wa/wb are not matched by name, they follow q7 <- q7 and q8 (unmapped).
+        mapping, method, _score = build_mapping(primary, secondary, "survnum", "survnum", "auto", 85, 5, {})
+        self.assertEqual((mapping["q7wa"], method["q7wa"]), ("q7wa", "auto_w_follow"))
+        self.assertNotIn("q8wa", mapping)
+
+        # The NPA3887 case: q7 <- q6 and q8 <- q7 (reviewed), so the wa/wb pairs shift with them.
+        mapping, method, _score = build_mapping(
+            primary, secondary, "survnum", "survnum", "auto", 85, 5, {"q7": "q6", "q8": "q7"}
+        )
+        self.assertEqual(
+            {col: mapping.get(col) for col in ("q7wa", "q7wb", "q8wa", "q8wb")},
+            {"q7wa": "q6wa", "q7wb": "q6wb", "q8wa": "q7wa", "q8wb": "q7wb"},
+        )
+        self.assertEqual(method["q8wb"], "auto_w_follow")
+
+        # A manual wa mapping wins; a stale automatic one is replaced.
+        mapping = {"survnum": "survnum", "q7": "q6", "q7wa": "q7wa", "q7wb": "q7wb"}
+        method = {"q7wa": "manual", "q7wb": "auto_exact"}
+        apply_w_dependent_mapping(
+            primary_cols=primary, secondary_cols=secondary, primary_join="survnum",
+            mapping=mapping, method=method, score={}, protected_primary_columns={"q7wa"},
+        )
+        self.assertEqual((mapping["q7wa"], mapping["q7wb"]), ("q7wa", "q6wb"))
+
+        # Prefixed bases follow into the same survey's columns.
+        mapping = {"survnum": "survnum", "q22": "3869_q22"}
+        apply_w_dependent_mapping(
+            primary_cols=["survnum", "q22", "q22wa"], secondary_cols=secondary + ["3869_q22"],
+            primary_join="survnum", mapping=mapping, method={}, score={},
+        )
+        self.assertEqual(mapping["q22wa"], "3869_q22wa")
 
     def test_merge_folder_defaults_pick_current_and_earlier_wave_files(self) -> None:
         from sheet_merge_core import merge_folder_defaults
