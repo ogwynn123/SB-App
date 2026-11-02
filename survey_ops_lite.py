@@ -479,7 +479,8 @@ class SurveyLauncherApp:
             "updated": "Updated Final DOCX copy",
             "already_current": "Final DOCX copy is current",
             "destination_conflict": "Kept newer or conflicting Table Gen DOCX",
-            "no_final_docx": "No DOCX ending in Final (or Final plus a date) was found under Qst",
+            "no_final_docx": "No DOCX ending in Final (or Final plus a date) was found under Qst. "
+                             "Put the Final questionnaire in Qst and run Startup again",
         }
         docx_message = action_messages.get(result.docx_action, result.docx_action)
         if result.destination_docx is not None:

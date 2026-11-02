@@ -117,7 +117,7 @@ class SurveyLauncherTests(unittest.TestCase):
         result = core.run_project_startup(context)
 
         self.assertEqual(result.created_directories, ())
-        self.assertEqual(len(result.existing_directories), 8)
+        self.assertEqual(len(result.existing_directories), 9)  # the standard folders, Qst included
         self.assertEqual(result.docx_action, "destination_conflict")
         self.assertEqual(destination.read_bytes(), b"local edit")
         self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
@@ -821,6 +821,20 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertEqual(call.kwargs["env"]["SURVEY_PLATFORM_WORK_DIR"], str(work_dir))
         self.assertEqual(call.kwargs["env"]["SURVEY_PLATFORM_SOURCE_ROOT"], str(project_root))
         self.assertTrue(context.manifest_path.exists())
+
+    def test_startup_creates_a_missing_qst_folder(self) -> None:
+        project_root = self._case_dir() / "NPA9987 Project"
+        (project_root / "Data").mkdir(parents=True)
+        context = core.ProjectContext.from_values("9987", project_root)
+        self.assertIn(project_root / "Qst", core.inspect_project_startup(context).missing_directories)
+
+        result = core.run_project_startup(context)
+
+        self.assertTrue((project_root / "Qst").is_dir())
+        self.assertIn(project_root / "Qst", result.created_directories)
+        self.assertEqual(result.docx_action, "no_final_docx")
+        self.assertEqual(result.check.docx_status, "no_final_docx")
+        self.assertEqual(core.run_project_startup(context).created_directories, ())
 
     def test_test_run_sends_outputs_to_the_og_clean_test_folder(self) -> None:
         case = self._case_dir()

@@ -21,6 +21,7 @@ MANIFEST_RELATIVE_PATH = Path("Job") / ".surveyplatform" / "project.json"
 SETTINGS_PATH = APP_ROOT / "survey_launcher_settings.json"
 RECENT_PROJECT_LIMIT = 15
 STARTUP_DIRECTORIES: tuple[tuple[str, ...], ...] = (
+    ("Qst",),
     ("Job",),
     ("Data",),
     ("Data", "Partial"),
