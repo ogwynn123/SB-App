@@ -7,14 +7,6 @@
 # no rule can work out: one column per line, the names separated by |.
 # When several names on a line exist in the trend file, the one with values in
 # its most recent wave is used. Lines starting with # are notes.
-#
-# A line with = says which way round: "this wave's names = earlier waves' names".
-# It wins even over an exact name match, for a name that changed meaning:
-# earlier waves' sgroup (sex group) goes to this wave's gendergrp, and this
-# wave's own sgroup (a different variable) is left as a new column.
-
-# Renamed variables (this wave = earlier waves)
-gendergrp | gendergroup | sexgroup = sgroup
 
 # TargetSmart scores (short export name | earlier long names)
 pgentntscore | presidglturnoutscore | presidgenturnout

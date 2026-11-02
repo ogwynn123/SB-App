@@ -81,44 +81,20 @@ def close_name(name: str, *, secondary: bool) -> str:
     return text
 
 
-def _alias_lines(path: Path | str | None):
-    file = Path(path) if path else ALIAS_FILE
-    if not file.exists():
-        return
-    for line in file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            yield line
-
-
-def _names(text: str) -> set[str]:
-    return {canonical(part) for part in text.split("|") if canonical(part)}
-
-
 def load_aliases(path: Path | str | None = None) -> list[set[str]]:
     """Groups of names (canonical) that are the same column; one group per line, | between names."""
+    file = Path(path) if path else ALIAS_FILE
+    if not file.exists():
+        return []
     groups = []
-    for line in _alias_lines(path):
-        if "=" in line:
+    for line in file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
             continue
-        group = _names(line)
+        group = {canonical(part) for part in line.split("|") if canonical(part)}
         if len(group) > 1:
             groups.append(group)
     return groups
-
-
-def load_directed_aliases(path: Path | str | None = None) -> list[tuple[set[str], set[str]]]:
-    """Lines "this wave's names = earlier waves' names" ("gendergrp = sgroup"): the
-    earlier column goes to this wave's column even when this wave also has a
-    column of the earlier name that means something else."""
-    rules = []
-    for line in _alias_lines(path):
-        if "=" not in line:
-            continue
-        left, right = line.split("=", 1)
-        if _names(left) and _names(right):
-            rules.append((_names(left), _names(right)))
-    return rules
 
 
 # --- Values ---------------------------------------------------------------------
