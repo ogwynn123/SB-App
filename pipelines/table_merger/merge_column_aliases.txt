@@ -10,23 +10,24 @@
 
 # TargetSmart scores (short export name | earlier long names)
 pgentntscore | presidglturnoutscore | presidgenturnout
-mgentntscore | midtermgeneralscore | midtermturnoutscore
-oygenturnout | offyeargeneralscore | offyearturnoutscore
-pptntscore | presidprimaryscore | presidprimrytoutsc | primaryturnoutscore
-nonpptntscr | nonpresidprimscore | nonpreprimarytoscore | nonprimaryturnout
+mgentntscore | midtermglturnoutscore | midtermgeneralscore | midtermturnoutscore
+oygenturnout | offyrglturnoutscore | offyeargeneralscore | offyearturnoutscore
+pptntscore | presidpyturnoutscore | presidprimaryscore | presidprimrytoutsc | primaryturnoutscore
+nonpptntscr | npresidpytoutscore | nonpresidprimscore | nonpreprimarytoscore | nonprimaryturnout
 ts_colgradscr | collegegraduatescore
 ts_hs_onlyscr | highschoolonlyscore
 tstcktspltscore | martticketsplitscore
 
 # Voter file
-regstatus | voterregistratstatus | voterregistrations | votebaseregistration
+regstatus | registrationstatus | voterregistratstatus | voterregistrations | votebaseregistration
 reg_date | vfregistrationdate | registrationdate
 marital_status | basemaritalstatus | votermaritalstatus | voterbasemarstatus
 full_address | vfregcassaddressfull
+earliestregdate | liestregisdate | vfearliestregdate
 
 # Phone (v2)
 pwirelessv2 | voterphonewirelessv2
-vbpwconfscrv2 | wirelessconfscorev2
-vbpwmatchlvlv2 | wirelessmatchlevelv2
+phonewireconfscorev2 | voterphonewirecorev2 | vbpwconfscrv2 | wirelessconfscorev2
+vbpwmatchlvlv2 | phonewirematchv2 | wirelessmatchlevelv2
 wireless_consv2 | wireconnectscorev2 | wirelesconnectscore2
 cellcphoneccv2 | phonecontactcodev2

@@ -71,7 +71,7 @@ def close_name(name: str, *, secondary: bool) -> str:
                 changed = True
                 break
     text = text.replace("datetime", "time")
-    text = re.sub(r"^(calltimewindow|calltimewind|ctw|window)", "ctw", text)
+    text = re.sub(r"^(calltimewindow|calltimewind|timewindow|ctw|window)", "ctw", text)
     text = _WEEKDAY_RE.sub(lambda m: "ctw" + WEEKDAYS[m.group(1)], text)
     text = re.sub(r"^ctwoveral(?!l)", "ctwoverall", text)
     text = re.sub(r"^(phoneusage|puu)", "pu", text)

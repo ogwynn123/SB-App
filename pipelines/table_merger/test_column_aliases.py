@@ -33,6 +33,8 @@ class CloseNameTests(unittest.TestCase):
             ("ct_w_wen_v2", "calltimewindowwedv2"),
             ("ct_w_thur_v2", "calltimewindowthuv2"),
             ("ct_w_sat_v2", "windowsaturdayv2"),
+            ("timewindowsundayv2", "calltimewindowsunv2"),
+            ("timewindowoverallv2", "calltimewindoveralv2"),
             ("pu_u_2monthsv2", "phoneusage2monthsv2"),
         ):
             self.assertTrue(same(primary, secondary), (primary, secondary))
