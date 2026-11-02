@@ -30,8 +30,10 @@ touching its live folders. While it is on (it is remembered between sessions):
   folders. Apps show an amber "Test run" line and their save dialogs start in
   the test folder;
 - Table Gen's output folder is the test folder;
-- the Table Merger writes the merge and the archived earlier-wave copy there,
-  never overwrites the primary file, and so never copies into `Data`;
+- the Table Merger writes the merge, its report (`compilingReports`) and the
+  archived earlier-wave copy (`surveyInput`) there, never overwrites the
+  primary file, and so never copies into `Data` (outside a test run those two
+  folders are always under `Data\Merge`, as for the automatic rerun);
 - the Open-End Coder keeps its session and coded CSV there, apart from real coding;
 - Auto Results saves the filled document there instead of beside the template;
 - Preliminary QC writes `QC\<timestamp>` there;

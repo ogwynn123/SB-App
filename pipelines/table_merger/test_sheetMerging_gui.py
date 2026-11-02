@@ -9,7 +9,9 @@ import uuid
 from sheetMerging_gui import (
     SheetMergeGUI,
     _dialog_initial_directory,
+    _record_folders,
     _scoped_launch_path,
+    merge_records_folder,
 )
 from sheet_merge_core import MergeOptions
 
@@ -59,6 +61,21 @@ class SheetMergingGuiTests(unittest.TestCase):
         self.assertEqual(_scoped_launch_path(str(current), project), str(current))
         self.assertEqual(_scoped_launch_path(str(outside), project), "")
         self.assertEqual(_dialog_initial_directory("", data), str(data.resolve()))
+
+    def test_reports_and_archived_inputs_go_to_data_merge(self) -> None:
+        project = self._tmpdir()
+        merge = project / "Data" / "Merge"
+        merge.mkdir(parents=True)
+        output = merge / "NPA9999ts.csv"
+        test_folder = project / "Job" / "OG Clean" / "NPA9999pt"
+
+        self.assertEqual(merge_records_folder(project, output, None), merge)
+        self.assertEqual(merge_records_folder(project, output, test_folder), test_folder)
+        elsewhere = self._tmpdir() / "out.csv"
+        self.assertEqual(merge_records_folder(None, elsewhere, None), elsewhere.parent)
+        self.assertEqual(merge_records_folder(self._tmpdir(), elsewhere, None), elsewhere.parent)  # no Data\Merge
+        self.assertEqual(_record_folders(merge), {"report_dir": merge / "compilingReports", "archive_dir": merge / "surveyInput"})
+        self.assertEqual(_record_folders(None), {})
 
     def test_ab_companions_update_after_base_mapping_changes(self) -> None:
         gui = SheetMergeGUI.__new__(SheetMergeGUI)

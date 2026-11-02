@@ -150,6 +150,24 @@ except ImportError:  # running from source: shared helpers live in pipelines/com
 APP = "table_merger"
 
 
+
+def merge_records_folder(project_root: Path | None, output_path: Path | None, test_folder: Path | None) -> Path | None:
+    """Where a merge keeps its report (compilingReports) and the archived copy of
+    the earlier-wave file (surveyInput): the test folder during a test run, else
+    the project's Data\\Merge (as the automatic rerun does), else beside the output."""
+    if test_folder is not None:
+        return test_folder
+    if project_root is not None:
+        data = next((c for c in project_root.iterdir() if c.is_dir() and c.name.casefold() == "data"), None)             if project_root.is_dir() else None
+        merge = next((c for c in data.iterdir() if c.is_dir() and c.name.casefold() == "merge"), None) if data else None
+        if merge is not None:
+            return merge
+    return output_path.parent if output_path is not None else None
+
+
+def _record_folders(base: Path | None) -> dict[str, Path]:
+    return {"report_dir": base / "compilingReports", "archive_dir": base / "surveyInput"} if base is not None else {}
+
 class SheetMergeGUI:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -2072,8 +2090,13 @@ class SheetMergeGUI:
             xlsx_write_mode=self.xlsx_write_mode_var.get(),  # type: ignore[arg-type]
             report_enabled=bool(self.report_enabled_var.get()),
             archive_secondary=bool(self.archive_secondary_var.get()),
-            **({"archive_dir": launch_paths.output_dir() / "surveyInput"}
-               if launch_paths.is_test_run() and launch_paths.output_dir() is not None else {}),
+            **_record_folders(
+                merge_records_folder(
+                    self.launch_project_root,
+                    output_path if self.output_mode_var.get() != "overwrite" else primary_path,
+                    launch_paths.output_dir() if launch_paths.is_test_run() else None,
+                )
+            ),
             manual_mapping=self._table_mapping(),
             blocked_primary_columns=self._run_blocked_primary_columns(),
         )
