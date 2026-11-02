@@ -284,6 +284,34 @@ class SheetMergingGuiTests(unittest.TestCase):
         self.assertEqual(filtered["q16b"], "q23d")
         self.assertTrue(any(primary == "q16a" for primary, _secondary, _score in low_pairs))
 
+    def test_referenced_client_named_json_found_without_year_folders(self) -> None:
+        """HMP jobs: questionnaires named HMP26-TX15-P01 ...JSON.json, jobs directly under TX-15."""
+        platform_root = Path(__file__).resolve().parents[2]
+        if str(platform_root) not in sys.path:
+            sys.path.insert(0, str(platform_root))
+        import survey_tool_cli as semantic
+
+        def write(path: Path, instrument: str) -> Path:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            question = {"type": "question", "qnum": "106", "qid": "106", "text": "How much Spanish TV do you watch?",
+                        "response_options": [{"value": "1", "text": "All Spanish"}, {"value": "2", "text": "All English"}]}
+            path.write_text(json.dumps({"survey_level_metadata": {"instrument_name": instrument},
+                                        "elements": [question]}), encoding="utf-8")
+            return path
+
+        client = Path(self._tmpdir()) / "Archive" / "House Majority PAC" / "TX-15"
+        write(client / "NPA4833 Benchmark" / "Job" / "Table gen" / "HMP26-TX15-P01 FINALJSON.json", "NPA4833 July 2026 HMP TX-15")
+        merge = client / "NPA4879 Track Week 3" / "Job" / "OG Clean" / "NPA4879pt" / "Data" / "Merge"
+        primary_json = write(merge / "HMP26-TX15-P04 FINALJSON.json", "NPA4879 October 2026 HMP TX-15")
+        secondary_json = write(merge / "HMP26-TX15-P03 FINALJSON.json", "NPA4866 September 2026 HMP TX-15")
+
+        self.assertEqual(semantic._survey_code_from_json_path(secondary_json), "4866")  # not the job folder's 4879
+        _by_col, found, missing = semantic.discover_prefixed_secondary_signatures(
+            ["id", "q105", "4833_Q106"], primary_json, secondary_json
+        )
+        self.assertEqual(found["4833"].name, "HMP26-TX15-P01 FINALJSON.json")
+        self.assertEqual(missing, [])
+
     def test_semantic_matching_finds_older_wave_json_in_the_archive(self) -> None:
         """NPA3887 brings back a question the last wave dropped: q3 must match 3869_q3, not q3."""
         platform_root = Path(__file__).resolve().parents[2]

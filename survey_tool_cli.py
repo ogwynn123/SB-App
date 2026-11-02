@@ -4178,7 +4178,26 @@ def _drop_unanchored_open_end_companion_mappings(
     return len(remove_primary_cols)
 
 
+def _questionnaire_code(path: Path) -> str | None:
+    """The survey a Table Gen questionnaire file belongs to: NPA#### in its name,
+    else inside it (the instrument name, e.g. "NPA3833 July 2026 HMP TX-15", for
+    client-named files such as HMP26-TX15-P01 FINAL 7.21.26JSON.json)."""
+    named = SURVEY_CODE_RE.match(path.name)
+    if named:
+        return str(int(named.group("code")))
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        instrument = str(json.loads(text).get("survey_level_metadata", {}).get("instrument_name", ""))
+    except (OSError, ValueError, AttributeError):
+        return None
+    inside = SURVEY_CODE_RE.search(instrument) or SURVEY_CODE_RE.search(text[:20000])
+    return str(int(inside.group("code"))) if inside else None
+
+
 def _survey_code_from_json_path(path: Path) -> str | None:
+    named = _questionnaire_code(path) if path.is_file() else None
+    if named:
+        return named
     candidates = [path.parent.name, path.stem, str(path)]
     for candidate in candidates:
         m = SURVEY_CODE_RE.search(candidate)
@@ -4296,18 +4315,26 @@ def _resolve_archive_survey_json(code: str, near: tuple[Path, ...]) -> Path | No
     client folder is the one above the year folder the merge's files sit in.
     Test copies under OG Clean are skipped; the newest match wins.
     """
-    pattern = f"NPA{code}*JSON.json"
+    def newest(paths: list[Path]) -> Path | None:
+        return max(paths, key=lambda p: p.stat().st_mtime_ns) if paths else None
+
     for path in near:
-        beside = [p for p in path.parent.glob(pattern) if p.is_file()]
+        beside = [p for p in path.parent.glob("*JSON.json") if p.is_file() and _questionnaire_code(p) == code]
         if beside:
-            return max(beside, key=lambda p: p.stat().st_mtime_ns)
+            return newest(beside)
     for path in near:
         year = next((p for p in path.parents if _ARCHIVE_YEAR_RE.match(p.name)), None)
-        if year is None:
-            continue
-        client = year.parent
+        if year is not None:
+            client = year.parent
+        else:
+            # A client without year folders (House Majority PAC\TX-15\NPA3833 Benchmark):
+            # search the folder holding this job.
+            job = next((p for p in path.parents if _ARCHIVE_JOB_RE.match(p.name)), None)
+            if job is None:
+                continue
+            client = job.parent
         found: list[Path] = []
-        for job_glob in (f"*/NPA{code}*", f"*/*/NPA{code}*"):
+        for job_glob in (f"NPA{code}*", f"*/NPA{code}*", f"*/*/NPA{code}*"):
             try:
                 jobs = list(client.glob(job_glob))
             except OSError:
@@ -4318,7 +4345,7 @@ def _resolve_archive_survey_json(code: str, near: tuple[Path, ...]) -> Path | No
                     continue
                 found.extend(p for p in (job / "Job" / "Table Gen").glob("*JSON.json") if p.is_file())
         if found:
-            return max(found, key=lambda p: p.stat().st_mtime_ns)
+            return newest([p for p in found if _questionnaire_code(p) == code]) or newest(found)
     return None
 
 
