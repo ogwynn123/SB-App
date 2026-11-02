@@ -682,7 +682,8 @@ def prior_merge_inputs(prior_job: Path) -> tuple[list[Path], list[str]]:
 
     - Its Table Gen questionnaire JSON (Job\\Table Gen\\*JSON.json, newest if several).
     - Its sample-balanced trend file: NPA####tsSB.csv, else the one other
-      NPA####ts...sb file (e.g. NPA3864tsRRsb.csv), ignoring backups.
+      NPA####ts...sb file (e.g. NPA3864tsRRsb.csv), ignoring backups; for a
+      benchmark (no trend file yet), its NPA####SB.csv.
     """
     files: list[Path] = []
     notes: list[str] = []
@@ -703,6 +704,9 @@ def prior_merge_inputs(prior_job: Path) -> tuple[list[Path], list[str]]:
             p for p in trend if p.stem.casefold().endswith("sb") and "backup" not in p.stem.casefold() and p not in exact
         ]
         chosen = exact or (variants if len(variants) == 1 else [])
+        if not chosen and not variants:
+            # A benchmark has no trend file yet: its sample-balanced NPA####SB file is the earlier wave.
+            chosen = [p for p in data.glob("*.csv") if p.stem.casefold() == f"npa{number.group(1)}sb"]
         if chosen:
             files.append(chosen[0])
         elif variants:

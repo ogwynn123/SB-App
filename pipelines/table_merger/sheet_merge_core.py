@@ -927,10 +927,12 @@ def merge_folder_defaults(merge_dir: Path, survey_id: str) -> dict[str, Path]:
     """Default merge paths from a project's Data\\Merge folder, for the fields found.
 
     primary: <survey ID>.csv (e.g. NPA3887PT.csv for a test copy) or NPA####.csv
-    (or .xlsx) for the current survey; secondary: the
-    earlier wave's trend file (NPA####tsSB.*, else the newest other
-    NPA####ts*.*); output: NPA####ts.csv; primary_survey_json /
-    secondary_survey_json: each survey's NPA####...JSON.json (newest if several).
+    (or .xlsx) for the current survey; secondary: the most recent earlier
+    survey's file (NPA####tsSB, else NPA####ts..., else NPA####SB, else
+    NPA####); output: NPA####ts.csv; primary_survey_json /
+    secondary_survey_json: each survey's questionnaire file (NPA####...JSON.json,
+    or a client-named one such as HMP26-TX15-P04 ...JSON.json identified by the
+    survey ID inside it; newest if several).
     """
     match = re.search(r"(\d+)", survey_id or "")
     if match is None or not merge_dir.is_dir():
@@ -956,33 +958,63 @@ def merge_folder_defaults(merge_dir: Path, survey_id: str) -> dict[str, Path]:
     )
     if primary is not None:
         found["primary"] = primary
-    trend_re = re.compile(r"^npa(\d+)ts", re.IGNORECASE)
+    # The earlier wave: the most recent earlier survey's file, preferring its
+    # sample-balanced trend file (NPA3866tsSB), then any trend file (NPA3866ts),
+    # then a sample-balanced file (a benchmark's NPA3833SB), then a plain one.
+    survey_re = re.compile(r"^npa(\d+)", re.IGNORECASE)
+
+    def preference(path: Path) -> tuple[int, int, int]:
+        stem = path.stem.casefold()
+        number = int(survey_re.match(stem).group(1))
+        trend = bool(re.match(r"^npa\d+ts", stem))
+        balanced = stem.endswith("sb")
+        return number, 2 * trend + balanced, path.stat().st_mtime_ns
+
     earlier = [
         p
         for p in files
         if p.suffix.casefold() in (".csv", ".xlsx")
-        and (m := trend_re.match(p.stem))
-        and m.group(1) != code
-        and "backup" not in p.stem.casefold()
+        and (m := survey_re.match(p.stem))
+        and int(m.group(1)) < int(code)
+        and not any(word in p.stem.casefold() for word in ("backup", "merged", "catalog", "_append"))
     ]
-    secondary = newest([p for p in earlier if p.stem.casefold().endswith("sb")]) or newest(earlier)
+    secondary = max(earlier, key=preference) if earlier else None
     if secondary is not None:
         found["secondary"] = secondary
     found["output"] = merge_dir / f"NPA{code}ts.csv"
 
     def survey_json(survey_code: str) -> Path | None:
-        return newest(
-            [p for p in files if p.name.casefold().startswith(f"npa{survey_code}") and p.name.endswith("JSON.json")]
-        )
+        # By the name (NPA3879 ... JSON.json), or, for a client's own naming
+        # (HMP26-TX15-P04 FINAL 10.12.26JSON.json), by the survey ID inside.
+        return newest([p for p in files if p.name.endswith("JSON.json") and questionnaire_survey_code(p) == survey_code])
 
     primary_json = survey_json(code)
     if primary_json is not None:
         found["primary_survey_json"] = primary_json
-    secondary_code = trend_re.match(secondary.stem).group(1) if secondary is not None else None
+    secondary_code = survey_re.match(secondary.stem).group(1) if secondary is not None else None
     secondary_json = survey_json(secondary_code) if secondary_code else None
     if secondary_json is not None:
         found["secondary_survey_json"] = secondary_json
     return found
+
+
+def questionnaire_survey_code(path: Path) -> str | None:
+    """The survey number a Table Gen questionnaire file belongs to: from its name
+    (NPA3879 ...JSON.json), else from inside it (the instrument name, e.g.
+    "NPA3879 October 13-15, 2026 HMP TX-15", else the first NPA#### in the file)."""
+    named = re.match(r"^npa(\d+)", path.name, re.IGNORECASE)
+    if named:
+        return named.group(1)
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    try:
+        instrument = str(json.loads(text).get("survey_level_metadata", {}).get("instrument_name", ""))
+    except (ValueError, AttributeError):
+        instrument = ""
+    inside = re.search(r"NPA\s*(\d{3,})", instrument, re.IGNORECASE) or re.search(r"NPA(\d{4})", text)
+    return inside.group(1) if inside else None
 
 
 def extract_survey_code(stem: str) -> str | None:

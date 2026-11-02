@@ -589,6 +589,31 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertEqual(files, [])
         self.assertTrue(any("several sample-balanced files" in note for note in notes))
 
+    def test_client_named_questionnaires_and_benchmark_files_are_detected(self) -> None:
+        sys.path.insert(0, str(APP_ROOT / "pipelines" / "table_merger"))
+        from sheet_merge_core import merge_folder_defaults
+
+        benchmark = self._job(self._case_dir() / "NPA9833 Benchmark")
+        (benchmark / "Data").mkdir()
+        (benchmark / "Data" / "NPA9833SB.csv").write_text("x", encoding="utf-8")
+        files, _notes = core.prior_merge_inputs(benchmark)
+        self.assertEqual([p.name for p in files], ["NPA9833SB.csv"])
+
+        merge = self._case_dir() / "Merge"
+        merge.mkdir()
+        for name in ("NPA9879.csv", "NPA9833SB.csv", "NPA9866.csv", "NPA9866tsSB.csv", "NPA9866tsSB backup.csv",
+                     "NPA9866_merged_20260925.csv"):
+            (merge / name).write_text("x", encoding="utf-8")
+        for name, instrument in (("HMP26-TX15-P04 FINAL JSON.json", "NPA9879 October 2026 HMP TX-15"),
+                                 ("HMP26-TX15-P03 FINAL JSON.json", "NPA9866 September 2026 HMP TX-15")):
+            (merge / name.replace(" JSON", "JSON")).write_text(
+                json.dumps({"survey_level_metadata": {"instrument_name": instrument}, "elements": []}), encoding="utf-8")
+        found = {key: path.name for key, path in merge_folder_defaults(merge, "NPA9879").items()}
+        self.assertEqual(found["primary"], "NPA9879.csv")
+        self.assertEqual(found["secondary"], "NPA9866tsSB.csv")  # latest earlier survey, trend + balanced first
+        self.assertEqual(found["primary_survey_json"], "HMP26-TX15-P04 FINALJSON.json")
+        self.assertEqual(found["secondary_survey_json"], "HMP26-TX15-P03 FINALJSON.json")
+
     def test_prior_cover_searches_sibling_year_subfolders(self) -> None:
         year = self._case_dir() / "Archive" / "Client" / "2026"
         self._job(year / "Primary" / "NPA9940", "NPA9940 Client Primary Cover.docx")
