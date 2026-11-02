@@ -425,6 +425,48 @@ class SurveyLauncherTests(unittest.TestCase):
             cwd=str(merge), check=True, capture_output=True,
         )
 
+    def test_this_waves_files_are_staged_in_merge_before_the_first_merge(self) -> None:
+        sys.path.insert(0, str(APP_ROOT / "pipelines" / "table_merger"))
+        import merge_autorun
+        from sheet_merge_core import merge_folder_defaults
+
+        root = self._case_dir() / "NPA9930 Track Week 2"
+        merge = root / "Data" / "Merge"
+        merge.mkdir(parents=True)
+        (merge / "NPA9920tsSB.csv").write_text("earlier wave", encoding="utf-8")
+        (merge / "NPA9920 Client Week 1 FinalJSON.json").write_text("{}", encoding="utf-8")
+        (root / "Data" / "NPA9930.csv").write_text("day 1", encoding="utf-8")
+        table_gen = root / "Job" / "Table Gen"
+        table_gen.mkdir(parents=True)
+        (table_gen / "NPA9930 Client Week 2 FinalJSON.json").write_text('{"elements": []}', encoding="utf-8")
+        context = core.ProjectContext.from_values("NPA9930", root)
+
+        notes = merge_autorun.seed_first_merge(context)
+
+        self.assertEqual(len(notes), 2)
+        self.assertEqual((merge / "NPA9930.csv").read_text(encoding="utf-8"), "day 1")
+        self.assertTrue((merge / "NPA9930 Client Week 2 FinalJSON.json").exists())
+        self.assertEqual(merge_autorun.seed_first_merge(context), [])  # nothing new
+        defaults = merge_folder_defaults(merge, "NPA9930")
+        self.assertEqual(defaults["primary"].name, "NPA9930.csv")
+        self.assertEqual(defaults["secondary"].name, "NPA9920tsSB.csv")
+        self.assertEqual(defaults["primary_survey_json"].name, "NPA9930 Client Week 2 FinalJSON.json")
+        self.assertEqual(defaults["secondary_survey_json"].name, "NPA9920 Client Week 1 FinalJSON.json")
+
+        day2 = root / "Data" / "NPA9930.csv"
+        day2.write_text("day 2", encoding="utf-8")
+        [note] = merge_autorun.seed_first_merge(context, day2)
+        self.assertIn("older copy", note)
+        self.assertEqual((merge / "NPA9930.csv").read_text(encoding="utf-8"), "day 2")
+        backups = list((merge / "Backups").glob("*/NPA9930.csv"))
+        self.assertEqual([b.read_text(encoding="utf-8") for b in backups], ["day 1"])
+        self.assertEqual((merge / "NPA9920tsSB.csv").read_text(encoding="utf-8"), "earlier wave")
+
+        (merge / "merge_runs").mkdir()
+        (merge / "merge_runs" / "merge_20261102_100000.json").write_text("{}", encoding="utf-8")
+        day2.write_text("day 3", encoding="utf-8")
+        self.assertEqual(merge_autorun.seed_first_merge(context, day2), [])  # the rerun takes over
+
     def test_new_data_reruns_last_merge_with_same_mapping_and_columns(self) -> None:
         import pandas as pd
 

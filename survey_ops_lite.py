@@ -443,6 +443,8 @@ class SurveyLauncherApp:
         if tool.internal_action == "oe_draft":
             self.open_oe_draft(context)
             return
+        if tool.key == "table_merger" and not self.test_run_var.get():
+            self._seed_first_merge(context)
         try:
             _process, work_dir, _command = launch_tool(
                 context, tool, app_root=self.app_root, test_run=bool(self.test_run_var.get()),
@@ -456,6 +458,18 @@ class SurveyLauncherApp:
         self.status_var.set(f"Opened {tool.label}")
         self.log(f"Opened {tool.label} in {work_dir}"
                  + (f" (test run: outputs to {test_output_dir(context, create=False)})" if self.test_run_var.get() else ""))
+
+    def _seed_first_merge(self, context: ProjectContext) -> None:
+        """Before the first trend merge, stage this wave's data and questionnaire file in Data\\Merge."""
+        try:
+            from merge_autorun import seed_first_merge
+
+            notes = seed_first_merge(context)
+        except Exception as exc:  # the Table Merger still opens; the paths can be browsed to
+            self.log(f"Could not stage this wave's files in Data\\Merge: {exc}")
+            return
+        for note in notes:
+            self.log(note)
 
     def run_project_startup(self, context: ProjectContext, tool: ToolSpec) -> None:
         self.status_var.set("Running Project Startup (Word saves the questionnaire PDF and empties Results)...")

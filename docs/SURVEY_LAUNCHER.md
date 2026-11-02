@@ -110,10 +110,21 @@ Browse, then Add Files. Files are copied, never moved.
   column renamed by hand keeps its name when it is in the same position and
   the column count is unchanged, new columns go at the end, and missing ones
   are reported. The window and Activity log say whether the mapping stayed
-  the same (or list what changed). With no earlier merge, nothing runs. Like
+  the same (or list what changed). With no earlier merge, nothing runs; see
+  the next point instead. Like
   any trend merge in `Data\Merge`, the result is also copied to
   `Data\NPA####ts.csv` (after the column realignment; a different copy
   already there is backed up first).
+- **First trend merge**: when the zip updates `Data\NPA####.csv`, `Data\Merge`
+  exists and no merge has run yet, the new data and this survey's newest
+  questionnaire file from `Job\Table Gen` are copied into `Data\Merge`
+  (`merge_autorun.seed_first_merge`), beside the earlier wave's files that
+  Project Startup put there. Opening the Table Merger from the launcher does
+  the same (not during a test run), so a questionnaire file Table Gen made
+  later is picked up. The Table Merger then opens with all four paths filled.
+  A different copy already in `Data\Merge` (e.g. Day 1's data) is first backed
+  up to `Data\Merge\Backups\<date_time>`; the earlier wave's files are never
+  touched. Once the first merge has run, the rerun above keeps the data current.
 - **Day document**: adding a zip also creates a blank
   `Data\Partial\<questionnaire name> Day N.docx`
   (`NPA3887 Stelson PA-10 Track Week 2 Day 1.docx`). N is one past the highest

@@ -152,6 +152,52 @@ def _backup(folder: Path, files: list[Path]) -> Path:
     return backup
 
 
+def seed_first_merge(context: ProjectContext, new_data: Path | None = None) -> list[str]:
+    """Before the first trend merge, put this wave's files in Data\\Merge.
+
+    Project Startup copies the earlier wave's files there; this adds the
+    current wave's: the data (``new_data``, else Data\\<survey id>.csv/.xlsx)
+    and this survey's newest questionnaire file from Job\\Table Gen
+    (*JSON.json), so the Table Merger opens with every path filled. A
+    different copy already there is backed up to Data\\Merge\\Backups first;
+    the earlier wave's files are never touched. Once a merge has run,
+    rerun_last_merge() keeps the data current instead. Returns one note per
+    file copied.
+    """
+    import filecmp
+
+    folder = merge_folder(context)
+    if folder is None or latest_merge_run(context) is not None:
+        return []
+    sources: list[Path] = []
+    data = new_data
+    if data is None:
+        data_dir = resolve_relative_directory(context.project_root, ("Data",))
+        candidates = [data_dir / f"{context.survey_id}{ext}" for ext in (".csv", ".xlsx")] if data_dir else []
+        data = next((path for path in candidates if path.is_file()), None)
+    if data is not None:
+        sources.append(data)
+    table_gen = resolve_relative_directory(context.project_root, ("Job", "Table Gen"))
+    jsons = [p for p in table_gen.glob("*JSON.json") if p.is_file()] if table_gen else []
+    if jsons:
+        sources.append(max(jsons, key=lambda p: p.stat().st_mtime_ns))
+
+    notes: list[str] = []
+    for source in sources:
+        target = folder / source.name
+        if target.exists():
+            if filecmp.cmp(source, target, shallow=False):
+                continue
+            backup = _backup(folder, [target])
+            shutil.copy2(source, target)
+            notes.append(f"Updated {target.name} in Data\\Merge for the first trend merge "
+                         f"(the older copy is in {backup.relative_to(folder.parent.parent)})")
+        else:
+            shutil.copy2(source, target)
+            notes.append(f"Copied {source.name} to Data\\Merge for the first trend merge")
+    return notes
+
+
 def rerun_last_merge(context: ProjectContext, new_data: Path, timeout: int = 900) -> AutorunResult:
     run_path = latest_merge_run(context)
     if run_path is None:

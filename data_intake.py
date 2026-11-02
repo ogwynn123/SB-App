@@ -554,7 +554,17 @@ class DataIntakeDialog(tk.Toplevel):
             summary += ": " + ", ".join(path.name for _original, path in result.renamed)
         new_data = next((p for _o, p in result.renamed if p.name == f"{self.context.survey_id}.csv"), None)
         if new_data is not None:
-            summary += "\n" + self._rerun_merge(new_data)
+            from merge_autorun import latest_merge_run, merge_folder, seed_first_merge
+
+            if merge_folder(self.context) is not None and latest_merge_run(self.context) is None:
+                # No trend merge yet: stage this wave's files in Data\Merge for the first one.
+                notes = seed_first_merge(self.context, new_data)
+                for note in notes:
+                    self.log(f"Merge: {note}")
+                summary += "\n" + ("; ".join(notes) if notes else "Data\\Merge already has this wave's files")
+                summary += "\nRun the Table Merger once to set the trend mapping."
+            else:
+                summary += "\n" + self._rerun_merge(new_data)
         return summary
 
     def _rerun_merge(self, new_data: Path) -> str:
