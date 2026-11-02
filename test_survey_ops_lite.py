@@ -240,8 +240,8 @@ class SurveyLauncherTests(unittest.TestCase):
             document.add_paragraph(text)
         document.add_section(WD_SECTION.NEW_PAGE)
         document.add_paragraph("OVERVIEW")
-        first = document.add_paragraph("The following is a survey among 400 likely voters in the ")
-        first.add_run("10th District using landline (1")
+        first = document.add_paragraph("The following is a survey among 400 likely voters in Iowa’s 1st ")
+        first.add_run("Congressional District (the 10th District, not District 5) using landline (1")
         first.add_run("3%) and text (87%).  It was conducted September 29-October 1, 2026.")
         document.add_paragraph("In 95 cases out of 100, results fall within ±4.9 percentage points of the population.")
         document.add_paragraph("As with any survey, the release of selected figures could be damaging.")
@@ -271,7 +271,8 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertNotIn("\tNPA9900", texts)
         self.assertEqual(changes.survey_ids_replaced, 1)
         self.assertEqual(highlighted["\tOCTOBER 13-"], "OCTOBER 13-15, 2026")
-        self.assertEqual(highlighted["The followin"], "40010th13%87%September 29-October 1, 2026")
+        # District numbers ("1st Congressional District", "10th District", "District 5") are left alone.
+        self.assertEqual(highlighted["The followin"], "40013%87%September 29-October 1, 2026")
         self.assertEqual(highlighted["In 95 cases "], "±4.9")  # 95 and 100 are not touched
         self.assertEqual(highlighted["The data hav"], "weighted by sex, age, and 2024 vote")
         self.assertNotIn("3+\tVoters who", highlighted)  # page 3 is left alone

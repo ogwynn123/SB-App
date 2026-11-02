@@ -6,7 +6,8 @@ On the first two pages (title page, then OVERVIEW/METHODOLOGY):
 - dates ("OCTOBER 13-15, 2026", "SEPTEMBER 29-OCTOBER 1, 2026", "JULY 2026")
   are highlighted;
 - in page 2's first paragraph every other number is highlighted too
-  (sample size, mode percentages, ...);
+  (sample size, mode percentages, ...), except district numbers such as
+  "Iowa's 1st Congressional District" or "District 5", which stay the same;
 - in page 2's second paragraph the margin of error before "percentage
   points" is highlighted;
 - in page 2's last paragraph "weighted by ..." is highlighted, up to "to better
@@ -33,6 +34,13 @@ DATE_RE = re.compile(
 )
 NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*(?:%|st|nd|rd|th)?")
 SURVEY_ID_RE = re.compile(r"\bNPA\d+\b")
+# "1st Congressional District", "12th State Senate District", "10th District", "District 5":
+# the district does not change between waves, so its number is not highlighted.
+DISTRICT_RE = re.compile(
+    r"\b\d+(?:st|nd|rd|th)\s+(?:(?:Congressional|Legislative|State|Senate|House|Assembly)\s+){0,2}District\b"
+    r"|\bDistrict\s+\d+\b",
+    re.IGNORECASE,
+)
 MARGIN_RE = re.compile(r"(?:±|\+/-)?\s*\d+(?:\.\d+)?(?=\s*percentage points)", re.IGNORECASE)
 # "weighted by sex, age, ... and split form" up to (not including) "to better
 # reflect the composition of the electorate"; "to reflect" and a bare
@@ -70,9 +78,10 @@ def prepare_copied_cover(path: Path, survey_id: str) -> CoverChanges:
         notes.append("Cover page 2 does not have the usual OVERVIEW paragraphs; only page 1 was updated.")
     else:
         first, second, last = body[0], body[1], body[-1]
-        dates = [m.span() for m in DATE_RE.finditer(_text(first))]
+        kept = [m.span() for m in DATE_RE.finditer(_text(first))]
+        kept += [m.span() for m in DISTRICT_RE.finditer(_text(first))]
         for match in NUMBER_RE.finditer(_text(first)):
-            if not any(start <= match.start() < end for start, end in dates):
+            if not any(start <= match.start() < end for start, end in kept):
                 changes.highlights += _edit_span(first, match.start(), match.end(), highlight=True)
         margin = MARGIN_RE.search(_text(second))
         if margin:
