@@ -43,6 +43,9 @@ from survey_launcher_core import (
 
 from project_status import STATE_LABELS, StatusItem, next_step, project_status
 
+sys.path.insert(0, str(APP_ROOT / "pipelines" / "common"))
+import brand  # noqa: E402  (Normington Petts colours and logo header)
+
 ACTION_BUTTON_LABELS = {
     "project_startup": "Run Startup",
     "sample_append": "Append...",
@@ -65,7 +68,7 @@ def open_path(path: Path) -> None:
 GEOMETRY_RE = re.compile(r"^(?P<w>\d+)x(?P<h>\d+)(?P<xsign>[+-])(?P<x>\d+)(?P<ysign>[+-])(?P<y>\d+)$")
 
 
-def safe_window_geometry(root: tk.Tk, geometry: object, default: str = "980x820") -> str:
+def safe_window_geometry(root: tk.Tk, geometry: object, default: str = "1000x900") -> str:
     text = str(geometry or "").strip()
     match = GEOMETRY_RE.match(text)
     if not match:
@@ -127,7 +130,9 @@ class SurveyLauncherApp:
     def _build_ui(self) -> None:
         self.root.title("Survey Launcher")
         self.root.geometry(safe_window_geometry(self.root, self.settings.get("window_geometry")))
-        self.root.minsize(780, 720)
+        self.root.minsize(780, 760)
+        brand.apply_theme(self.root)
+        brand.add_header(self.root, "Survey Launcher", "Pick a survey, then run each step of the job from here")
 
         shell = ttk.Frame(self.root, padding=12)
         shell.pack(fill=tk.BOTH, expand=True)
@@ -204,17 +209,19 @@ class SurveyLauncherApp:
         self.tool_tree.bind("<Double-1>", lambda _event: self.launch_selected_tool())
 
         selected = ttk.Frame(shell)
-        selected.pack(fill=tk.X, pady=(8, 0))
+        selected.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0), before=tools_frame)
         ttk.Button(selected, text="Open Folder", command=self.open_tool_folder).pack(side=tk.RIGHT)
-        self.launch_button = ttk.Button(selected, text="Open Tool", command=self.launch_selected_tool)
+        self.launch_button = ttk.Button(selected, text="Open Tool", command=self.launch_selected_tool,
+                                        style="Accent.TButton")
         self.launch_button.pack(side=tk.RIGHT, padx=(0, 8))
 
         log_frame = ttk.LabelFrame(shell, text="Activity", padding=6)
-        log_frame.pack(fill=tk.BOTH, expand=False, pady=(10, 0))
-        self.log_text = tk.Text(log_frame, height=7, wrap=tk.WORD, state=tk.DISABLED)
+        log_frame.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=False, pady=(10, 0), before=selected)
+        self.log_text = tk.Text(log_frame, height=4, wrap=tk.WORD, state=tk.DISABLED)
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(shell, textvariable=self.status_var, anchor="w").pack(fill=tk.X, pady=(8, 0))
+        # The bottom rows are packed ahead of the workflow list, so the list is what shrinks on a small screen.
+        ttk.Label(shell, textvariable=self.status_var, anchor="w").pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0), before=log_frame)
 
     def _test_run_changed(self) -> None:
         self.settings["test_run"] = bool(self.test_run_var.get())
@@ -641,7 +648,7 @@ class SurveyLauncherApp:
         ttk.Label(frame, textvariable=status_var).grid(row=4, column=0, columnspan=3, sticky="w", pady=(6, 0))
         buttons = ttk.Frame(frame)
         buttons.grid(row=5, column=0, columnspan=3, sticky="e", pady=(12, 0))
-        draft_button = ttk.Button(buttons, text="Draft")
+        draft_button = ttk.Button(buttons, text="Draft", style="Accent.TButton")
 
         def finished(result: tuple[Path, list[str]] | Exception) -> None:
             draft_button.configure(state=tk.NORMAL)

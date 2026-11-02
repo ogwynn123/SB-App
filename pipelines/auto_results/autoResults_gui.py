@@ -47,6 +47,7 @@ try:
 except ImportError:  # running from source: shared helpers live in pipelines/common
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
     import launch_paths
+import brand  # noqa: E402  (pipelines/common, beside launch_paths)
 
 APP = "auto_results"
 
@@ -1114,6 +1115,8 @@ class AutoResultsGUI:
         self._build_ui()
 
     def _build_ui(self) -> None:
+        brand.apply_theme(self.root)
+        brand.add_header(self.root, 'Auto Results', 'Fill the results template from the marginals')
         launch_paths.add_test_run_banner(self.root)
         self.last_output = ""
         outer = ttk.Frame(self.root, padding=10)
@@ -1158,7 +1161,7 @@ class AutoResultsGUI:
 
         actions = ttk.Frame(outer)
         actions.pack(fill=tk.X, pady=(0, 8))
-        ttk.Button(actions, text="Run", command=self.run_click).pack(side=tk.LEFT, padx=4)
+        ttk.Button(actions, text="Run", command=self.run_click, style="Accent.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="Open Output Folder", command=self.open_output_folder).pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="Close", command=self.root.destroy).pack(side=tk.LEFT, padx=4)
 

@@ -18,6 +18,7 @@ try:
 except ImportError:  # running from source: shared helpers live in pipelines/common
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
     import launch_paths
+import brand  # noqa: E402  (pipelines/common, beside launch_paths)
 
 APP = "open_end_coder"
 
@@ -159,15 +160,15 @@ class RecordCoderApp:
         self.root.minsize(1060, 680)
 
     def _build_ui(self) -> None:
+        brand.apply_theme(self.root)
+        brand.add_header(self.root, 'Open-End Coder', 'Code open-end responses record by record')
         launch_paths.add_test_run_banner(self.root)
         outer = ttk.Frame(self.root, padding=10)
         outer.pack(fill=tk.BOTH, expand=True)
 
         header = ttk.Frame(outer)
         header.pack(fill=tk.X, pady=(0, 8))
-        title = ttk.Label(header, text="Open-End Coding", font=("Segoe UI", 16, "bold"))
-        title.pack(side=tk.LEFT)
-        ttk.Label(header, textvariable=self.project_var).pack(side=tk.LEFT, padx=(14, 0))
+        ttk.Label(header, textvariable=self.project_var).pack(side=tk.LEFT)
         ttk.Button(header, text="Open Session", command=self.open_session).pack(side=tk.RIGHT, padx=(6, 0))
         ttk.Button(header, text="New Session", command=self.new_session).pack(side=tk.RIGHT)
 
@@ -485,7 +486,7 @@ class RecordCoderApp:
         ttk.Label(export, text="Coded CSV").grid(row=0, column=0, padx=6, pady=8, sticky="w")
         ttk.Entry(export, textvariable=self.export_var).grid(row=0, column=1, padx=6, pady=8, sticky="ew")
         ttk.Button(export, text="Browse", command=self.browse_export).grid(row=0, column=2, padx=4, pady=8)
-        ttk.Button(export, text="Export Coded CSV", command=self.export_coded_csv).grid(row=0, column=3, padx=6, pady=8)
+        ttk.Button(export, text="Export Coded CSV", command=self.export_coded_csv, style="Accent.TButton").grid(row=0, column=3, padx=6, pady=8)
         ttk.Button(export, text="Open Output Folder", command=self.open_output_folder).grid(row=0, column=4, padx=(0, 6), pady=8)
 
         secondary = ttk.Frame(tab)

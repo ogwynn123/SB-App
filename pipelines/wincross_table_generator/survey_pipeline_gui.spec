@@ -7,6 +7,7 @@ import sys
 
 PY_BASE = sys.base_prefix
 datas = [
+    (str(Path(SPECPATH).resolve().parent / "common" / "npa_logo_header.png"), "."),
     ('survey_unformatter.py', '.'),
     ('surveyConvertJSON.py', '.'),
     ('question_attributes.py', '.'),

@@ -146,6 +146,7 @@ try:
 except ImportError:  # running from source: shared helpers live in pipelines/common
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
     import launch_paths
+import brand  # noqa: E402  (pipelines/common, beside launch_paths)
 
 APP = "table_merger"
 
@@ -302,8 +303,8 @@ class SheetMergeGUI:
             self.log(f"Filled from {merge_dir}: " + "; ".join(filled))
 
     def _build_ui(self) -> None:
-        style = ttk.Style()
-        style.theme_use("clam")
+        brand.apply_theme(self.root)
+        brand.add_header(self.root, 'Table Merger', 'Merge this wave onto the trend file')
         launch_paths.add_test_run_banner(self.root)
 
         outer = ttk.Frame(self.root, padding=10)
@@ -324,7 +325,7 @@ class SheetMergeGUI:
         ttk.Button(actions, text="Preflight Summary", command=self.show_preflight).pack(
             side=tk.LEFT, padx=4
         )
-        ttk.Button(actions, text="Run Merge", command=self.run_merge_click).pack(side=tk.LEFT, padx=4)
+        ttk.Button(actions, text="Run Merge", command=self.run_merge_click, style="Accent.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="Open Output Folder", command=self.open_output_folder).pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="Generate Test Data", command=self.generate_test_data_click).pack(
             side=tk.LEFT, padx=4

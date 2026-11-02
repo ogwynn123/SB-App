@@ -17,6 +17,7 @@ for name in ("_tkinter.pyd", "tk86t.dll", "tcl86t.dll"):
         binaries.append((str(candidate), "."))
 
 datas = [
+    (str(Path(SPECPATH).resolve().parent / "common" / "npa_logo_header.png"), "."),
     ("unified_merge.py", "."),
     ("..\\..\\survey_tool_cli.py", "."),
     ("sheet_merge_core.py", "sheetMerge"),

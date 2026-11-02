@@ -17,7 +17,7 @@ for name in ("_tkinter.pyd", "tk86t.dll", "tcl86t.dll"):
     if candidate.exists():
         binaries.append((str(candidate), "."))
 
-datas = []
+datas = [(str(Path(SPECPATH).resolve().parent / "common" / "npa_logo_header.png"), ".")]
 if (TCL_ROOT / "tcl8.6").exists():
     datas.append((str(TCL_ROOT / "tcl8.6"), "_tcl_data"))
 if (TCL_ROOT / "tk8.6").exists():

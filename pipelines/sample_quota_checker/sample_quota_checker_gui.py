@@ -33,6 +33,7 @@ try:
 except ImportError:  # running from source: shared helpers live in pipelines/common
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
     import launch_paths
+import brand  # noqa: E402  (pipelines/common, beside launch_paths)
 
 APP = "quota_checker"
 
@@ -79,6 +80,8 @@ class QuotaCheckerApp:
         self._build_ui()
 
     def _build_ui(self) -> None:
+        brand.apply_theme(self.root)
+        brand.add_header(self.root, 'Sample Quota Checker', 'Check pulled sample against the quotas and minimums')
         launch_paths.add_test_run_banner(self.root)
         outer = ttk.Frame(self.root, padding=10)
         outer.pack(fill=tk.BOTH, expand=True)
@@ -119,7 +122,7 @@ class QuotaCheckerApp:
 
         actions = ttk.Frame(outer, padding=(0, 8, 0, 8))
         actions.pack(fill=tk.X)
-        ttk.Button(actions, text="Run Check", command=self.run_check).pack(side=tk.LEFT)
+        ttk.Button(actions, text="Run Check", command=self.run_check, style="Accent.TButton").pack(side=tk.LEFT)
         ttk.Button(actions, text="Export CSV", command=self.export_csv).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(actions, text="Open Output Folder", command=self.open_output_folder).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(actions, textvariable=self.summary_var).pack(side=tk.LEFT, padx=(18, 0))

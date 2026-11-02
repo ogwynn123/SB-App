@@ -6,7 +6,7 @@ a = Analysis(
     ['sample_quota_checker_gui.py'],
     pathex=[str(Path(SPECPATH).resolve().parent / "common")],
     binaries=[],
-    datas=[],
+    datas=[(str(Path(SPECPATH).resolve().parent / "common" / "npa_logo_header.png"), ".")],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

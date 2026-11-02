@@ -31,6 +31,7 @@ try:
 except ImportError:  # running from source: shared helpers live in pipelines/common
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
     import launch_paths
+import brand  # noqa: E402  (pipelines/common, beside launch_paths)
 
 
 def _app_base_dir() -> Path:
@@ -409,6 +410,8 @@ class SurveyPipelineGui:
         self.discover()
 
     def _build_ui(self) -> None:
+        brand.apply_theme(self.root)
+        brand.add_header(self.root, 'WinCross Table Generator', 'Questionnaire to WinCross tables, banners and cover')
         launch_paths.add_test_run_banner(self.root)
         top = ttk.Frame(self.root, padding=10)
         top.pack(fill=tk.X)
@@ -434,7 +437,7 @@ class SurveyPipelineGui:
         actions = ttk.Frame(self.root, padding=(10, 0, 10, 8))
         actions.pack(fill=tk.X)
 
-        ttk.Button(actions, text="Run Selected", command=self.run_selected).pack(side=tk.LEFT)
+        ttk.Button(actions, text="Run Selected", command=self.run_selected, style="Accent.TButton").pack(side=tk.LEFT)
         ttk.Button(actions, text="Run All", command=self.run_all).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(actions, text="Stop", command=self.stop_runs).pack(side=tk.LEFT, padx=(8, 0))
 

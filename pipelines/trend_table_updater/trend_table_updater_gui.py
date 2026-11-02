@@ -21,6 +21,7 @@ try:
 except ImportError:  # running from source: shared helpers live in pipelines/common
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
     import launch_paths
+import brand  # noqa: E402  (pipelines/common, beside launch_paths)
 
 APP = "trend_table_updater"
 
@@ -70,6 +71,8 @@ class TrendTableUpdaterApp:
         self.root.geometry(f"{width}x{height}+{x}+{y}")
 
     def _build_ui(self) -> None:
+        brand.apply_theme(self.root)
+        brand.add_header(self.root, 'Trend Table Updater', 'Roll the trend tables forward to the new wave')
         launch_paths.add_test_run_banner(self.root)
         self.last_output = ""
         outer = ttk.Frame(self.root, padding=10)
@@ -102,7 +105,7 @@ class TrendTableUpdaterApp:
             text="Skip bracketed-year archive tables",
             variable=self.skip_archive_var,
         ).grid(row=1, column=3, sticky="w", padx=(0, 12))
-        ttk.Button(settings, text="Update Tables", command=self.update_tables).grid(
+        ttk.Button(settings, text="Update Tables", command=self.update_tables, style="Accent.TButton").grid(
             row=1, column=4, sticky="e"
         )
         ttk.Button(settings, text="Save As", command=self.save_as).grid(
