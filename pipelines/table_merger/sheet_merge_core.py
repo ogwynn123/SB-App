@@ -672,7 +672,23 @@ def build_mapping(
     top_n: int,
     manual_mapping: dict[str, str],
     blocked_primary_columns: set[str] | None = None,
+    primary_df: pd.DataFrame | None = None,
+    secondary_df: pd.DataFrame | None = None,
 ) -> tuple[dict[str, str], dict[str, str], dict[str, int | None]]:
+    """Map this wave's (primary) columns onto the earlier waves' (secondary).
+
+    Auto mode: exact names, then names equal without punctuation, then close
+    matches for sample columns (column_aliases: vendor prefixes, abbreviations
+    and merge_column_aliases.txt), then fuzzy names. With the two tables given,
+    close and fuzzy matches must hold the same kind of values, and the
+    trend file's most recent wave decides between equally close names.
+    """
+    from column_aliases import ValueCheck, close_candidates, load_aliases, pick
+
+    values = ValueCheck(
+        primary_df, secondary_df,
+        find_column_case_insensitive(list(secondary_df.columns), "timeseries") if secondary_df is not None else None,
+    )
     mapping: dict[str, str] = {primary_join: secondary_join}
     method: dict[str, str] = {primary_join: "join"}
     score: dict[str, int | None] = {primary_join: 100}
@@ -757,7 +773,26 @@ def build_mapping(
             )
             used_secondary[candidate] = primary_col
 
-        # Pass 3: fuzzy fallback for remaining columns.
+        # Pass 3: close matches for sample columns whose names differ between exports
+        # ("StartDateTime" <- "Starttime", "partisanscore" <- "tsmartpartisanscore").
+        aliases = load_aliases()
+        for primary_col in primary_cols:
+            if primary_col == primary_join or primary_col in mapping:
+                continue
+            if primary_col.casefold() in blocked_casefold or is_auto_map_excluded_col(primary_col):
+                continue
+            if is_oth1_col_name(primary_col) or is_question_col_name(primary_col) or is_companion_col_name(primary_col):
+                continue
+            free = [col for col in secondary_non_oth1 if col not in used_secondary]
+            candidate = pick(primary_col, close_candidates(primary_col, free, aliases), values)
+            if candidate is None:
+                continue
+            mapping[primary_col] = candidate
+            method[primary_col] = "auto_close"
+            score[primary_col] = int(fuzz.QRatio(primary_col.casefold(), candidate.casefold()))
+            used_secondary[candidate] = primary_col
+
+        # Pass 4: fuzzy fallback for remaining columns.
         for primary_col in primary_cols:
             if primary_col == primary_join:
                 continue
@@ -779,6 +814,8 @@ def build_mapping(
                 secondary_year = extract_year_token(secondary_col)
                 if primary_year and secondary_year and primary_year != secondary_year:
                     continue
+                if not values.compatible(primary_col, secondary_col):
+                    continue  # e.g. ages are not the 1-4 codes of "hage"
                 mapping[primary_col] = secondary_col
                 method[primary_col] = "auto_fuzzy"
                 score[primary_col] = fuzzy_score
@@ -1614,6 +1651,8 @@ def _build_effective_mapping(
     primary_join: str,
     secondary_join: str,
     context: TimeseriesContext,
+    primary_df: pd.DataFrame | None = None,
+    secondary_df: pd.DataFrame | None = None,
 ) -> tuple[dict[str, str], dict[str, str], dict[str, int | None]]:
     mapping, mapping_method, mapping_score = build_mapping(
         primary_cols=primary_cols,
@@ -1625,6 +1664,8 @@ def _build_effective_mapping(
         top_n=options.top_n,
         manual_mapping=options.manual_mapping,
         blocked_primary_columns=options.blocked_primary_columns,
+        primary_df=primary_df,
+        secondary_df=secondary_df,
     )
     manual_items = _valid_manual_mapping_items(
         primary_cols=primary_cols,
@@ -1756,6 +1797,8 @@ def analyze_merge(options: MergeOptions) -> MergeAnalysis:
         primary_join=primary_join,
         secondary_join=secondary_join,
         context=context,
+        primary_df=primary_df,
+        secondary_df=secondary_df,
     )
 
     conflict_rows = int(
@@ -1827,6 +1870,8 @@ def run_merge(options: MergeOptions) -> MergeResult:
         primary_join=primary_join,
         secondary_join=secondary_join,
         context=context,
+        primary_df=primary_df,
+        secondary_df=secondary_df,
     )
 
     conflict_mask = _conflict_mask(

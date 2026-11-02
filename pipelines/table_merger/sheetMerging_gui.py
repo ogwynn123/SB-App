@@ -1106,6 +1106,7 @@ class SheetMergeGUI:
             return
         self._mark_autofill_step(f"semantic enabled={semantic.enabled}")
         blocked_primary = self._blocked_primary_columns()
+        primary_df, secondary_df = self._autofill_tables()
         self._mark_autofill_step("calling build_mapping")
         manual_mapping = self._table_mapping()
         mapping, methods, scores = build_mapping(
@@ -1118,6 +1119,8 @@ class SheetMergeGUI:
             top_n=top_n,
             manual_mapping=manual_mapping,
             blocked_primary_columns=blocked_primary,
+            primary_df=primary_df,
+            secondary_df=secondary_df,
         )
         self._mark_autofill_step(f"build_mapping complete: mapped={len(mapping)}")
 
@@ -1307,6 +1310,8 @@ class SheetMergeGUI:
             if method == "auto_fuzzy":
                 score = scores.get(p)
                 label = f"auto({score})" if score is not None else "auto"
+            elif method == "auto_close":
+                label = "close"
             elif method == "semantic":
                 score = scores.get(p)
                 label = f"semantic({score})" if score is not None else "semantic"
@@ -1314,6 +1319,17 @@ class SheetMergeGUI:
                 label = method or ""
             self.mapping_tree.item(row_id, values=(p, s, label))
         self._mark_autofill_step("auto fill completed successfully")
+
+    def _autofill_tables(self):
+        """Both files' data, so close matches can check the values (names only if they cannot be read)."""
+        try:
+            primary = read_table(resolve_path(self.primary_path_var.get()), self.primary_sheet_var.get() or None)
+            secondary = read_table(resolve_path(self.secondary_path_var.get()), self.secondary_sheet_var.get() or None)
+        except Exception as exc:
+            self.log(f"Auto Fill: could not read the data to check values ({exc}); matching on names only.")
+            return None, None
+        self._mark_autofill_step(f"read data for value checks: {len(primary)} + {len(secondary)} rows")
+        return primary, secondary
 
     def _normalize_preview_text(self, text: str | None) -> str:
         return re.sub(r"\s+", " ", str(text or "")).strip()

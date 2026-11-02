@@ -1,0 +1,32 @@
+# Column names that are the same sample (voter-file) column in different exports.
+#
+# The merge's auto-fill already matches names that differ only by vendor
+# prefixes (tsmart, ts, vf, vfreg, vfregcass, voterbase, reg, ...) or by common
+# abbreviations (datetime/time, ct_w/calltimewindow, pu_u/phoneusage,
+# scr/score, dist/district, lvl/level, weekday spellings). List here the ones
+# no rule can work out: one column per line, the names separated by |.
+# When several names on a line exist in the trend file, the one with values in
+# its most recent wave is used. Lines starting with # are notes.
+
+# TargetSmart scores (short export name | earlier long names)
+pgentntscore | presidglturnoutscore | presidgenturnout
+mgentntscore | midtermgeneralscore | midtermturnoutscore
+oygenturnout | offyeargeneralscore | offyearturnoutscore
+pptntscore | presidprimaryscore | presidprimrytoutsc | primaryturnoutscore
+nonpptntscr | nonpresidprimscore | nonpreprimarytoscore | nonprimaryturnout
+ts_colgradscr | collegegraduatescore
+ts_hs_onlyscr | highschoolonlyscore
+tstcktspltscore | martticketsplitscore
+
+# Voter file
+regstatus | voterregistratstatus | voterregistrations | votebaseregistration
+reg_date | vfregistrationdate | registrationdate
+marital_status | basemaritalstatus | votermaritalstatus | voterbasemarstatus
+full_address | vfregcassaddressfull
+
+# Phone (v2)
+pwirelessv2 | voterphonewirelessv2
+vbpwconfscrv2 | wirelessconfscorev2
+vbpwmatchlvlv2 | wirelessmatchlevelv2
+wireless_consv2 | wireconnectscorev2 | wirelesconnectscore2
+cellcphoneccv2 | phonecontactcodev2
