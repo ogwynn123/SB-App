@@ -1,9 +1,10 @@
+from pathlib import Path
 # -*- mode: python ; coding: utf-8 -*-
 
 
 a = Analysis(
     ['trend_table_updater_gui.py'],
-    pathex=[],
+    pathex=[str(Path(SPECPATH).resolve().parent / "common")],
     binaries=[],
     datas=[],
     hiddenimports=[],

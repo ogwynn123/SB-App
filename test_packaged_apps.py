@@ -15,6 +15,14 @@ BASE_DIR = Path(__file__).resolve().parent
 
 
 class PackagedAppsTests(unittest.TestCase):
+    def test_shared_launch_module_counts_for_every_app_that_uses_it(self) -> None:
+        for key in ("wincross", "merge", "oe", "auto_results", "quota", "trend"):
+            names = {path.name for path in source_files(packaged_apps.APPS_BY_KEY[key])}
+            self.assertIn("launch_paths.py", names, key)
+            spec = next(iter(packaged_apps.APPS_BY_KEY[key].specs))
+            text = (packaged_apps.APPS_BY_KEY[key].folder / spec).read_text(encoding="utf-8")
+            self.assertIn('"common"', text, f"{key} build must find pipelines/common")
+
     def test_wincross_sources_cover_every_bundled_module(self) -> None:
         names = {path.name for path in source_files(packaged_apps.APPS_BY_KEY["wincross"])}
 

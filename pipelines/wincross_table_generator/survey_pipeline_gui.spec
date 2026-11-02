@@ -1,3 +1,4 @@
+from pathlib import Path
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
@@ -34,7 +35,7 @@ for dll_name in ("_tkinter.pyd", "tcl86t.dll", "tk86t.dll"):
 
 a = Analysis(
     ['survey_pipeline_gui.py'],
-    pathex=[],
+    pathex=[str(Path(SPECPATH).resolve().parent / "common")],
     binaries=binaries,
     datas=datas,
     hiddenimports=['docx', 'pdfplumber', 'tkinter', 'tkinter.scrolledtext', '_tkinter'],

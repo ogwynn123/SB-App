@@ -16,6 +16,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 PIPELINES = BASE_DIR / "pipelines"
+SHARED = PIPELINES / "common"
 
 ANALYSIS_ENTRY_RE = re.compile(r"Analysis\(\s*\[([^\]]*)\]", re.S)
 QUOTED_PY_RE = re.compile(r"""['"]([^'"]+\.py)['"]""")
@@ -116,9 +117,11 @@ def source_files(app: PackagedApp) -> list[Path]:
             continue
         found.add(path)
         for name in _local_imports(path):
-            sibling = path.parent / f"{name}.py"
-            if sibling.exists() and not sibling.name.startswith("test_"):
-                pending.append(sibling)
+            # Same-folder modules, and shared ones in pipelines/common (bundled via pathex).
+            for sibling in (path.parent / f"{name}.py", SHARED / f"{name}.py"):
+                if sibling.exists() and not sibling.name.startswith("test_"):
+                    pending.append(sibling)
+                    break
     return sorted(found)
 
 

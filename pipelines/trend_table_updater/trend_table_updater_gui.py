@@ -16,6 +16,14 @@ from trend_table_updater_core import (
     write_glossary_text,
 )
 
+try:
+    import launch_paths
+except ImportError:  # running from source: shared helpers live in pipelines/common
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+    import launch_paths
+
+APP = "trend_table_updater"
+
 
 def _launch_work_directory() -> Path | None:
     raw = os.environ.get("SURVEY_PLATFORM_WORK_DIR", "").strip()
@@ -62,6 +70,8 @@ class TrendTableUpdaterApp:
         self.root.geometry(f"{width}x{height}+{x}+{y}")
 
     def _build_ui(self) -> None:
+        launch_paths.add_test_run_banner(self.root)
+        self.last_output = ""
         outer = ttk.Frame(self.root, padding=10)
         outer.pack(fill=tk.BOTH, expand=True)
 
@@ -97,6 +107,9 @@ class TrendTableUpdaterApp:
         )
         ttk.Button(settings, text="Save As", command=self.save_as).grid(
             row=1, column=5, sticky="e", padx=(8, 0)
+        )
+        ttk.Button(settings, text="Open Output Folder", command=self.open_output_folder).grid(
+            row=1, column=6, sticky="e", padx=(8, 0)
         )
         settings.columnconfigure(2, weight=1)
 
@@ -156,13 +169,12 @@ class TrendTableUpdaterApp:
 
     def load_txt(self) -> None:
         selected = filedialog.askopenfilename(
-            initialdir=_dialog_initial_directory(
-                self.input_path_var.get(), self.launch_work_dir
-            ),
+            initialdir=launch_paths.input_dir(APP, "glossary", self.input_path_var.get()),
             filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
         )
         if not selected:
             return
+        launch_paths.remember_dir(APP, "glossary", selected)
         try:
             self.load_path(selected)
         except Exception as exc:
@@ -235,10 +247,10 @@ class TrendTableUpdaterApp:
         label = self.new_label_var.get().strip() or "Updated"
         if source_text:
             suggested = suggested_output_path(source_text, label)
-            initialdir = str(suggested.parent)
+            initialdir = launch_paths.save_dir(APP, str(suggested)) or str(suggested.parent)
             initialfile = suggested.name
         else:
-            initialdir = str(self.launch_work_dir) if self.launch_work_dir is not None else ""
+            initialdir = launch_paths.save_dir(APP) or ""
             initialfile = f"Trend Tables - {label.title()}.txt"
         selected = filedialog.asksaveasfilename(
             defaultextension=".txt",
@@ -253,8 +265,15 @@ class TrendTableUpdaterApp:
         except Exception as exc:
             messagebox.showerror("Could Not Save TXT", str(exc))
             return
+        launch_paths.remember_dir(APP, "output", selected)
+        self.last_output = selected
         self.status_var.set(f"Saved {Path(selected).name}.")
         messagebox.showinfo("Save Complete", f"Wrote {selected}")
+
+    def open_output_folder(self) -> None:
+        """Open the folder of the last saved file (or this run's output folder)."""
+        if launch_paths.open_folder(self.last_output or launch_paths.save_dir(APP)) is None:
+            messagebox.showinfo("Open Output Folder", "Save the updated tables first.")
 
 
 def main(argv: list[str] | None = None) -> int:

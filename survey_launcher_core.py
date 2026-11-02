@@ -109,6 +109,9 @@ class ToolSpec:
     accepts_launch_context: bool = False
     create_on_launch: bool = True
     internal_action: str = ""
+    # The app writes its outputs into its work folder (Table Gen), so a test
+    # run points the work folder itself at the test folder.
+    output_in_work_dir: bool = False
 
     @property
     def folder_label(self) -> str:
@@ -137,6 +140,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         ),
         accepts_launch_context=True,
         create_on_launch=False,
+        output_in_work_dir=True,
     ),
     ToolSpec(
         key="table_merger",
@@ -177,6 +181,21 @@ TOOLS: tuple[ToolSpec, ...] = (
         ),
         accepts_launch_context=True,
         create_on_launch=False,
+    ),
+    ToolSpec(
+        key="oe_draft",
+        label="Draft Open-End Code Lists",
+        create_work_dir=("Data",),
+        existing_work_dirs=(
+            ("Data", "Partial", "Open Ends"),
+            ("Data", "Partial", "OEs"),
+            ("Data", "Partial Data", "Open Ends"),
+            ("Data", "Partial Data", "OEs"),
+            ("Data",),
+        ),
+        entry_candidates=(),
+        create_on_launch=False,
+        internal_action="oe_draft",
     ),
     ToolSpec(
         key="quota_checker",
@@ -1039,7 +1058,25 @@ def build_tool_command(
     return command
 
 
-def build_launch_environment(context: ProjectContext, tool: ToolSpec, work_dir: Path) -> dict[str, str]:
+TEST_RUN_PARENT = ("Job", "OG Clean")
+
+
+def test_output_dir(context: ProjectContext, *, create: bool = True) -> Path:
+    """Where test runs write: <project>/Job/OG Clean/<survey id>pt (e.g. NPA3887pt)."""
+    parent = resolve_relative_directory(context.project_root, TEST_RUN_PARENT)
+    if parent is None:
+        parent = context.project_root.joinpath(*TEST_RUN_PARENT)
+    folder = parent / f"{context.survey_id}pt"
+    if create:
+        folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def build_launch_environment(
+    context: ProjectContext, tool: ToolSpec, work_dir: Path, *, output_dir: Path | None = None,
+) -> dict[str, str]:
+    """Environment for an app: the project, its work folder, and where outputs go
+    (``output_dir`` is the test folder during a test run)."""
     env = os.environ.copy()
     env.update(
         {
@@ -1048,6 +1085,8 @@ def build_launch_environment(context: ProjectContext, tool: ToolSpec, work_dir: 
             "SURVEY_PLATFORM_WORK_DIR": str(work_dir),
             "SURVEY_PLATFORM_SOURCE_ROOT": str(context.source_root_for(tool)),
             "SURVEY_PLATFORM_TOOL": tool.key,
+            "SURVEY_PLATFORM_OUTPUT_DIR": str(output_dir or work_dir),
+            "SURVEY_PLATFORM_TEST_RUN": "1" if output_dir is not None else "",
         }
     )
     return env
@@ -1058,15 +1097,20 @@ def launch_tool(
     tool: ToolSpec,
     *,
     app_root: Path = APP_ROOT,
+    test_run: bool = False,
 ) -> tuple[subprocess.Popen[Any], Path, list[str]]:
+    """Open an app for the project. With ``test_run`` its outputs go to the
+    project's test folder (Job/OG Clean/<id>pt); inputs still come from the
+    usual folders."""
     if tool.internal_action:
         raise ValueError(f"{tool.label} must be run inside the Survey Launcher.")
-    work_dir = context.ensure_work_dir(tool)
+    output_dir = test_output_dir(context) if test_run else None
+    work_dir = output_dir if output_dir is not None and tool.output_in_work_dir else context.ensure_work_dir(tool)
     command = build_tool_command(context, tool, work_dir, app_root=app_root)
     process = subprocess.Popen(
         command,
         cwd=str(work_dir),
-        env=build_launch_environment(context, tool, work_dir),
+        env=build_launch_environment(context, tool, work_dir, output_dir=output_dir),
     )
     record_tool_launch(context, tool, work_dir)
     return process, work_dir, command
@@ -1183,19 +1227,57 @@ def run_sample_append(
     return result
 
 
-def run_prelim_qc(context: ProjectContext, *, app_root: Path = APP_ROOT) -> tuple[Path, dict[str, int], Any]:
-    """Run the preliminary QC for this project into Job/QC/<timestamp> and return the report path."""
+def run_prelim_qc(
+    context: ProjectContext, *, app_root: Path = APP_ROOT, test_run: bool = False,
+) -> tuple[Path, dict[str, int], Any]:
+    """Run the preliminary QC into Job/QC/<timestamp> (or the test folder's
+    QC/<timestamp> during a test run) and return the report path."""
     prelim_qc = _import_pipeline_module("qc_checker", "prelim_qc", app_root)
     inputs = prelim_qc.find_inputs(context.project_root, context.survey_id)
     report = prelim_qc.run_checks(inputs)
     job_dir = ensure_relative_directory(context.project_root, ("Job",))
-    out_dir = job_dir / "QC" / datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = test_output_dir(context) if test_run else job_dir
+    out_dir = base / "QC" / datetime.now().strftime("%Y%m%d_%H%M%S")
     md_path, _csv_path = prelim_qc.write_report(report, out_dir, context.survey_id)
     counts: dict[str, int] = {}
     for issue in report.issues:
         counts[issue.severity] = counts.get(issue.severity, 0) + 1
     record_tool_launch(context, TOOL_BY_KEY["prelim_qc"], job_dir)
     return md_path, counts, inputs
+
+
+def plan_oe_draft(
+    context: ProjectContext, *, app_root: Path = APP_ROOT, test_run: bool = False, data_path: Path | None = None,
+) -> dict[str, Any]:
+    """What drafting this project's open ends would do: data file, open ends,
+    lead-ins and the workbook path (in the test folder during a test run)."""
+    drafting = _import_pipeline_module("open_end_coder", "oe_draft_codelist", app_root)
+    out_dir = test_output_dir(context) if test_run else context.ensure_work_dir(TOOL_BY_KEY["oe_draft"])
+    table_gen = resolve_relative_directory(context.project_root, ("Job", "Table Gen"))
+    folders = [folder for folder in (table_gen, test_output_dir(context, create=False)) if folder is not None]
+    return drafting.plan_from_project(
+        context.project_root, context.survey_id, questionnaire_folders=folders,
+        out_path=out_dir / f"{context.survey_id} Draft Code Lists.xlsx", data_path=data_path,
+    )
+
+
+def run_oe_draft(context: ProjectContext, spec: dict[str, Any], *, app_root: Path = APP_ROOT) -> tuple[Path, list[str]]:
+    """Draft the planned open ends; returns the workbook written and one line per question."""
+    drafting = _import_pipeline_module("open_end_coder", "oe_draft_codelist", app_root)
+    try:
+        evaluation = _import_pipeline_module("open_end_coder", "oe_codelist_eval", app_root)
+        knowledge = evaluation.load_questions() or None  # past coded jobs, when this PC has them
+    except Exception:
+        knowledge = None
+    job = {key: value for key, value in spec.items() if key != "notes"}
+    results = drafting.run(job, knowledge)
+    written = Path(job.get("written") or job["out"])  # beside the original when it is open in Excel
+    lines = []
+    for question, (_kept, texts, _answers, numbered) in zip(spec["questions"], results):
+        themes = sum(1 for _number, code in numbered if code.label not in drafting.STANDARD_NUMBERS)
+        lines.append(f"{question['column']}: {len(texts)} responses, {themes} draft codes")
+    record_tool_launch(context, TOOL_BY_KEY["oe_draft"], written.parent)
+    return written, lines
 
 
 def stale_packaged_apps(app_root: Path = APP_ROOT) -> list[str]:

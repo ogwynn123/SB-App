@@ -141,6 +141,15 @@ def _tcl_runtime_hint(script_name: str, exc: BaseException) -> str:
     )
 
 
+try:
+    import launch_paths
+except ImportError:  # running from source: shared helpers live in pipelines/common
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+    import launch_paths
+
+APP = "table_merger"
+
+
 class SheetMergeGUI:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -221,8 +230,25 @@ class SheetMergeGUI:
         if self._faulthandler_log_path is not None:
             self.log(f"Crash log (faulthandler): {self._faulthandler_log_path}")
         self._prefill_from_merge_folder()
+        self._apply_test_run()
         self.refresh_inputs()
         self._sync_output_state()
+
+    def _apply_test_run(self) -> None:
+        """Test run from the launcher: write the merge (and the archived copy of
+        the earlier wave) to the test folder, never over the primary file."""
+        target = launch_paths.output_dir()
+        if not launch_paths.is_test_run() or target is None:
+            return
+        current = self.output_path_var.get().strip()
+        name = Path(current).name if current else ""
+        if not name:
+            code = re.sub(r"\D", "", os.environ.get("SURVEY_PLATFORM_SURVEY_ID", "")) or "merge"
+            name = f"NPA{code}ts.csv"
+        self.output_path_var.set(str(target / name))
+        if self.output_mode_var.get() == "overwrite":
+            self.output_mode_var.set("new_file")
+        self.log(f"Test run: output goes to {target / name}; the primary file is not overwritten.")
 
     def _prefill_from_merge_folder(self) -> None:
         """Opened from the launcher: fill empty paths from the project's Data\\Merge folder."""
@@ -260,6 +286,7 @@ class SheetMergeGUI:
     def _build_ui(self) -> None:
         style = ttk.Style()
         style.theme_use("clam")
+        launch_paths.add_test_run_banner(self.root)
 
         outer = ttk.Frame(self.root, padding=10)
         outer.pack(fill=tk.BOTH, expand=True)
@@ -280,6 +307,7 @@ class SheetMergeGUI:
             side=tk.LEFT, padx=4
         )
         ttk.Button(actions, text="Run Merge", command=self.run_merge_click).pack(side=tk.LEFT, padx=4)
+        ttk.Button(actions, text="Open Output Folder", command=self.open_output_folder).pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="Generate Test Data", command=self.generate_test_data_click).pack(
             side=tk.LEFT, padx=4
         )
@@ -467,24 +495,33 @@ class SheetMergeGUI:
             self.log("Output mode is overwrite; output path field disabled.")
 
     def _browse_file(self, target_var: tk.StringVar) -> None:
-        initial_dir = _dialog_initial_directory(target_var.get(), self.launch_work_dir)
+        slot = "secondary" if target_var is self.secondary_path_var else "primary"
+        initial_dir = launch_paths.input_dir(APP, slot, target_var.get())
         path = filedialog.askopenfilename(
             initialdir=initial_dir,
             filetypes=[("CSV or XLSX", "*.csv *.xlsx"), ("CSV", "*.csv"), ("XLSX", "*.xlsx"), ("All files", "*.*")]
         )
         if path:
+            launch_paths.remember_dir(APP, slot, path)
             target_var.set(path)
             self.refresh_inputs()
 
     def _browse_save(self, target_var: tk.StringVar) -> None:
-        initial_dir = _dialog_initial_directory(target_var.get(), self.launch_work_dir)
+        initial_dir = launch_paths.save_dir(APP, target_var.get())
         path = filedialog.asksaveasfilename(
             initialdir=initial_dir,
             defaultextension=".xlsx",
             filetypes=[("XLSX", "*.xlsx"), ("CSV", "*.csv"), ("All files", "*.*")],
         )
         if path:
+            launch_paths.remember_dir(APP, "output", path)
             target_var.set(path)
+
+    def open_output_folder(self) -> None:
+        """Open the folder the merge writes to (the primary file's in overwrite mode)."""
+        target = self.primary_path_var.get() if self.output_mode_var.get() == "overwrite" else self.output_path_var.get()
+        if launch_paths.open_folder(target or launch_paths.save_dir(APP)) is None:
+            messagebox.showinfo("Open Output Folder", "Set an output path first.")
 
     def _browse_json(self, target_var: tk.StringVar) -> None:
         initial_dir = _dialog_initial_directory(
@@ -2019,6 +2056,8 @@ class SheetMergeGUI:
             xlsx_write_mode=self.xlsx_write_mode_var.get(),  # type: ignore[arg-type]
             report_enabled=bool(self.report_enabled_var.get()),
             archive_secondary=bool(self.archive_secondary_var.get()),
+            **({"archive_dir": launch_paths.output_dir() / "surveyInput"}
+               if launch_paths.is_test_run() and launch_paths.output_dir() is not None else {}),
             manual_mapping=self._table_mapping(),
             blocked_primary_columns=self._run_blocked_primary_columns(),
         )

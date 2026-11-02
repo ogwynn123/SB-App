@@ -36,6 +36,9 @@ from survey_launcher_core import (
     save_launcher_settings,
     stale_packaged_apps,
     launch_tool,
+    plan_oe_draft,
+    run_oe_draft,
+    test_output_dir,
 )
 
 from project_status import STATE_LABELS, StatusItem, next_step, project_status
@@ -44,6 +47,7 @@ ACTION_BUTTON_LABELS = {
     "project_startup": "Run Startup",
     "sample_append": "Append...",
     "prelim_qc": "Run QC",
+    "oe_draft": "Draft...",
 }
 
 
@@ -105,10 +109,13 @@ class SurveyLauncherApp:
         self.status_var = tk.StringVar(value="Select a survey and project folder.")
         self.next_step_var = tk.StringVar(value="Select a project to see its status.")
         self.status_items: dict[str, StatusItem] = {}
+        self.test_run_var = tk.BooleanVar(value=bool(self.settings.get("test_run", False)))
+        self.test_run_note_var = tk.StringVar(value="")
 
         self._build_ui()
         self._refresh_recent_projects()
         self._refresh_tools()
+        self._update_test_run_note()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         stale = stale_packaged_apps(self.app_root)
         if stale:
@@ -141,6 +148,11 @@ class SurveyLauncherApp:
 
         ttk.Button(project, text="Use Project", command=self.use_project).grid(row=1, column=2, sticky="e", padx=(8, 0), pady=4)
         ttk.Button(project, text="Open Project", command=self.open_project).grid(row=1, column=3, sticky="e", padx=(8, 0), pady=4)
+        ttk.Checkbutton(
+            project, text="Test run", variable=self.test_run_var, command=self._test_run_changed,
+        ).grid(row=3, column=0, sticky="w", pady=(4, 0))
+        self.test_run_label = tk.Label(project, textvariable=self.test_run_note_var, anchor="w")
+        self.test_run_label.grid(row=3, column=1, columnspan=3, sticky="ew", pady=(4, 0))
         project.columnconfigure(2, weight=1)
 
         status_frame = ttk.LabelFrame(shell, text="Project status", padding=8)
@@ -204,6 +216,28 @@ class SurveyLauncherApp:
 
         ttk.Label(shell, textvariable=self.status_var, anchor="w").pack(fill=tk.X, pady=(8, 0))
 
+    def _test_run_changed(self) -> None:
+        self.settings["test_run"] = bool(self.test_run_var.get())
+        save_launcher_settings(self.settings, self.settings_path)
+        self._update_test_run_note()
+        self.log("Test run on: app outputs go to the project's test folder." if self.test_run_var.get()
+                 else "Test run off: apps use their usual output folders.")
+
+    def _update_test_run_note(self) -> None:
+        """Explain where outputs go; the line turns amber while test runs are on."""
+        if not self.test_run_var.get():
+            self.test_run_note_var.set("Off: apps save to their usual folders.")
+            self.test_run_label.configure(bg=self.root.cget("bg"), fg="#555555")
+            self.root.title("Survey Launcher")
+            return
+        if self.context is not None:
+            target = test_output_dir(self.context, create=False)
+            self.test_run_note_var.set(f"Outputs go to {self.context.relative_display(target)} (created when needed)")
+        else:
+            self.test_run_note_var.set(r"Outputs go to Job\OG Clean\<survey id>pt once a project is selected")
+        self.test_run_label.configure(bg="#fef3c7", fg="#92400e")
+        self.root.title("Survey Launcher - TEST RUN")
+
     def log(self, message: str) -> None:
         stamp = datetime.now().strftime("%H:%M:%S")
         self.log_text.configure(state=tk.NORMAL)
@@ -237,6 +271,7 @@ class SurveyLauncherApp:
         self._refresh_recent_projects()
         self._refresh_tools()
         self.status_var.set(f"Using {context.survey_id}: {context.project_root}")
+        self._update_test_run_note()
         return context
 
     def use_project(self) -> None:
@@ -405,8 +440,13 @@ class SurveyLauncherApp:
         if tool.internal_action == "prelim_qc":
             self.run_prelim_qc(context)
             return
+        if tool.internal_action == "oe_draft":
+            self.open_oe_draft(context)
+            return
         try:
-            _process, work_dir, _command = launch_tool(context, tool, app_root=self.app_root)
+            _process, work_dir, _command = launch_tool(
+                context, tool, app_root=self.app_root, test_run=bool(self.test_run_var.get()),
+            )
         except Exception as exc:
             messagebox.showerror("Survey Launcher", f"Could not launch {tool.label}:\n{exc}")
             return
@@ -414,7 +454,8 @@ class SurveyLauncherApp:
         self._refresh_recent_projects()
         self._refresh_tools()
         self.status_var.set(f"Opened {tool.label}")
-        self.log(f"Opened {tool.label} in {work_dir}")
+        self.log(f"Opened {tool.label} in {work_dir}"
+                 + (f" (test run: outputs to {test_output_dir(context, create=False)})" if self.test_run_var.get() else ""))
 
     def run_project_startup(self, context: ProjectContext, tool: ToolSpec) -> None:
         self.status_var.set("Running Project Startup (Word saves the questionnaire PDF and empties Results)...")
@@ -494,7 +535,9 @@ class SurveyLauncherApp:
         self.status_var.set("Running preliminary QC...")
         self.root.update_idletasks()
         try:
-            report_path, counts, inputs = run_prelim_qc(context, app_root=self.app_root)
+            report_path, counts, inputs = run_prelim_qc(
+                context, app_root=self.app_root, test_run=bool(self.test_run_var.get()),
+            )
         except Exception as exc:
             self.status_var.set("Preliminary QC failed")
             messagebox.showerror("Preliminary QC", f"The QC check failed:\n{exc}")
@@ -515,6 +558,132 @@ class SurveyLauncherApp:
             open_path(report_path)
         except Exception:
             pass
+
+    def open_oe_draft(self, context: ProjectContext) -> None:
+        """Draft first code lists for this wave's open ends into a review workbook."""
+        import threading
+
+        test_run = bool(self.test_run_var.get())
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Draft Open-End Code Lists - {context.survey_id}" + (" (TEST RUN)" if test_run else ""))
+        dialog.transient(self.root)
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(1, weight=1)
+
+        data_var = tk.StringVar()
+        plan_var = tk.StringVar()
+        detail_var = tk.StringVar(value="fine")
+        codes_var = tk.StringVar(value="60")
+        bundle_var = tk.BooleanVar(value=True)
+        state = {"spec": None}
+
+        ttk.Label(frame, text="Data file").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(frame, textvariable=data_var, width=80).grid(row=0, column=1, sticky="ew", pady=4)
+        ttk.Label(frame, textvariable=plan_var, justify=tk.LEFT, anchor="w").grid(
+            row=1, column=0, columnspan=3, sticky="ew", pady=(4, 8))
+
+        def replan(data_path: Path | None = None) -> None:
+            try:
+                spec = plan_oe_draft(context, app_root=self.app_root, test_run=test_run, data_path=data_path)
+            except Exception as exc:
+                plan_var.set(f"Could not plan the draft:\n{exc}")
+                state["spec"] = None
+                return
+            state["spec"] = spec
+            data_var.set(spec["data"])
+            lines = [f"Questionnaire: {Path(spec['questionnaire']).name if spec.get('questionnaire') else 'not found'}"]
+            for question in spec["questions"]:
+                lead = question.get("lead")
+                lead_text = f"lead-in {lead['column']} ({', '.join(o for o in lead['options'] if o)[:60]})" if lead else "no lead-in"
+                lines.append(f"  {question['column']}: {question['text'][:70] or '(wording not found)'} | {lead_text}")
+            lines.extend(f"Note: {note}" for note in spec.get("notes", []))
+            lines.append(f"Workbook: {spec['out']}")
+            plan_var.set("\n".join(lines))
+
+        def browse() -> None:
+            start = Path(data_var.get()).parent if data_var.get().strip() else context.project_root
+            chosen = filedialog.askopenfilename(parent=dialog, title="Data file", initialdir=str(start),
+                                                filetypes=[("Data files", "*.csv *.xlsx"), ("All files", "*.*")])
+            if chosen:
+                replan(Path(chosen))
+
+        ttk.Button(frame, text="Browse", command=browse).grid(row=0, column=2, padx=(8, 0), pady=4)
+
+        settings = ttk.Frame(frame)
+        settings.grid(row=2, column=0, columnspan=3, sticky="w")
+        ttk.Label(settings, text="Detail").pack(side=tk.LEFT)
+        ttk.Combobox(settings, textvariable=detail_var, values=("broad", "standard", "fine"), width=10,
+                     state="readonly").pack(side=tk.LEFT, padx=(6, 14))
+        ttk.Label(settings, text="About").pack(side=tk.LEFT)
+        ttk.Spinbox(settings, from_=5, to=150, textvariable=codes_var, width=5).pack(side=tk.LEFT, padx=(6, 4))
+        ttk.Label(settings, text="codes per question").pack(side=tk.LEFT, padx=(0, 14))
+        ttk.Checkbutton(settings, text="Bundle near-duplicate codes", variable=bundle_var).pack(side=tk.LEFT)
+        ttk.Label(frame, text="Runs on this PC; nothing is sent anywhere. Drafts are for analyst review.",
+                  foreground="#555").grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        status_var = tk.StringVar(value="")
+        ttk.Label(frame, textvariable=status_var).grid(row=4, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=5, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        draft_button = ttk.Button(buttons, text="Draft")
+
+        def finished(result: tuple[Path, list[str]] | Exception) -> None:
+            draft_button.configure(state=tk.NORMAL)
+            if isinstance(result, Exception):
+                status_var.set("Drafting failed.")
+                messagebox.showerror("Draft Open-End Code Lists", f"Nothing was written:\n{result}", parent=dialog)
+                return
+            workbook, lines = result
+            for line in lines:
+                self.log(f"Open-end draft {line}")
+            self.log(f"Open-end draft workbook: {workbook}")
+            status_var.set("Done: " + "; ".join(lines))
+            self._refresh_status()
+            if messagebox.askyesno("Draft Open-End Code Lists",
+                                   "\n".join(lines) + f"\n\nWorkbook:\n{workbook}\n\nOpen it now?", parent=dialog):
+                try:
+                    open_path(workbook)
+                except Exception as exc:
+                    messagebox.showerror("Draft Open-End Code Lists", str(exc), parent=dialog)
+
+        def draft() -> None:
+            spec = state["spec"]
+            if not spec or not spec.get("questions") or not spec.get("data"):
+                messagebox.showerror("Draft Open-End Code Lists", "There are no open ends to draft.", parent=dialog)
+                return
+            try:
+                target = max(5, int(codes_var.get()))
+            except ValueError:
+                messagebox.showerror("Draft Open-End Code Lists", "Codes per question must be a number.", parent=dialog)
+                return
+            spec = dict(spec, detail=detail_var.get(),
+                        options={"target_codes": target, "bundle": 0.5 if bundle_var.get() else None})
+            draft_button.configure(state=tk.DISABLED)
+            status_var.set("Drafting... (about a minute; the first run on this PC also loads the model)")
+            outcome: dict[str, Any] = {}
+
+            def work() -> None:
+                try:
+                    outcome["result"] = run_oe_draft(context, spec, app_root=self.app_root)
+                except Exception as exc:  # shown in the dialog
+                    outcome["result"] = exc
+
+            thread = threading.Thread(target=work, daemon=True)
+            thread.start()
+
+            def poll() -> None:
+                if thread.is_alive():
+                    dialog.after(300, poll)
+                else:
+                    finished(outcome["result"])
+
+            poll()
+
+        draft_button.configure(command=draft)
+        ttk.Button(buttons, text="Close", command=dialog.destroy).pack(side=tk.RIGHT)
+        draft_button.pack(side=tk.RIGHT, padx=(0, 8))
+        replan()
 
     def open_sample_append(self, context: ProjectContext) -> None:
         dialog = tk.Toplevel(self.root)

@@ -28,6 +28,14 @@ from sample_quota_checker_settings import (
     save_quota_override,
 )
 
+try:
+    import launch_paths
+except ImportError:  # running from source: shared helpers live in pipelines/common
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+    import launch_paths
+
+APP = "quota_checker"
+
 
 def _launch_work_directory() -> Path | None:
     raw = os.environ.get("SURVEY_PLATFORM_WORK_DIR", "").strip()
@@ -66,10 +74,12 @@ class QuotaCheckerApp:
         self.loaded_quota_path = ""
         self.quota_spec: QuotaSpec | None = None
         self.result: CheckResult | None = None
+        self.last_output = ""
 
         self._build_ui()
 
     def _build_ui(self) -> None:
+        launch_paths.add_test_run_banner(self.root)
         outer = ttk.Frame(self.root, padding=10)
         outer.pack(fill=tk.BOTH, expand=True)
 
@@ -111,6 +121,7 @@ class QuotaCheckerApp:
         actions.pack(fill=tk.X)
         ttk.Button(actions, text="Run Check", command=self.run_check).pack(side=tk.LEFT)
         ttk.Button(actions, text="Export CSV", command=self.export_csv).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(actions, text="Open Output Folder", command=self.open_output_folder).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(actions, textvariable=self.summary_var).pack(side=tk.LEFT, padx=(18, 0))
 
         main = ttk.PanedWindow(outer, orient=tk.VERTICAL)
@@ -160,10 +171,11 @@ class QuotaCheckerApp:
 
     def _browse_quota(self) -> None:
         path = filedialog.askopenfilename(
-            initialdir=_dialog_initial_directory(self.quota_var.get(), self.launch_work_dir),
+            initialdir=launch_paths.input_dir(APP, "quota", self.quota_var.get()),
             filetypes=[("Excel Workbooks", "*.xlsx *.xlsm"), ("All Files", "*.*")],
         )
         if path:
+            launch_paths.remember_dir(APP, "quota", path)
             self.quota_var.set(path)
             self.load_quota_definition(show_errors=True)
             if self.sample_var.get().strip():
@@ -171,10 +183,11 @@ class QuotaCheckerApp:
 
     def _browse_sample(self) -> None:
         path = filedialog.askopenfilename(
-            initialdir=_dialog_initial_directory(self.sample_var.get(), self.launch_work_dir),
+            initialdir=launch_paths.input_dir(APP, "sample", self.sample_var.get()),
             filetypes=[("Sample Data", "*.csv *.xlsx *.xlsm"), ("All Files", "*.*")],
         )
         if path:
+            launch_paths.remember_dir(APP, "sample", path)
             self.sample_var.set(path)
             self._autoload_quota_for_sample(path)
             self.refresh_columns(show_errors=False)
@@ -405,7 +418,7 @@ class QuotaCheckerApp:
             messagebox.showinfo("No Result", "Run a check first.")
             return
         path = filedialog.asksaveasfilename(
-            initialdir=_dialog_initial_directory(self.sample_var.get(), self.launch_work_dir),
+            initialdir=launch_paths.save_dir(APP, self.sample_var.get()),
             defaultextension=".csv",
             filetypes=[("CSV", "*.csv"), ("All Files", "*.*")],
             initialfile="quota_check_report.csv",
@@ -417,7 +430,15 @@ class QuotaCheckerApp:
         except Exception as exc:
             messagebox.showerror("Export Failed", str(exc))
             return
+        launch_paths.remember_dir(APP, "output", path)
+        self.last_output = path
         messagebox.showinfo("Export Complete", f"Wrote {Path(path).name}.")
+
+    def open_output_folder(self) -> None:
+        """Open the folder of the last export (or this run's output folder)."""
+        folder = launch_paths.open_folder(self.last_output or launch_paths.save_dir(APP, self.sample_var.get()))
+        if folder is None:
+            messagebox.showinfo("Open Output Folder", "Export a report first.")
 
 
 def main(argv: list[str] | None = None) -> int:

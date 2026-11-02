@@ -38,6 +38,7 @@ SUITES: tuple[Suite, ...] = (
     Suite("quota", "pipelines/sample_quota_checker", (
         "-m", "unittest", "test_sample_quota_checker.py", "test_quota_workbook_scraper.py",
     )),
+    Suite("common", "pipelines/common", ("-m", "unittest", "test_launch_paths.py")),
     Suite("oe", "pipelines/open_end_coder", (
         "-m", "unittest", "test_oe_codebook_gui.py", "test_oe_record_coder_core.py", "test_oe_record_coder_gui.py",
         "test_oe_codelist_draft.py", "test_oe_lead_in.py", "test_oe_draft_codelist.py", "test_oe_review_import.py",

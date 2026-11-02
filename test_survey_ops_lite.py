@@ -822,6 +822,74 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertEqual(call.kwargs["env"]["SURVEY_PLATFORM_SOURCE_ROOT"], str(project_root))
         self.assertTrue(context.manifest_path.exists())
 
+    def test_test_run_sends_outputs_to_the_og_clean_test_folder(self) -> None:
+        case = self._case_dir()
+        project_root = case / "NPA9989 Project"
+        project_root.mkdir()
+        fake_app = case / "app"
+        for parts in (("table_merger", "sheetMerging_GUI.py"), ("wincross_table_generator", "survey_pipeline_gui.py")):
+            entry = fake_app / "pipelines" / parts[0] / parts[1]
+            entry.parent.mkdir(parents=True)
+            entry.write_text("", encoding="utf-8")
+        context = core.ProjectContext.from_values("9989", project_root)
+        core.run_project_startup(context)
+        expected = project_root / "Job" / "OG Clean" / "NPA9989pt"
+        self.assertEqual(core.test_output_dir(context, create=False), expected)
+        self.assertFalse(expected.exists())
+
+        with patch.object(core.subprocess, "Popen") as popen:
+            _process, work_dir, _command = core.launch_tool(
+                context, core.TOOL_BY_KEY["table_merger"], app_root=fake_app, test_run=True)
+        env = popen.call_args.kwargs["env"]
+        self.assertEqual(work_dir, project_root / "Data")  # inputs still come from Data
+        self.assertEqual(env["SURVEY_PLATFORM_OUTPUT_DIR"], str(expected))
+        self.assertEqual(env["SURVEY_PLATFORM_TEST_RUN"], "1")
+        self.assertTrue(expected.is_dir())
+
+        with patch.object(core.subprocess, "Popen") as popen:
+            _process, work_dir, command = core.launch_tool(
+                context, core.TOOL_BY_KEY["wincross"], app_root=fake_app, test_run=True)
+        self.assertEqual(work_dir, expected)  # Table Gen writes into its work folder
+        self.assertEqual(command[command.index("--work-dir") + 1], str(expected))
+
+        with patch.object(core.subprocess, "Popen") as popen:
+            core.launch_tool(context, core.TOOL_BY_KEY["table_merger"], app_root=fake_app)
+        env = popen.call_args.kwargs["env"]
+        self.assertEqual(env["SURVEY_PLATFORM_OUTPUT_DIR"], str(project_root / "Data"))
+        self.assertEqual(env["SURVEY_PLATFORM_TEST_RUN"], "")
+
+    def test_open_end_draft_plan_finds_data_open_ends_and_lead_ins(self) -> None:
+        case = self._case_dir()
+        project_root = case / "NPA9988 Project"
+        project_root.mkdir()
+        context = core.ProjectContext.from_values("9988", project_root)
+        core.run_project_startup(context)
+        data = project_root / "Data"
+        (data / "NPA9988.csv").write_text(
+            "survnum,q5,q6,c6_1,c6_2,c6_3,3854_q9,3854_c9_1,3854_c9_2,3854_c9_3\n"
+            "1,1,Good on taxes,,,,old,,,\n2,2,Too old,,,,old,,,\n",
+            encoding="utf-8",
+        )
+        (data / "NPA9988 Quotas.csv").write_text("x\n", encoding="utf-8")
+        table_gen = project_root / "Job" / "Table Gen"
+        table_gen.mkdir(parents=True, exist_ok=True)
+        (table_gen / "NPA9988 FinalJSON.json").write_text(json.dumps({"elements": [
+            {"type": "question", "qnum": "5", "text": "Has your opinion of Smith gotten more or less favorable?",
+             "question_type": "opinion_trend", "instructions": [],
+             "response_options": [{"value": "1", "text": "More favorable"}, {"value": "2", "text": "Less favorable"}]},
+            {"type": "question", "qnum": "6", "text": "What are you hearing about Smith?", "instructions": []},
+        ]}), encoding="utf-8")
+
+        spec = core.plan_oe_draft(context, test_run=True)
+
+        self.assertEqual(Path(spec["data"]).name, "NPA9988.csv")
+        self.assertEqual([q["column"] for q in spec["questions"]], ["q6"])  # carried 3854_q9 skipped
+        self.assertEqual(spec["questions"][0]["text"], "What are you hearing about Smith?")
+        self.assertEqual(spec["questions"][0]["lead"]["column"], "q5")
+        self.assertEqual(spec["questions"][0]["lead"]["options"], ["More favorable", "Less favorable"])
+        self.assertEqual(Path(spec["out"]).parent, project_root / "Job" / "OG Clean" / "NPA9988pt")
+        self.assertEqual(spec["notes"], [])
+
     def test_survey_id_path_mismatch_is_reported(self) -> None:
         root = self._case_dir() / "NPA9992 Project"
         root.mkdir()

@@ -13,6 +13,14 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import oe_record_coder_core as core
 
+try:
+    import launch_paths
+except ImportError:  # running from source: shared helpers live in pipelines/common
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+    import launch_paths
+
+APP = "open_end_coder"
+
 
 APP_TITLE = "Open-End Coder"
 STATUS_VALUES = ("All", "Pending", "Coded", "Flagged")
@@ -57,6 +65,9 @@ def parse_launch_context(argv: list[str] | None = None) -> LaunchContext:
 
 def default_session_path(context: LaunchContext) -> Path:
     survey_name = context.survey_id or "open_end"
+    test_folder = launch_paths.output_dir() if launch_paths.is_test_run() else None
+    if test_folder is not None:  # a test run keeps its own session, apart from real coding
+        return test_folder / f"{survey_name}.oe_session.sqlite"
     if context.work_dir is not None:
         return context.work_dir / f"{survey_name}.oe_session.sqlite"
     base = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "NormingtonPetts" / "OpenEndCoder"
@@ -148,6 +159,7 @@ class RecordCoderApp:
         self.root.minsize(1060, 680)
 
     def _build_ui(self) -> None:
+        launch_paths.add_test_run_banner(self.root)
         outer = ttk.Frame(self.root, padding=10)
         outer.pack(fill=tk.BOTH, expand=True)
 
@@ -474,6 +486,7 @@ class RecordCoderApp:
         ttk.Entry(export, textvariable=self.export_var).grid(row=0, column=1, padx=6, pady=8, sticky="ew")
         ttk.Button(export, text="Browse", command=self.browse_export).grid(row=0, column=2, padx=4, pady=8)
         ttk.Button(export, text="Export Coded CSV", command=self.export_coded_csv).grid(row=0, column=3, padx=6, pady=8)
+        ttk.Button(export, text="Open Output Folder", command=self.open_output_folder).grid(row=0, column=4, padx=(0, 6), pady=8)
 
         secondary = ttk.Frame(tab)
         secondary.pack(fill=tk.X)
@@ -1442,19 +1455,28 @@ class RecordCoderApp:
             self.review_status_var.set("Import survey data to begin.")
 
     def _set_default_export(self, source_path: Path) -> None:
-        self.export_var.set(str(source_path.with_name(f"{source_path.stem}.OE-coded.csv")))
+        name = f"{source_path.stem}.OE-coded.csv"
+        test_folder = launch_paths.output_dir() if launch_paths.is_test_run() else None
+        # Beside the imported file, except in a test run (never into the live job folders).
+        self.export_var.set(str((test_folder / name) if test_folder is not None else source_path.with_name(name)))
 
     def browse_export(self) -> None:
         current = Path(self.export_var.get()) if self.export_var.get().strip() else Path.cwd() / "OE-coded.csv"
         picked = filedialog.asksaveasfilename(
             title="Export Coded CSV",
-            initialdir=str(current.parent),
+            initialdir=launch_paths.save_dir(APP, self.export_var.get()) or str(current.parent),
             initialfile=current.name,
             defaultextension=".csv",
             filetypes=[("CSV", "*.csv")],
         )
         if picked:
+            launch_paths.remember_dir(APP, "output", picked)
             self.export_var.set(picked)
+
+    def open_output_folder(self) -> None:
+        """Open the folder the coded CSV and other exports go to."""
+        if launch_paths.open_folder(self.export_var.get() or launch_paths.save_dir(APP)) is None:
+            messagebox.showinfo("Open Output Folder", "Import survey data first.")
 
     def export_coded_csv(self) -> None:
         try:

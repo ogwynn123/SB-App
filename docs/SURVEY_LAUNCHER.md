@@ -11,6 +11,7 @@ remains inside each specialist application or pipeline module.
 | Table Merger | Sheet Merge app (writes the Combined Demographics carry-over after a timeseries merge) | `Data` |
 | Sample Append | launcher dialog over `pipelines\table_merger\sample_append.py` | `Data` |
 | Open-End Coder | OE app | `Data\Partial\Open Ends` or `Data` |
+| Draft Open-End Code Lists | launcher dialog over `pipelines\open_end_coder\oe_draft_codelist.py` | `Data\Partial\Open Ends` or `Data` |
 | Sample Quota Checker | Quota app | `Data` |
 | Trend Table Updater | Trend app | `Job\Table Gen` |
 | Auto Results | Auto Results app | `Data\Partial\Results` or `Data` |
@@ -18,6 +19,45 @@ remains inside each specialist application or pipeline module.
 | TOMAS (hidden unless turned on, see below) | TOMAS app | `Qst\Spanish Ver` |
 | Repository & Question Browser | full dashboard (`survey_platform_gui.py`) | project root |
 | Browser Workbench | `run_survey_browser.bat` | project root |
+
+## Test runs
+
+Tick **Test run** under the survey to try the platform on a real job without
+touching its live folders. While it is on (it is remembered between sessions):
+
+- every app opened from the launcher saves to `Job\OG Clean\<survey id>pt`
+  (e.g. `NPA3887pt`), created when needed; inputs still come from the usual
+  folders. Apps show an amber "Test run" line and their save dialogs start in
+  the test folder;
+- Table Gen's output folder is the test folder;
+- the Table Merger writes the merge and the archived earlier-wave copy there,
+  never overwrites the primary file, and so never copies into `Data`;
+- the Open-End Coder keeps its session and coded CSV there, apart from real coding;
+- Auto Results saves the filled document there instead of beside the template;
+- Preliminary QC writes `QC\<timestamp>` there;
+- the draft open-end workbook goes there.
+
+Weighting and TOMAS do not follow the switch yet. Sample Append and Project
+Startup always write to the project as usual.
+
+## Folders the apps remember
+
+Apps opened from the launcher remember, per project and per app, the folder you
+last picked for each kind of file, and open their dialogs there next time
+(stored in `%LOCALAPPDATA%\SurveyPlatform\remembered_folders.json`). Each app
+has an **Open Output Folder** button for the folder its last output went to.
+
+## Drafting open-end code lists
+
+**Draft Open-End Code Lists** plans the draft before running it: the newest data
+file named after the survey that has open ends (latest wave only in a trended
+file; Browse to choose another), this wave's open ends, and each one's wording
+and lead-in question from Table Gen's questionnaire file (`Job\Table Gen\*JSON.json`,
+or the test folder's). Without that file it still drafts, without lead-in
+splits. Choose the detail (about how many codes per question, default 60 at
+fine detail, with near-duplicate codes bundled) and **Draft**; it runs on this
+PC in about a minute and writes `<survey id> Draft Code Lists.xlsx` for analyst
+review. See `pipelines\open_end_coder\README.md`.
 
 ## Project status panel
 

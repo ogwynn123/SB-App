@@ -42,6 +42,14 @@ except Exception as exc:  # pragma: no cover
 else:
     DOCX_IMPORT_ERROR = None
 
+try:
+    import launch_paths
+except ImportError:  # running from source: shared helpers live in pipelines/common
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+    import launch_paths
+
+APP = "auto_results"
+
 
 def _launch_work_directory() -> Path | None:
     raw = os.environ.get("SURVEY_PLATFORM_WORK_DIR", "").strip()
@@ -1106,6 +1114,8 @@ class AutoResultsGUI:
         self._build_ui()
 
     def _build_ui(self) -> None:
+        launch_paths.add_test_run_banner(self.root)
+        self.last_output = ""
         outer = ttk.Frame(self.root, padding=10)
         outer.pack(fill=tk.BOTH, expand=True)
 
@@ -1149,6 +1159,7 @@ class AutoResultsGUI:
         actions = ttk.Frame(outer)
         actions.pack(fill=tk.X, pady=(0, 8))
         ttk.Button(actions, text="Run", command=self.run_click).pack(side=tk.LEFT, padx=4)
+        ttk.Button(actions, text="Open Output Folder", command=self.open_output_folder).pack(side=tk.LEFT, padx=4)
         ttk.Button(actions, text="Close", command=self.root.destroy).pack(side=tk.LEFT, padx=4)
 
         help_text = (
@@ -1168,30 +1179,38 @@ class AutoResultsGUI:
         )
 
     def _browse_input(self, var: tk.StringVar) -> None:
+        slot = "template" if var is self.template_var else "marginals"
         path = filedialog.askopenfilename(
-            initialdir=_dialog_initial_directory(var.get(), self.launch_work_dir),
+            initialdir=launch_paths.input_dir(APP, slot, var.get()),
             filetypes=[("Word Document", "*.docx"), ("All Files", "*.*")]
         )
         if path:
+            launch_paths.remember_dir(APP, slot, path)
             var.set(path)
             self._maybe_seed_output()
 
     def _browse_xlsx(self, var: tk.StringVar) -> None:
         path = filedialog.askopenfilename(
-            initialdir=_dialog_initial_directory(var.get(), self.launch_work_dir),
+            initialdir=launch_paths.input_dir(APP, "xlsx", var.get()),
             filetypes=[("Excel Workbook", "*.xlsx"), ("All Files", "*.*")]
         )
         if path:
+            launch_paths.remember_dir(APP, "xlsx", path)
             var.set(path)
 
     def _browse_output(self, var: tk.StringVar) -> None:
         path = filedialog.asksaveasfilename(
-            initialdir=_dialog_initial_directory(var.get(), self.launch_work_dir),
+            initialdir=launch_paths.save_dir(APP, var.get()),
             defaultextension=".docx",
             filetypes=[("Word Document", "*.docx"), ("All Files", "*.*")],
         )
         if path:
             var.set(path)
+
+    def open_output_folder(self) -> None:
+        """Open the folder of the last filled document (or this run's output folder)."""
+        if launch_paths.open_folder(self.last_output or self.output_var.get() or launch_paths.save_dir(APP)) is None:
+            messagebox.showinfo("Open Output Folder", "Run AutoResults first.")
 
     def _maybe_seed_output(self) -> None:
         if self.output_var.get().strip():
@@ -1206,7 +1225,9 @@ class AutoResultsGUI:
             stem = f"{match.group('prefix').rstrip()} FILLED"
         else:
             stem = f"{stem} FILLED"
-        self.output_var.set(str(p.with_name(f"{stem}{p.suffix}")))
+        # Beside the template, except in a test run (never into the live job folders).
+        folder = launch_paths.output_dir() if launch_paths.is_test_run() and launch_paths.output_dir() else p.parent
+        self.output_var.set(str(Path(folder) / f"{stem}{p.suffix}"))
 
     def run_click(self) -> None:
         marginals: Path | None = None
@@ -1238,6 +1259,8 @@ class AutoResultsGUI:
                 xlsx_path=xlsx,
                 source_mode=source_mode,
             )
+            launch_paths.remember_dir(APP, "output", stats.output_path)
+            self.last_output = str(stats.output_path)
             self.status_var.set(
                 f"Done: source={source_mode}, used={stats.used_values}, unused={stats.unused_values}, unresolved={stats.unresolved_placeholders}, alignment flags={stats.alignment_issue_count}"
             )

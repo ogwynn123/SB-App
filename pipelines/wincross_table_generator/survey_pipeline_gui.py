@@ -26,6 +26,12 @@ from tkinter.scrolledtext import ScrolledText
 
 import survey_pipeline as pipeline
 
+try:
+    import launch_paths
+except ImportError:  # running from source: shared helpers live in pipelines/common
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+    import launch_paths
+
 
 def _app_base_dir() -> Path:
     # In onefile EXE builds, __file__ points to a temp extraction dir.
@@ -403,6 +409,7 @@ class SurveyPipelineGui:
         self.discover()
 
     def _build_ui(self) -> None:
+        launch_paths.add_test_run_banner(self.root)
         top = ttk.Frame(self.root, padding=10)
         top.pack(fill=tk.X)
 
@@ -429,6 +436,7 @@ class SurveyPipelineGui:
 
         ttk.Button(actions, text="Run Selected", command=self.run_selected).pack(side=tk.LEFT)
         ttk.Button(actions, text="Run All", command=self.run_all).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(actions, text="Open Output Folder", command=self.open_output_folder).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(actions, text="Stop", command=self.stop_runs).pack(side=tk.LEFT, padx=(8, 0))
 
         ttk.Button(actions, text="Select All", command=self.select_all).pack(side=tk.LEFT, padx=(24, 0))
@@ -542,6 +550,12 @@ class SurveyPipelineGui:
         if chosen:
             self.root_var.set(chosen)
             self.discover()
+
+    def open_output_folder(self) -> None:
+        """Open the output folder (the source folder when no output folder is set)."""
+        target = self.output_root_var.get().strip() or self.root_var.get().strip()
+        if not target or not Path(target).expanduser().is_dir() or launch_paths.open_folder(Path(target).expanduser()) is None:
+            messagebox.showinfo("Open Output Folder", "Set an output folder first.")
 
     def browse_output_root(self) -> None:
         initial = self.output_root_var.get() or self.root_var.get() or str(Path.cwd())

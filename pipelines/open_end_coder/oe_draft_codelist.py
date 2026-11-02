@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -40,7 +41,7 @@ sys.path.insert(0, str(HERE))
 
 import oe_codelist_embed as drafter  # noqa: E402
 import oe_record_coder_core as oe  # noqa: E402
-from oe_lead_in import option_direction  # noqa: E402
+from oe_lead_in import find_lead_in, lead_in_column, option_direction  # noqa: E402
 
 STANDARD_NUMBERS = {
     "Have not heard enough / need more info": "96",
@@ -52,12 +53,20 @@ SIDE_MARK = {"positive": "+", "negative": "-"}
 MAX_CODES = 3
 
 
-def read_rows(path: Path, columns: list[str], id_column: str = "survnum") -> list[dict[str, str]]:
-    """Only the columns the drafts need."""
-    with path.open(encoding="utf-8-sig", errors="replace", newline="") as handle:
-        reader = csv.DictReader(handle)
-        wanted = [c for c in [id_column, *columns] if c in (reader.fieldnames or [])]
-        return [{c: row.get(c, "") for c in wanted} for row in reader]
+def read_rows(path: Path, columns: list[str], id_column: str = "survnum", *, latest_wave: bool = True) -> list[dict[str, str]]:
+    """Only the columns the drafts need. In a trended file (with a timeseries
+    column) only the latest wave is kept: earlier waves are already coded."""
+    headers, rows = oe.read_tabular(path)
+    ts_column = oe.resolve_column(headers, "timeseries")
+    wanted = [c for c in [id_column, *columns] if c in headers]
+    kept = [{c: row.get(c, "") for c in wanted} for row in rows]
+    if latest_wave and ts_column:
+        waves = [str(row.get(ts_column, "")).strip().split(".")[0] for row in rows]
+        numbers = [int(w) for w in waves if w.isdigit()]
+        if numbers:
+            latest = str(max(numbers))
+            kept = [row for row, wave in zip(kept, waves) if wave == latest]
+    return kept
 
 
 def number_codes(codes: list) -> list[tuple[str, object]]:
@@ -249,11 +258,98 @@ def run(spec: dict, knowledge_records: list[dict] | None = None):
         columns.append(question["column"])
         if question.get("lead"):
             columns.append(question["lead"]["column"])
-    rows = read_rows(Path(spec["data"]), columns, spec.get("id_column", "survnum"))
+    rows = read_rows(Path(spec["data"]), columns, spec.get("id_column", "survnum"),
+                     latest_wave=spec.get("latest_wave", True))
     results = [draft_question(rows, q, spec.get("detail", "standard"), knowledge_records, spec.get("options"))
                for q in spec["questions"]]
     spec["written"] = str(write_workbook(Path(spec["out"]), spec, results))
     return results
+
+
+# --- Planning a job from its project folder ------------------------------------
+
+DATA_EXCLUDE = ("quota", "codelist", "codebook", ".oe-coded", "audit", "mapping", "weight", "_append")
+
+
+def find_data_file(project_root: Path, survey_id: str) -> Path | None:
+    """The newest data file named after the survey (NPA3887*.csv / .xlsx) that has open ends."""
+    code = re.sub(r"\D", "", survey_id or "")
+    candidates = []
+    for folder in (project_root / "Data" / "Partial", project_root / "Data" / "Partial Data", project_root / "Data"):
+        if not folder.is_dir():
+            continue
+        for path in list(folder.glob("*.csv")) + list(folder.glob("*.xlsx")):
+            name = path.name.casefold()
+            if code and not name.startswith(f"npa{code}"):
+                continue
+            if name.startswith("~$") or any(token in name for token in DATA_EXCLUDE):
+                continue
+            candidates.append(path)
+    for path in sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            headers, _rows = oe.read_tabular(path) if path.suffix.casefold() != ".csv" else (_csv_headers(path), [])
+        except Exception:
+            continue
+        if open_end_columns(headers):
+            return path
+    return None
+
+
+def _csv_headers(path: Path) -> list[str]:
+    with path.open(encoding="utf-8-sig", errors="replace", newline="") as handle:
+        return next(csv.reader(handle), [])
+
+
+def open_end_columns(headers: list[str]) -> list[str]:
+    """This wave's open ends (earlier jobs' questions carried in a trend file, e.g. 3854_q15, are skipped)."""
+    return [spec.text_column for spec in oe.detect_open_end_questions(headers) if not re.match(r"^\d{4}_", spec.name)]
+
+
+def find_questionnaire(folders: list[Path]) -> Path | None:
+    """The newest Table Gen questionnaire file (*JSON.json) in these folders."""
+    found = [path for folder in folders if folder and folder.is_dir() for path in folder.glob("*JSON.json")]
+    return max(found, key=lambda p: p.stat().st_mtime) if found else None
+
+
+def plan_from_project(project_root: Path, survey_id: str, *, questionnaire_folders: list[Path], out_path: Path,
+                      data_path: Path | None = None) -> dict:
+    """A ready-to-run spec for this job, plus "notes" explaining anything missing."""
+    notes: list[str] = []
+    data = data_path or find_data_file(project_root, survey_id)
+    spec = {"data": str(data or ""), "out": str(out_path), "detail": "fine",
+            "options": {"target_codes": 60, "bundle": 0.5}, "questions": [], "notes": notes}
+    if data is None:
+        notes.append(f"No data file named after {survey_id} with open ends was found in Data.")
+        return spec
+    headers = _csv_headers(data) if data.suffix.casefold() == ".csv" else oe.read_tabular(data)[0]
+    columns = open_end_columns(headers)
+    questionnaire = find_questionnaire(questionnaire_folders)
+    elements: list[dict] = []
+    if questionnaire is None:
+        notes.append("No Table Gen questionnaire file (…JSON.json) was found: drafting without question wording "
+                     "or lead-in splits. Run Table Gen first to add them.")
+    else:
+        spec["questionnaire"] = str(questionnaire)
+        elements = json.loads(questionnaire.read_text(encoding="utf-8")).get("elements", [])
+    by_qnum = {str(e.get("qnum") or e.get("qid") or "").lower(): e for e in elements if e.get("type") == "question"}
+    for column in columns:
+        qid = re.sub(r"(?i)^q|oe$", "", column).lower()
+        element = by_qnum.get(qid, {})
+        question = {"column": column, "text": str(element.get("text") or "")}
+        lead = find_lead_in(elements, column) if elements else None
+        lead_column = lead_in_column(headers, lead["qid"]) if lead else None
+        if lead and lead_column:
+            lead_element = by_qnum.get(str(lead["qid"]).lower(), {})
+            options = sorted(lead_element.get("response_options") or [], key=lambda o: int(o["value"]) if str(o.get("value", "")).isdigit() else 999)
+            question["lead"] = {"column": lead_column, "type": lead["type"],
+                                "options": [str(o.get("text") or "") for o in options],
+                                "text": lead["text"]}
+        elif elements:
+            notes.append(f"{column}: no lead-in question found, so codes are not split by side.")
+        spec["questions"].append(question)
+    if not columns:
+        notes.append(f"{data.name} has no open-end columns for this wave.")
+    return spec
 
 
 def main() -> int:

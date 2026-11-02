@@ -43,7 +43,7 @@ hiddenimports = sorted(
 
 a = Analysis(
     ["oe_record_coder_gui.py"],
-    pathex=[str(Path.cwd())],
+    pathex=[str(Path.cwd()), str(Path(SPECPATH).resolve().parent / "common")],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
