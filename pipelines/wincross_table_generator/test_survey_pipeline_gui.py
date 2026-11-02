@@ -24,6 +24,29 @@ class SurveyPipelineGuiTests(unittest.TestCase):
         self.addCleanup(lambda path=case: shutil.rmtree(path, ignore_errors=True))
         return case
 
+    def test_open_folder_targets_the_output_folder_not_the_questionnaire(self) -> None:
+        from types import SimpleNamespace
+
+        case = self._case_dir()
+        source, output = case / "Qst", case / "Job" / "Table Gen"
+        docx, pdf = source / "NPA9999 Final.docx", source / "NPA9999 Final.pdf"
+        with patch.object(gui.pipeline, "find_docx_pdf_pairs_recursive", return_value=[(docx, pdf)]):
+            redirected = gui.discover_pairs_recursive(source, output_root=output)[0]
+            adjacent = gui.discover_pairs_recursive(source)[0]
+
+        def app(output_field: str, job=None):
+            return SimpleNamespace(
+                output_root_var=SimpleNamespace(get=lambda: output_field),
+                jobs={"job": job} if job else {},
+                _selected_job_ids=lambda: ["job"] if job else [],
+            )
+
+        folder = gui.SurveyPipelineGui.output_folder
+        self.assertEqual(folder(app(str(output), adjacent)), output)  # the Output Folder field wins
+        self.assertEqual(folder(app("", redirected)), output)
+        self.assertEqual(folder(app("", adjacent)), adjacent.tables_out.parent)
+        self.assertIsNone(folder(app("")))
+
     def test_discovery_can_redirect_all_outputs(self) -> None:
         case = self._case_dir()
         source = case / "Qst"

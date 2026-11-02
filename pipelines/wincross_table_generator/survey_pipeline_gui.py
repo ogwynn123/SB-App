@@ -436,7 +436,6 @@ class SurveyPipelineGui:
 
         ttk.Button(actions, text="Run Selected", command=self.run_selected).pack(side=tk.LEFT)
         ttk.Button(actions, text="Run All", command=self.run_all).pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(actions, text="Open Output Folder", command=self.open_output_folder).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(actions, text="Stop", command=self.stop_runs).pack(side=tk.LEFT, padx=(8, 0))
 
         ttk.Button(actions, text="Select All", command=self.select_all).pack(side=tk.LEFT, padx=(24, 0))
@@ -550,12 +549,6 @@ class SurveyPipelineGui:
         if chosen:
             self.root_var.set(chosen)
             self.discover()
-
-    def open_output_folder(self) -> None:
-        """Open the output folder (the source folder when no output folder is set)."""
-        target = self.output_root_var.get().strip() or self.root_var.get().strip()
-        if not target or not Path(target).expanduser().is_dir() or launch_paths.open_folder(Path(target).expanduser()) is None:
-            messagebox.showinfo("Open Output Folder", "Set an output folder first.")
 
     def browse_output_root(self) -> None:
         initial = self.output_root_var.get() or self.root_var.get() or str(Path.cwd())
@@ -968,10 +961,21 @@ class SurveyPipelineGui:
         else:
             subprocess.Popen(["xdg-open", str(path)])
 
+    def output_folder(self) -> Path | None:
+        """Where the outputs go: the Output Folder field (Table Gen when opened
+        from the launcher), else the selected survey's output folder."""
+        typed = self.output_root_var.get().strip()
+        if typed:
+            return Path(typed).expanduser()
+        selected = self._selected_job_ids()
+        return self.jobs[selected[0]].tables_out.parent if selected else None
+
     def open_folder(self) -> None:
-        job = self._selected_job()
-        if job:
-            self._open_path(job.folder)
+        folder = self.output_folder()
+        if folder is None:
+            messagebox.showinfo("No Output Folder", "Set an output folder or select a survey row first.")
+            return
+        self._open_path(folder)
 
     def open_raw(self) -> None:
         job = self._selected_job()
