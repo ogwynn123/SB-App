@@ -683,7 +683,7 @@ def build_mapping(
     close and fuzzy matches must hold the same kind of values, and the
     trend file's most recent wave decides between equally close names.
     """
-    from column_aliases import ValueCheck, close_candidates, load_aliases, pick
+    from column_aliases import ValueCheck, canonical, close_candidates, load_aliases, load_directed_aliases, pick
 
     values = ValueCheck(
         primary_df, secondary_df,
@@ -713,6 +713,23 @@ def build_mapping(
             for col in secondary_cols
             if (not is_oth1_col_name(col)) and (not is_auto_map_excluded_col(col))
         ]
+
+        # Pass 0: renamed variables from merge_column_aliases.txt ("gendergrp = sgroup"),
+        # ahead of exact names: this wave may reuse the old name for something else.
+        for left, right in load_directed_aliases():
+            for primary_col in primary_cols:
+                if canonical(primary_col) not in left or primary_col in mapping:
+                    continue
+                if primary_col == primary_join or primary_col.casefold() in blocked_casefold:
+                    continue
+                free = [col for col in secondary_non_oth1 if canonical(col) in right and col not in used_secondary]
+                candidate = pick(primary_col, free, values)
+                if candidate is None:
+                    continue
+                mapping[primary_col] = candidate
+                method[primary_col] = "auto_close"
+                score[primary_col] = int(fuzz.QRatio(primary_col.casefold(), candidate.casefold()))
+                used_secondary[candidate] = primary_col
 
         # Pass 1: exact case-insensitive column-name matches.
         secondary_by_lower: dict[str, str] = {}

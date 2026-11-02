@@ -48,9 +48,11 @@ class CloseNameTests(unittest.TestCase):
         folder.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, folder, True)
         path = folder / "aliases.txt"
-        path.write_text("# note\npgentntscore | presidglturnoutscore | presidgenturnout\nlonely\n", encoding="utf-8")
+        path.write_text("# note\npgentntscore | presidglturnoutscore | presidgenturnout\nlonely\n"
+                        "gendergrp | sex_group = sgroup\n", encoding="utf-8")
         groups = ca.load_aliases(path)
         self.assertEqual(groups, [{"pgentntscore", "presidglturnoutscore", "presidgenturnout"}])
+        self.assertEqual(ca.load_directed_aliases(path), [({"gendergrp", "sexgroup"}, {"sgroup"})])
         self.assertEqual(ca.close_candidates("pgentntscore", ["presidgenturnout", "other"], groups), ["presidgenturnout"])
         self.assertTrue(ca.load_aliases())  # the shipped list loads
 
@@ -101,6 +103,22 @@ class BuildMappingTests(unittest.TestCase):
         )
         self.assertNotIn("marital_status", mapping)
         self.assertEqual(mapping["partisanscore"], "tsmartpartisanscore")
+
+    def test_renamed_variable_wins_over_an_exact_name(self):
+        # Earlier waves' sgroup was the sex group; this wave calls it gendergrp and reuses sgroup for something else.
+        primary = pd.DataFrame({"survnum": ["1", "2", "3"], "gendergrp": ["1", "2", "1"], "sgroup": ["2", "4", "1"]})
+        secondary = pd.DataFrame({"survnum": ["9", "10"], "timeseries": ["1", "2"], "sgroup": ["1", "2"]})
+        mapping, method, _score = build_mapping(
+            list(primary.columns), list(secondary.columns), "survnum", "survnum", "auto", 85, 5, {},
+            primary_df=primary, secondary_df=secondary,
+        )
+        self.assertEqual((mapping["gendergrp"], method["gendergrp"]), ("sgroup", "auto_close"))
+        self.assertNotIn("sgroup", mapping)
+        # A wave without gendergrp keeps the plain exact match.
+        mapping, method, _score = build_mapping(
+            ["survnum", "sgroup"], list(secondary.columns), "survnum", "survnum", "auto", 85, 5, {},
+        )
+        self.assertEqual((mapping["sgroup"], method["sgroup"]), ("sgroup", "auto_exact"))
 
     def test_manual_mappings_still_win(self):
         primary, secondary = self.frames()
