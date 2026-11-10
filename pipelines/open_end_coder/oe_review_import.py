@@ -114,7 +114,9 @@ def _same_text(a: str, b: str) -> bool:
     return squash(a) == squash(b)
 
 
-def read_review(path: Path) -> dict[str, ReviewQuestion]:
+def read_review(path: Path, unused_codes: tuple[str, ...] = ()) -> dict[str, ReviewQuestion]:
+    """Read and check the review. ``unused_codes`` are codes this job does not use
+    (such as 96 on the Stelson tracks); responses given one are reported."""
     from openpyxl import load_workbook
 
     book = load_workbook(path, read_only=True, data_only=True)
@@ -131,7 +133,7 @@ def read_review(path: Path) -> dict[str, ReviewQuestion]:
         else:
             _read_recoded(question, rows, worksheet.title)
     for question in questions.values():
-        _check(question)
+        _check(question, unused_codes)
     return questions
 
 
@@ -189,8 +191,12 @@ def _read_recoded(question: ReviewQuestion, rows: list[tuple], title: str) -> No
         question.rows.append(ReviewRow(survnum, verbatim, codes))
 
 
-def _check(question: ReviewQuestion) -> None:
+NON_ANSWERS = {"96", "97", "99"}  # coded alone: a response with a theme is not a non-answer
+
+
+def _check(question: ReviewQuestion, unused_codes: tuple[str, ...] = ()) -> None:
     listed = set(question.codes) | set(STANDARD_LABELS)
+    unused = {str(c).strip() for c in unused_codes if str(c).strip()}
     for row in question.rows:
         unknown = [c for c in row.codes if c not in listed]
         if unknown:
@@ -201,6 +207,12 @@ def _check(question: ReviewQuestion) -> None:
             row.codes = row.codes[:MAX_CODES]
         if not row.codes:
             question.problems.append(f"survnum {row.survnum}: no codes.")
+        for code in [c for c in row.codes if c in unused]:
+            question.problems.append(f"survnum {row.survnum}: code {code} is used, but this job does not use {code}.")
+        alone = [c for c in row.codes if c in NON_ANSWERS and question.codes.get(c, ReviewCode(c, STANDARD_LABELS[c])).label == STANDARD_LABELS[c]]
+        if alone and len(row.codes) > len(alone):
+            question.problems.append(f"survnum {row.survnum}: {', '.join(alone)} ({', '.join(STANDARD_LABELS[c] for c in alone)}) "
+                                     "given with other codes; a non-answer is coded alone.")
     labels = Counter(c.label.casefold() for c in question.codes.values() if c.label)
     for label, count in labels.items():
         if count > 1:
@@ -298,11 +310,13 @@ def main() -> int:
     parser.add_argument("review", help="Review workbook (.xlsx) with 'Qn final list' and 'Qn recoded' sheets")
     parser.add_argument("--out", required=True, help="Folder for the codelist, assignments and report files")
     parser.add_argument("--session", help="Open-End Coder session (.sqlite) to apply the review to")
+    parser.add_argument("--unused-codes", default="",
+                        help="Codes this job does not use, comma separated (e.g. 96 on the Stelson tracks); uses are reported")
     parser.add_argument("--overwrite-coded", action="store_true",
                         help="Also replace responses that already have codes (from the data file or the coder)")
     args = parser.parse_args()
     review_path = Path(args.review)
-    questions = read_review(review_path)
+    questions = read_review(review_path, tuple(args.unused_codes.split(",")))
     if not questions:
         print("No 'Qn final list' / 'Qn recoded' sheets found.")
         return 1

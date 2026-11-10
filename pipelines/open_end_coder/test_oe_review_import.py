@@ -74,6 +74,17 @@ class ReviewImportTests(unittest.TestCase):
         self.assertIn("without a survnum", text)
         self.assertIn("survnum 105: no codes", text)
 
+    def test_unused_codes_and_non_answers_with_themes_are_reported(self):
+        path = write_review(self.folder / "review.xlsx", extra_rows=[
+            (106, "", "Have not heard", "", 96, None, None, ""),
+            (107, "", "Nothing, too old", "", 97, 3, None, ""),
+        ])
+        q5 = review_import.read_review(path, ("96",))["q5"]
+        text = " ".join(q5.problems)
+        self.assertIn("survnum 106: code 96 is used, but this job does not use 96", text)
+        self.assertIn("survnum 107: 97 (Nothing) given with other codes", text)
+        self.assertEqual(review_import.read_review(write_review(self.folder / "clean.xlsx"), ("96",))["q5"].problems, [])
+
     def test_writes_codelist_the_coder_can_load(self):
         questions = review_import.read_review(write_review(self.folder / "review.xlsx"))
         codelist, assignments, report = review_import.write_outputs(questions, self.folder / "out", "review")

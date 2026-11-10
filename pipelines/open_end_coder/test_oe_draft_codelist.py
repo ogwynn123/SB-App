@@ -53,7 +53,7 @@ class DraftJobTests(unittest.TestCase):
         with mock.patch.object(embed_drafter, "embed", fake_embed):
             job.run(spec)
         book = load_workbook(spec["out"], read_only=True)
-        self.assertEqual(book.sheetnames, ["About", "Summary", "q6 code list", "q6 responses"])
+        self.assertEqual(book.sheetnames, ["About", "Summary", "q6 code list", "q6 responses", "q6 QA"])
         summary = " ".join(str(v) for row in book["Summary"].iter_rows(values_only=True) for v in row if v is not None)
         self.assertIn("Top codes", summary)
         self.assertIn("Main codes, lead-in Less favorable", summary)
@@ -63,6 +63,8 @@ class DraftJobTests(unittest.TestCase):
         self.assertIn(1, codes)
         responses = list(book["q6 responses"].iter_rows(values_only=True))
         self.assertEqual(responses[0][:3], ("survnum", "Verbatim", "Lead-in answer"))
+        self.assertEqual(responses[0][-1], "QA check")
+        self.assertIn("Coherence", list(book["q6 code list"].iter_rows(values_only=True))[0])
         flat = " ".join(str(v) for row in responses for v in row if v is not None)
         self.assertNotIn("5550000", flat)
         self.assertNotIn("Smith", flat)

@@ -40,6 +40,7 @@ class DraftCode:
     net: str = ""  # broader group (NET) the code sits under, if any
     lead: str = ""  # direction or side from the lead-in question, when split on it
     bundled: list[str] = field(default_factory=list)  # labels of near-duplicate codes merged into this one
+    qa: dict = field(default_factory=dict)  # review checks (oe_draft_qa): coherence, flags, per-response notes
 
 
 Drafter = Callable[[list[str], str], list[DraftCode]]

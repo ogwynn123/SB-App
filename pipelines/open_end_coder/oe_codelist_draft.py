@@ -27,6 +27,7 @@ except ImportError:  # pragma: no cover - standalone use
         net: str = ""
         lead: str = ""
         bundled: list[str] = field(default_factory=list)
+        qa: dict = field(default_factory=dict)
 
 
 # --- Text normalisation ----------------------------------------------------

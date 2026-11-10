@@ -181,6 +181,28 @@ everybody"), only within the same side of the lead-in; the bundle keeps its
 largest code's name and the code list's "Bundled from" column shows what went in.
 If the workbook is open in Excel, the runner saves beside it with the time added.
 
+### Review checks on the draft
+
+Before the review, `oe_draft_qa.py` checks the draft on this PC and adds a
+`q14 QA` sheet per question, a **Coherence** and **QA flags** column on the code
+list, and a **QA check** column on the responses. The checks flag; they never
+recode. Each was measured against the analysts' codes on NPA3887pt first:
+
+- **98 rescue:** responses left in Other that share an idea (3 or more) become a
+  new, flagged code ("Not any good"). Moving single Other responses into the
+  nearest existing code was right about 1 time in 9, so that is not done.
+- **Mixed themes:** codes of 5% or more of responses that hold together less
+  well than the question's typical code, and the loosest tenth of all codes, are
+  flagged with a suggested two-way split ("Horrible ads": "His awful ads" /
+  "He lies"). 12 of 16 flagged codes were mixed by the analysts' codes.
+- **Direction pairs:** every +/- pair is listed with how alike its halves are;
+  halves alike enough to be one remark are flagged.
+- **Lead-in contradictions:** a response on the other side of the lead-in from
+  the rest of its code is flagged; about 3 in 4 flagged were miscoded.
+- **Fit:** the tenth of responses furthest from their code are flagged.
+
+Set `"qa": false` in the spec's options to leave the checks out.
+
 ### Bringing a review back in
 
 After an analyst or Claude in the browser reviews the draft, import the review
@@ -193,7 +215,8 @@ py -3 oe_review_import.py review.xlsx --out ../../workspace/NPA3887 [--session p
 ```
 
 It checks the workbook (codes not on the list, more than 3 codes, duplicate or
-missing survnums, missing or shared labels) and writes a codelist CSV the
+missing survnums, missing or shared labels, 96/97/99 given beside other codes,
+and with `--unused-codes 96` any use of a code the job does not use) and writes a codelist CSV the
 Open-End Coder's codelist import reads, an assignments CSV and a report. With
 `--session` it also writes the codes, NETs (NET names with Positive/Negative
 set the +/- direction) and respondents' codes into an Open-End Coder session,

@@ -23,6 +23,8 @@ spec.json:
 "options" object (for the whole spec or one question) passes drafting settings
 through, e.g. {"target_codes": 60, "bundle": 0.5} (bundle merges codes whose
 responses are about the same thing; the code list shows what was bundled).
+Review checks (oe_draft_qa: new codes from recurring Other responses, mixed-theme,
++/- pair and lead-in contradiction flags) run by default; "qa": false turns them off.
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import oe_codelist_embed as drafter  # noqa: E402
+import oe_draft_qa as qa  # noqa: E402
 import oe_record_coder_core as oe  # noqa: E402
 from oe_lead_in import find_lead_in, lead_in_column, option_direction  # noqa: E402
 
@@ -99,6 +102,7 @@ def draft_question(rows: list[dict[str, str]], question: dict, detail: str, know
         leads = [directions.get(value, "") for value in raw]
         answers = [options[int(v) - 1] if v.isdigit() and 0 < int(v) <= len(options) else "" for v in raw]
     settings = {**(settings or {}), **question.get("options", {})}
+    review_checks = settings.pop("qa", True)
     if leads and knowledge_records is not None:
         codes = drafter.draft_code_list_with_house_lead(texts, question.get("text", ""), leads=leads,
                                                         knowledge_records=knowledge_records, detail=detail, **settings)
@@ -106,7 +110,12 @@ def draft_question(rows: list[dict[str, str]], question: dict, detail: str, know
         codes = drafter.draft_code_list_with_lead(texts, question.get("text", ""), leads=leads, detail=detail, **settings)
     else:
         codes = drafter.draft_code_list(texts, question.get("text", ""), detail=detail, **settings)
-    return kept, texts, answers, number_codes(codes)
+    if not review_checks:
+        return kept, texts, answers, number_codes(codes)
+    codes = qa.rescue_other(codes, texts, question.get("text", ""))
+    numbered = number_codes(codes)
+    qa.check_codes(numbered, texts, leads, answers, question.get("text", ""))
+    return kept, texts, answers, numbered
 
 
 def summarise(texts: list[str], answers: list[str], numbered: list[tuple[str, object]], top: int = 15) -> dict:
@@ -156,7 +165,9 @@ def write_workbook(out: Path, spec: dict, results: list) -> Path:
     about.append(["Drafted", datetime.now().strftime("%Y-%m-%d %H:%M")])
     about.append(["Detail", spec.get("detail", "standard")])
     about.append(["Method", "Drafted from this file's verbatims only (no earlier code lists). Codes that draw from both "
-                            "sides of the lead-in question are split; Side shows + / -. Codes 96-99 are the standard codes."])
+                            "sides of the lead-in question are split; Side shows + / -. Codes 96-99 are the standard codes. "
+                            "Each question's QA sheet lists codes and responses the local checks flagged for review; "
+                            "the checks never recode."])
     for question, (kept, texts, answers, numbered) in zip(spec["questions"], results):
         about.append([])
         about.append([question["column"], question.get("text", "")])
@@ -212,14 +223,16 @@ def write_workbook(out: Path, spec: dict, results: list) -> Path:
         name = question["column"]
         n = len(texts)
         sheet = book.create_sheet(f"{name} code list")
-        sheet.append(["Code", "Label", "Side", "NET", "Responses", "% of responses", "Examples", "Bundled from"])
+        sheet.append(["Code", "Label", "Side", "NET", "Responses", "% of responses", "Examples", "Bundled from",
+                      "Coherence", "QA flags"])
         for cell in sheet[1]:
             cell.font = Font(bold=True)
         for number, code in numbered:
             examples = " | ".join(texts[i][:120] for i in code.members[:3])
             sheet.append([int(number), code.label, SIDE_MARK.get(code.lead, ""), code.net, len(code.members),
-                          round(100 * len(code.members) / n, 1) if n else 0, examples, " + ".join(code.bundled)])
-        for column, width in zip("ABCDEFGH", (7, 42, 6, 36, 11, 14, 110, 60)):
+                          round(100 * len(code.members) / n, 1) if n else 0, examples, " + ".join(code.bundled),
+                          code.qa.get("coherence"), "; ".join(code.qa.get("flags", []))])
+        for column, width in zip("ABCDEFGHIJ", (7, 42, 6, 36, 11, 14, 110, 60, 11, 90)):
             sheet.column_dimensions[column].width = width
         sheet.freeze_panes = "A2"
 
@@ -229,20 +242,23 @@ def write_workbook(out: Path, spec: dict, results: list) -> Path:
                 codes_of[i].append(number)
         label_of = {number: code.label for number, code in numbered}
         responses = book.create_sheet(f"{name} responses")
-        header = ["survnum", "Verbatim", "Lead-in answer"] + [f"c{name.lstrip('qQ')}_{k}" for k in range(1, MAX_CODES + 1)] + ["Code labels"]
+        header = (["survnum", "Verbatim", "Lead-in answer"] + [f"c{name.lstrip('qQ')}_{k}" for k in range(1, MAX_CODES + 1)]
+                  + ["Code labels", "QA check"])
         responses.append(header)
         for cell in responses[1]:
             cell.font = Font(bold=True)
+        checks = qa.response_checks(numbered, n, MAX_CODES)
         for i, row in enumerate(kept):
             assigned = codes_of.get(i, [])[:MAX_CODES]
             responses.append([row.get("survnum", ""), texts[i], answers[i]]
                              + [int(c) for c in assigned] + [None] * (MAX_CODES - len(assigned))
-                             + ["; ".join(label_of[c] for c in assigned)])
-        for column, width in zip("ABCDEFGH", (10, 80, 18, 7, 7, 7, 60)):
+                             + ["; ".join(label_of[c] for c in assigned), checks[i]])
+        for column, width in zip("ABCDEFGH", (10, 80, 18, 7, 7, 7, 60, 60)):
             responses.column_dimensions[column].width = width
         for cells in responses.iter_rows(min_row=2, max_col=2, min_col=2):
             cells[0].alignment = Alignment(wrap_text=True, vertical="top")
         responses.freeze_panes = "A2"
+        write_qa_sheet(book.create_sheet(f"{name} QA"), numbered, checks, n)
     out.parent.mkdir(parents=True, exist_ok=True)
     try:
         book.save(out)
@@ -250,6 +266,40 @@ def write_workbook(out: Path, spec: dict, results: list) -> Path:
         out = out.with_name(f"{out.stem} {datetime.now().strftime('%H%M')}{out.suffix}")
         book.save(out)
     return out
+
+
+def write_qa_sheet(sheet, numbered: list[tuple[str, object]], checks: list[str], n: int) -> None:
+    """What the review should look at first: flagged codes, +/- pairs, responses to check."""
+    from openpyxl.styles import Font
+
+    bold = Font(bold=True)
+    label_of = {number: code.label for number, code in numbered}
+    flagged = [(number, code) for number, code in numbered if code.qa.get("flags")]
+    pairs = sorted({tuple(sorted((number, code.qa["pair"][0]), key=int)) + (code.qa["pair"][1],)
+                    for number, code in numbered if code.qa.get("pair")}, key=lambda p: int(p[0]))
+    to_check = sum(1 for line in checks if line)
+    contradictions = sum(1 for line in checks if "lead-in" in line)
+    sheet.append(["Review checks (local, flags only: nothing was recoded)"])
+    sheet["A1"].font = Font(bold=True, size=12)
+    sheet.append(["Codes flagged", len(flagged), "Responses to check", to_check,
+                  "of which lead-in contradictions", contradictions])
+    sheet.append([])
+    sheet.append(["Code", "Label", "Responses", "Coherence", "Flag"])
+    for cell in sheet[sheet.max_row]:
+        cell.font = bold
+    for number, code in flagged:
+        for flag in code.qa["flags"]:
+            sheet.append([int(number), code.label, len(code.members), code.qa.get("coherence"), flag])
+    if pairs:
+        sheet.append([])
+        sheet.append(["+ code", "- code", "Labels", "Alike", "Check: do the two sides really say opposite things?"])
+        for cell in sheet[sheet.max_row]:
+            cell.font = bold
+        for a, b, alike in pairs:
+            sheet.append([int(a), int(b), f"{label_of[a]} / {label_of[b]}", alike])
+    for column, width in zip("ABCDEF", (8, 44, 50, 11, 110, 10)):
+        sheet.column_dimensions[column].width = width
+    sheet.freeze_panes = "A2"
 
 
 def run(spec: dict, knowledge_records: list[dict] | None = None):
