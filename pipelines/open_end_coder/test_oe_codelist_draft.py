@@ -63,6 +63,37 @@ class NonAnswerTests(unittest.TestCase):
         self.assertIsNone(draft.classify_nonanswer("Pass the bill to lower gas prices"))
         self.assertIsNone(draft.classify_nonanswer("Nothing, he raised taxes and cut school funding"))
 
+    def test_remarks_beside_not_hearing_are_coded(self):
+        hearing = "In a few words, what are you hearing about Smith lately?"
+        self.assertIsNone(draft.classify_nonanswer("I don't hear anything good about her.", hearing))
+        self.assertIsNone(draft.classify_nonanswer("I'm not hearing anything good!!!!", hearing))
+        self.assertIsNone(draft.classify_nonanswer("I do not hear anything  but I know she lies", hearing))
+        self.assertIsNone(draft.classify_nonanswer("Nothing specific  just positive vibes", hearing))
+
+    def test_not_hearing_with_a_pronoun_is_nothing(self):
+        hearing = "In a few words, what are you hearing about Smith lately?"
+        self.assertEqual(draft.classify_nonanswer("I haven't heard anything about her.", hearing), "Nothing")
+        self.assertEqual(draft.classify_nonanswer("I am not hearing anything about him.", hearing), "Nothing")
+
+    def test_not_knowing_much_is_dont_know(self):
+        self.assertEqual(draft.classify_nonanswer("I do not know a lot about her."), "Don't know")
+        self.assertEqual(draft.classify_nonanswer("don't know enough about it"), "Don't know")
+
+    def test_declining_to_answer_is_dont_know(self):
+        for text in ["Will not comment.", "Don't care to comment", "I cannot really say.",
+                     "I don't have an answer to that.", "No responde", "Yes"]:
+            self.assertEqual(draft.classify_nonanswer(text), "Don't know", text)
+        self.assertEqual(draft.classify_nonanswer("No not really"), "Nothing")
+
+    def test_job_chooses_the_not_heard_code(self):
+        hearing = "In a few words, what are you hearing about Smith lately?"
+        text = "Our of town and not following local news"
+        self.assertEqual(draft.classify_nonanswer(text, hearing), "Have not heard enough / need more info")
+        self.assertEqual(draft.classify_nonanswer(text, hearing, "97"), "Nothing")
+        self.assertEqual(draft.classify_nonanswer("Not hearing anything", hearing, "96"), "Have not heard enough / need more info")
+        with self.assertRaises(ValueError):
+            draft.classify_nonanswer(text, hearing, "95")
+
 
 class ClusteringTests(unittest.TestCase):
     def test_average_linkage_keeps_separate_themes_apart(self):

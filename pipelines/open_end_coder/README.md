@@ -87,6 +87,13 @@ preliminary code list, with related codes grouped under NETs, for an analyst to
 review. Everything runs on this PC; no responses are sent anywhere.
 
 1. Non-answers go to the house codes (have not heard enough, nothing, don't know).
+   "I don't know much about her" is Don't know (99). Jobs differ on "have not
+   heard anything": by default it is 96, or 97 when it answers a "what are you
+   hearing...?" question. Set `"not_heard": "97"` (or `"96"`, `"99"`) in the
+   spec's options to file every not-heard answer under the job's code. The
+   Stelson tracks use 97 and keep 96 free for a theme. A remark beside the
+   non-answer keeps the response a real answer ("not hearing anything good",
+   "I don't hear anything, but I know she lies").
 2. Words and phrases used by several responses become candidate codes; words
    that only echo the question ("supported", "crypto" for "cryptocurrency") are ignored.
 3. A small local sentence-embedding model (`BAAI/bge-small-en-v1.5`, about

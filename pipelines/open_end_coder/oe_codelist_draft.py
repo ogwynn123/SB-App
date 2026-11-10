@@ -109,14 +109,20 @@ NONANSWER_FAMILIES = [
         r"\b(have not|have n't|never|not|did not|do not) (heard|hearing|seen|read|watched|been following|following|followed|"
         r"paying attention|kept up|keep up)\b|\bheard nothing\b|\bnot (familiar|aware)\b|\bnot heard\b|"
         r"\b(need|have|want) to (look|research|learn|find out|read|hear) (more|into|up|about)\b|\bneed to (do|know) more\b|"
-        r"\bneed more (info|information|research)\b|\b(do not|did not) (know|hear) (much|anything|enough|a lot)\b|"
+        r"\bneed more (info|information|research)\b|\b(do not|did not) hear (much|anything|enough|a lot)\b|"
         r"\bnot (much|enough) (info|information)\b|\bnew to me\b|\bnever heard of\b|\bwho is (he|she|that)\b")),
+    # "I do not know much about her" is Don't know (99), not Not heard enough:
+    # analysts coded 68 of 77 such answers in the corpus 99.
     ("Don't know", re.compile(
         r"\b(do not|did not|really do not) know\b|\bnot sure\b|\bunsure\b|\bno (idea|clue|comment|comments|opinion|answer|reply)\b|"
-        r"\b(can not|do not|could not) (remember|recall|answer|say)\b|\bnot certain\b|\brefused?\b|\bprefer not\b|"
-        r"^(skip|pass|unknown|not applicable)$")),
+        r"\b(can not|do not|could not) (really )?(remember|recall|answer|say)\b|\bnot certain\b|\brefused?\b|\bprefer not\b|"
+        r"^(skip|pass|unknown|not applicable|yes|yeah|yep)$|"
+        # Declining to answer: analysts coded 54 of 88 such answers in the corpus 99.
+        r"\b(will not|do not care to|do not want to|would rather not|rather not|can not|could not|do not really mean to)"
+        r"( really)? (comment|say|answer|be specific|share)\b|"
+        r"\b(do not|did not) have (an|any|a true|a real) (answer|opinion|specifics|comment)\b|^no (answe?r?|respon[sd]e?)$")),
     ("Nothing", re.compile(
-        r"\b(nothing|none|na|nada|nope|no reason|no one|not much|not anything|nothing really)\b|"
+        r"\b(nothing|none|na|nada|nope|no reason|no one|not much|no much|not anything|nothing really)\b|^(no|no not really|not really)$|"
         r"\b(can not|could not) think of\b|\bdo not have (one|any|anything)\b")),
 ]
 # Grammar-only words; opinion words such as like, good, care stay as content.
@@ -128,29 +134,58 @@ mostly staying home currently moment time single word even knew running senate c
 """.split())
 
 
-OPINION_NOTHING_RE = re.compile(r"\bnothing (good|positive|nice|great|bad|negative|but)\b")
-NOT_HEARING_RE = re.compile(r"^(i am |i have |have |i've |i'm )?(not|never) (hearing|heard) (anything|nothing|much)( really| lately)?$|^heard nothing$")
+# "Nothing good about her", "not hearing anything good": a remark, not a non-answer.
+OPINION_NOTHING_RE = re.compile(r"\b(nothing|anything|not much|nothing much) (good|positive|nice|great|bad|negative|but)\b")
+NOT_HEARING_RE = re.compile(
+    r"^(i am |i have |have |i |really )?(not|never|have not|did not|do not) (really )?(hearing|heard|hear)"
+    r"( anything| nothing| much)?( new| really| lately| recently| about (him|her|them|it)| of (him|her))*$|^heard nothing$")
+# Opinion words make a short answer a remark even beside "nothing"
+# ("nothing specific, just positive vibes").
+OPINION_WORDS = set("positive negative good bad great terrible horrible awful nice like likes love hate hates lie lies liar".split())
+NOT_HEARD = "Have not heard enough / need more info"
+NOT_HEARD_CHOICES = {"96": NOT_HEARD, "97": "Nothing", "99": "Don't know"}
 
 
-def classify_nonanswer(text: str, question: str = "") -> str | None:
+def _content_words(text: str) -> list[str]:
+    return [w for w in re.findall(r"[a-z]+", text) if w not in FUNCTION_WORDS and w not in NONANSWER_FILLER and len(w) > 2]
+
+
+def classify_nonanswer(text: str, question: str = "", not_heard: str | None = None) -> str | None:
+    """The house non-answer label for a response, or None for a real answer.
+
+    ``not_heard`` is the code ("96", "97" or "99") the job files "have not
+    heard anything" under. Houses differ: some jobs use 96 Have not heard
+    enough, the Stelson tracks use 97 Nothing and keep 96 for a theme. By
+    default "not hearing anything" in answer to a "what are you hearing...?"
+    question is 97 and other not-heard answers are 96."""
+    chosen = None
+    if not_heard is not None:
+        chosen = NOT_HEARD_CHOICES.get(str(not_heard))
+        if chosen is None:
+            raise ValueError(f"not_heard must be one of {sorted(NOT_HEARD_CHOICES)}, not {not_heard!r}")
     clean = normalize(text)
     if not clean or len(clean) < 2 or not re.search(r"[a-z]", clean):
         return "Don't know"
     if OPINION_NOTHING_RE.search(clean):  # "nothing good about her" is a negative remark
         return None
     if NOT_HEARING_RE.match(clean) and re.search(r"\bhear", question.lower()):
-        return "Nothing"  # "what are you hearing...?" -> "not hearing anything" is house code 97
+        return chosen or "Nothing"  # "what are you hearing...?" -> "not hearing anything" is house code 97
     matched = [label for label, pattern in NONANSWER_FAMILIES if pattern.search(clean)]
     if not matched:
+        return None
+    # "I do not hear anything, but I know she lies": the clause after "but" is a remark.
+    if any(_content_words(part) and not any(p.search(part) for _l, p in NONANSWER_FAMILIES)
+           for part in re.split(r"\bbut\b", clean)[1:]):
         return None
     residual = clean
     for _label, pattern in NONANSWER_FAMILIES:
         residual = pattern.sub(" ", residual)
-    content = [w for w in re.findall(r"[a-z]+", residual) if w not in FUNCTION_WORDS and w not in NONANSWER_FILLER and len(w) > 2]
-    if len(content) > 2:
+    content = _content_words(residual)
+    if len(content) > 2 or OPINION_WORDS & set(content):
         return None
     # "Not heard" outranks "nothing" ("nothing, I have not heard anything about him").
-    return matched[0]
+    label = matched[0]
+    return chosen if label == NOT_HEARD and chosen else label
 
 
 def split_clauses(text: str) -> list[str]:
@@ -163,11 +198,11 @@ def split_clauses(text: str) -> list[str]:
 STANDARD_LABELS = ["Have not heard enough / need more info", "Nothing", "Don't know"]
 
 
-def _standard_codes(texts: list[str], question: str = "") -> tuple[list[DraftCode], list[int]]:
+def _standard_codes(texts: list[str], question: str = "", not_heard: str | None = None) -> tuple[list[DraftCode], list[int]]:
     groups: dict[str, list[int]] = defaultdict(list)
     substantive: list[int] = []
     for index, text in enumerate(texts):
-        label = classify_nonanswer(text, question)
+        label = classify_nonanswer(text, question, not_heard)
         if label:
             groups[label].append(index)
         else:
@@ -426,8 +461,9 @@ def draft_keyword_themes_v2(
     min_share: float = 0.01,
     echo_forms: bool = True,
     min_count: int | None = None,
+    not_heard: str | None = None,
 ) -> list[DraftCode]:
-    standard, substantive = _standard_codes(texts, question)
+    standard, substantive = _standard_codes(texts, question, not_heard)
     stop = question_echo(question) if echo_forms else question_stopwords(question)
     docs: dict[int, list[str]] = {}
     for i in substantive:

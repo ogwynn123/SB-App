@@ -157,7 +157,7 @@ def draft_embedding_clusters(
     max_share: float | None = 0.15,
     split_step: float = 0.04,
 ) -> list[DraftCode]:
-    standard, substantive = _standard_codes(texts)
+    standard, substantive = _standard_codes(texts, question)
     min_size = max(3, round(len(texts) * min_share))
     units: list[str] = []
     owner: list[int] = []
@@ -233,6 +233,7 @@ def draft_keywords_by_meaning(
     split_share: float = 0.25,
     keep_whole=None,
     bundle: float | None = None,
+    not_heard: str | None = None,
 ) -> list[DraftCode]:
     """Word themes (sharp codes), then meaning: drop themes whose wording agrees
     but meaning does not ("never", "instead"), merge codes that say the same
@@ -256,11 +257,13 @@ def draft_keywords_by_meaning(
     two halves of a split share a NET named after the topic, so a reviewer can
     merge them back in one step when both sides really made the same remark.
     Remarks in the editable never-split list (oe_never_split.txt) are always
-    kept whole."""
+    kept whole. ``not_heard`` ("96", "97" or "99") is the job's code for
+    "have not heard anything" (see classify_nonanswer)."""
     from oe_codelist_draft import draft_keyword_themes_v2, light_stem, question_echo
 
     echo = question_echo(question) - {"not", "no"}
-    draft = draft_keyword_themes_v2(texts, question, topic_share=topic_share, min_count=min_count, min_share=min_share)
+    draft = draft_keyword_themes_v2(texts, question, topic_share=topic_share, min_count=min_count, min_share=min_share,
+                                    not_heard=not_heard)
     themes = [c for c in draft if c.label not in STANDARD_OR_OTHER]
     fixed = [c for c in draft if c.label in STANDARD_OR_OTHER and c.label != "Other"]
     other = set(next((c.members for c in draft if c.label == "Other"), []))
@@ -293,7 +296,7 @@ def draft_keywords_by_meaning(
             continue
         candidates.append((set(code.members), clauses, vectors, code.terms))
     if not candidates:
-        return draft_keyword_themes_v2(texts, question)
+        return draft_keyword_themes_v2(texts, question, not_heard=not_heard)
     centroid_matrix = np.stack([c[2].mean(0) / (np.linalg.norm(c[2].mean(0)) or 1) for c in candidates])
     if relative_merge is not None and len(candidates) > 2:
         # Compare candidates on what sets them apart: remove what all of them
