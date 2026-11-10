@@ -203,6 +203,24 @@ recode. Each was measured against the analysts' codes on NPA3887pt first:
 
 Set `"qa": false` in the spec's options to leave the checks out.
 
+### Reviewing with Claude Code (/oe-review)
+
+The `/oe-review` skill (`.claude/skills/oe-review`) does the qualitative pass
+in Claude Code, under the house rules in `oe_review_rules.md`, with
+`oe_llm_review.py` handling the files and checks:
+
+- **Day 1 (from scratch):** `export` the draft workbook, review and recode
+  every response, `build` (refuses incomplete or invalid coding), then import
+  with `oe_review_import.py --session` so the list becomes the job's code list.
+- **Day 2 onward:** import the cumulative data into the job's Open-End Coder
+  session, then `continue` exports the current list (with uses and examples)
+  and only the uncoded responses. A preliminary list made by hand, for example
+  for a new wave of a track, is loaded with `--codelist`. The list is
+  append-only: `build` refuses a removed or renumbered code, numbers new codes
+  after the highest, and changes a label or NET only with `--accept-changes`.
+  The import writes today's responses only.
+- `score` compares a draft or review with analyst-coded data, for testing.
+
 ### Bringing a review back in
 
 After an analyst or Claude in the browser reviews the draft, import the review
