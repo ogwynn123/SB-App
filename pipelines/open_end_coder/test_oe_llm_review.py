@@ -243,5 +243,84 @@ class RecheckTests(unittest.TestCase):
         self.assertEqual(applied.recheck_skipped, ["102"])
 
 
+class FlaggedCodeTests(unittest.TestCase):
+    """A code flagged in the Codebook goes back with its responses to be split."""
+
+    def setUp(self):
+        import oe_record_coder_core as oe
+
+        self.oe = oe
+        self.folder = TMP_ROOT / uuid.uuid4().hex
+        self.folder.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        rows = [(101, "Saw his ads"), (102, "Attack ads on her"), (103, "Ads everywhere"), (104, "Nasty attack ads"),
+                (105, "Veteran")]
+        data = self.folder / "data.csv"
+        with data.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["survnum", "q5", "c5_1", "c5_2", "c5_3"])
+            writer.writerows([s, t, "", "", ""] for s, t in rows)
+        self.session_path = self.folder / "JOB.oe_session.sqlite"
+        with oe.CodingSession(self.session_path) as session:
+            session.import_data(data, key_column="survnum")
+            question = session.questions()[0]
+            self.qid = question.id
+            session.upsert_code(question.id, "1", label="Ads", supercategory="Campaign")
+            session.upsert_code(question.id, "2", label="Veteran", supercategory="Background")
+            by_key = {r.record_key: r for r in session.list_responses(question.id)}
+            for key in ("101", "102", "103"):
+                session.set_assignment(by_key[key].id, ["1"], action="import_review")
+            session.set_assignment(by_key["104"].id, ["1"])  # hand-coded: stays as it is
+            session.set_assignment(by_key["105"].id, ["2"], action="import_review")
+            session.set_code_review_flag(question.id, "1", True, "too broad: seen ads vs attack ads?")
+            self.ids = {k: r.id for k, r in by_key.items()}
+        self.out = self.folder / "day 2"
+        review.continue_export(self.session_path, self.out, recheck=("98", "flagged", "codes"))
+
+    def write(self, name: str, text: str) -> None:
+        (self.out / name).write_text(text, encoding="utf-8")
+
+    def test_flag_is_stored_and_survives_metadata_edits(self):
+        with self.oe.CodingSession(self.session_path) as session:
+            session.upsert_code(self.qid, "1", label="Ads", supercategory="Campaign and ads")
+            info = session.get_code(self.qid, "1")
+        self.assertTrue(info.review_flag)
+        self.assertEqual(info.review_note, "too broad: seen ads vs attack ads?")
+
+    def test_export_sends_the_flagged_code_and_its_untouched_responses(self):
+        text = (self.out / "q5 draft.md").read_text(encoding="utf-8")
+        self.assertIn("1 | Ads | Campaign | 4 | too broad: seen ads vs attack ads?", text.split("## Codes flagged for review")[1])
+        recheck = text.split("## Responses to recheck")[1]
+        for key in ("101", "102", "103"):
+            self.assertIn(f"{key} |  | split 1 | 1 |", recheck)
+        self.assertNotIn("104 |", recheck)  # hand-coded
+        self.assertNotIn("105 |", recheck)  # another code
+
+    def test_split_imports_and_clears_the_flag(self):
+        self.write("q5 list.tsv", "1\tSeen ads\tCampaign\n2\tVeteran\tBackground\n3\tAttack ads\tCampaign\n")
+        self.write("q5 recode.tsv", "101\t1\n102\t3\n103\t1\n")
+        out, problems, summaries = review.build(self.out)  # relabelling a flagged code needs no --accept-changes
+        self.assertEqual(problems, {"q5": []})
+        self.assertTrue(any("label 'Ads' -> 'Seen ads'" in line for line in summaries["q5"]))
+        with self.oe.CodingSession(self.session_path) as session:
+            applied = review_import.apply_to_session(session, review_import.read_review(out))[0]
+            codes = {r.record_key: r.final_codes for r in session.list_responses(self.qid)}
+            flag = session.get_code(self.qid, "1")
+        self.assertEqual(codes["102"], ("3",))
+        self.assertEqual(codes["101"], ("1",))
+        self.assertEqual(codes["104"], ("1",))  # hand-coded, untouched
+        self.assertEqual(applied.codes_reviewed, ["1"])
+        self.assertFalse(flag.review_flag)
+        self.assertIn("Reviewed (split)", flag.review_note)
+        self.assertEqual(flag.label, "Seen ads")
+
+    def test_relabelling_an_unflagged_code_still_needs_agreement(self):
+        self.write("q5 list.tsv", "1\tSeen ads\tCampaign\n2\tMilitary service\tBackground\n")
+        self.write("q5 recode.tsv", "101\t1\n102\t1\n103\t1\n")
+        out, problems, _ = review.build(self.out)
+        self.assertIsNone(out)
+        self.assertIn("code 2: label 'Veteran' -> 'Military service'", " ".join(problems["q5"]))
+
+
 if __name__ == "__main__":
     unittest.main()

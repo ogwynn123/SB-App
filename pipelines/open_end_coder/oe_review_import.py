@@ -76,6 +76,7 @@ class ApplySummary:
     kept_analyst_codes: int = 0
     rechecked: int = 0
     recheck_skipped: list[str] = field(default_factory=list)
+    codes_reviewed: list[str] = field(default_factory=list)
     not_found: list[str] = field(default_factory=list)
     verbatim_mismatch: list[str] = field(default_factory=list)
     locked: list[str] = field(default_factory=list)
@@ -193,7 +194,8 @@ def _read_recoded(question: ReviewQuestion, rows: list[tuple], title: str) -> No
                 codes.append(code)
         verbatim = _text(row[verbatim_column]) if verbatim_column is not None and verbatim_column < len(row) else ""
         recheck = _text(row[recheck_column]).lower() if recheck_column is not None and recheck_column < len(row) else ""
-        question.rows.append(ReviewRow(survnum, verbatim, codes, recheck if recheck in {"98", "flagged"} else ""))
+        valid = recheck in {"98", "flagged"} or re.fullmatch(r"split \d+[a-z]?", recheck)
+        question.rows.append(ReviewRow(survnum, verbatim, codes, recheck if valid else ""))
 
 
 NON_ANSWERS = {"96", "97", "99"}  # coded alone: a response with a theme is not a non-answer
@@ -260,7 +262,8 @@ def render_report(questions: dict[str, ReviewQuestion], applied: list[ApplySumma
         lines.append("")
         lines.append(f"Applied {summary.question}: {summary.codes_written} codes written, {summary.assigned} responses coded, "
                      f"{summary.kept_analyst_codes} already coded and left as they were"
-                     + (f"; {summary.rechecked} earlier responses rechecked" if summary.rechecked else ""))
+                     + (f"; {summary.rechecked} earlier responses rechecked" if summary.rechecked else "")
+                     + (f"; flagged code(s) reviewed: {', '.join(summary.codes_reviewed)}" if summary.codes_reviewed else ""))
         for label, keys in (("not in the session", summary.not_found), ("verbatim differs, skipped", summary.verbatim_mismatch),
                             ("sent back but edited by hand or unflagged since, left as they were", summary.recheck_skipped),
                             ("locked prior wave, skipped", summary.locked)):
@@ -274,8 +277,11 @@ def _recheck_allowed(session: oe.CodingSession, question_name: str, response: oe
     while it is still flagged; a 98 only if its codes were never set by hand."""
     if reason == "flagged":
         return response.flagged
+    untouched = session.last_coding_action(question_name, response.record_key) in ("", "import_review")
     if reason == "98":
-        return "98" in response.final_codes and session.last_coding_action(question_name, response.record_key) in ("", "import_review")
+        return "98" in response.final_codes and untouched
+    if reason.startswith("split "):  # the responses of a code flagged for review in the Codebook
+        return untouched
     return False
 
 
@@ -324,6 +330,15 @@ def apply_to_session(session: oe.CodingSession, questions: dict[str, ReviewQuest
                 continue
             summary.assigned += 1
             summary.rechecked += bool(recheck)
+        # Codes sent to be split have now been reviewed: clear their flag (the note says so).
+        for code in sorted({row.recheck.split()[1] for row in review.rows if row.recheck.startswith("split ")}):
+            try:
+                info = session.get_code(question.id, code)
+            except ValueError:
+                continue
+            if info.review_flag:
+                session.set_code_review_flag(question.id, code, False, f"Reviewed (split) {oe.now_iso()[:10]}: {info.review_note}")
+                summary.codes_reviewed.append(code)
         summaries.append(summary)
     return summaries
 

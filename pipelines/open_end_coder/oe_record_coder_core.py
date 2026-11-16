@@ -145,6 +145,8 @@ class CodeInfo:
     direction: str
     source: str
     active: bool
+    review_flag: bool = False  # flagged in the Codebook for the next Claude review (e.g. to split)
+    review_note: str = ""
 
 
 @dataclass(frozen=True)
@@ -651,6 +653,14 @@ class CodingSession:
             self.connection.execute(
                 "ALTER TABLE responses ADD COLUMN last_source_change_dataset_id INTEGER"
             )
+        code_columns = {
+            str(row["name"]).casefold()
+            for row in self.connection.execute("PRAGMA table_info(codes)").fetchall()
+        }
+        if "review_flag" not in code_columns:
+            self.connection.execute("ALTER TABLE codes ADD COLUMN review_flag INTEGER NOT NULL DEFAULT 0")
+        if "review_note" not in code_columns:
+            self.connection.execute("ALTER TABLE codes ADD COLUMN review_note TEXT NOT NULL DEFAULT ''")
         self.connection.execute(
             "UPDATE responses SET first_seen_dataset_id=dataset_id "
             "WHERE first_seen_dataset_id IS NULL"
@@ -1383,7 +1393,26 @@ class CodingSession:
             direction=str(row["direction"]),
             source=str(row["source"]),
             active=bool(row["active"]),
+            review_flag=bool(row["review_flag"]),
+            review_note=str(row["review_note"]),
         )
+
+    def set_code_review_flag(self, question_id: int, code: str, flagged: bool, note: str = "") -> CodeInfo:
+        """Flag a code for the next Claude review (for example to split a broad code), or clear it."""
+        current = self.get_code(question_id, code)
+        question = self.question(question_id)
+        with self.connection:
+            self.connection.execute(
+                "UPDATE codes SET review_flag=?, review_note=?, updated_at=? WHERE question_id=? AND code=?",
+                (int(flagged), clean_text(note), now_iso(), question_id, current.code),
+            )
+            self.connection.execute(
+                "INSERT INTO audit_log(changed_at, action, question_name, old_value, new_value, detail) "
+                "VALUES(?, 'flag_code' , ?, ?, ?, ?)",
+                (now_iso(), question.name, json.dumps([current.review_flag, current.review_note]),
+                 json.dumps([bool(flagged), clean_text(note)]), current.code),
+            )
+        return self.get_code(question_id, current.code)
 
     def list_codes(self, question_id: int, *, include_inactive: bool = False) -> list[CodeInfo]:
         sql = "SELECT * FROM codes WHERE question_id=?"
@@ -1399,6 +1428,8 @@ class CodingSession:
                 direction=str(row["direction"]),
                 source=str(row["source"]),
                 active=bool(row["active"]),
+                review_flag=bool(row["review_flag"]),
+                review_note=str(row["review_note"]),
             )
             for row in rows
         ]

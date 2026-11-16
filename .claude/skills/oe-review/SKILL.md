@@ -189,8 +189,14 @@ highest existing theme code (skipping 96-99). Do not renumber to close gaps.
    - **flagged**: the user asked for another look; read their note, recode
      the verbatim from scratch, and say in the note column what changed (or
      why the codes stay).
-   The import replaces their codes only if they are still unedited (98) or
-   still flagged; anything changed by hand since is left alone.
+   - **split N**: code N is in **Codes flagged for review** (the user thinks
+     it is too broad). If its responses hold more than one idea, keep N for
+     the part that fits best (you may narrow its label; no `--accept-changes`
+     needed for a flagged code) and add new codes after the highest number,
+     same NET, for the rest; recode each of these responses with the result.
+     If N is fine as it is, keep the codes and say why in `notes.md`.
+   The import replaces their codes only if they are still unedited (98, split)
+   or still flagged; anything changed by hand since is left alone.
 5. Build (`build "<folder>" --unused-codes 96`, plus `--accept-changes` only
    after the user agreed). It refuses a missing, renumbered or misnumbered code.
    Do the QA pass on what it prints.

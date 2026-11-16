@@ -100,7 +100,7 @@ def _draft_from_session(session_path: Path, out: Path, *, not_heard: str | None,
 
 
 def prepare_review(session_path: Path, *, uses_96: bool = False, detail: str = "fine",
-                   folder: Path | None = None, recheck: tuple[str, ...] = ("98", "flagged")) -> PreparedReview:
+                   folder: Path | None = None, recheck: tuple[str, ...] = ("98", "flagged", "codes")) -> PreparedReview:
     session_path = Path(session_path).resolve()
     with oe.CodingSession(session_path) as session:
         if session.active_dataset() is None:
@@ -129,7 +129,7 @@ def _python() -> list[str]:
 
 
 def prepare_review_anywhere(session_path: Path, *, uses_96: bool = False,
-                            recheck: tuple[str, ...] = ("98", "flagged")) -> PreparedReview:
+                            recheck: tuple[str, ...] = ("98", "flagged", "codes")) -> PreparedReview:
     """prepare_review, run through the source Python when this is the packaged exe:
     drafting needs numpy and the local embedding model, which the exe does not carry."""
     if not FROZEN:
@@ -197,7 +197,7 @@ def main() -> int:
     p = sub.add_parser("prepare", help="prepare a Claude review folder for a coder session (prints JSON)")
     p.add_argument("session")
     p.add_argument("--uses-96", action="store_true", help="the job uses 96 Have not heard enough")
-    p.add_argument("--recheck", default="98,flagged", help="earlier responses to send back: 98, flagged (comma separated; '' for none)")
+    p.add_argument("--recheck", default="98,flagged,codes", help="send back: 98, flagged (responses), codes (flagged codes); comma separated, '' for none")
     args = parser.parse_args()
     prepared = prepare_review(Path(args.session), uses_96=args.uses_96,
                               recheck=tuple(r for r in args.recheck.split(",") if r))

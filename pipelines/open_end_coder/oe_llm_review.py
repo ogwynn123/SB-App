@@ -188,7 +188,9 @@ def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, 
     working code list), it is first loaded into the session through the
     coder's own code-list import, which keeps any labels already there.
     ``recheck`` also sends back earlier responses: "98" (coded Other and not
-    edited by hand) and "flagged" (ticked Flag for review in the coder)."""
+    edited by hand), "flagged" (ticked Flag for review in the coder) and
+    "codes" (the responses of codes flagged for review in the Codebook, to
+    split a broad code; hand-edited responses stay out)."""
     import oe_record_coder_core as oe
 
     out.mkdir(parents=True, exist_ok=True)
@@ -213,6 +215,9 @@ def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, 
             standard = {c for c, i in codes.items() if c in STANDARD and i.label.strip().casefold() in
                         {STANDARD[c].casefold(), "none", "nothing", "other", "don't know", "dont know"}}
             fixed = {c: {"label": i.label, "net": i.supercategory} for c, i in codes.items() if c not in standard}
+            # Codes the user flagged in the Codebook (e.g. too broad), sent with their responses to be split.
+            flagged_codes = ({c: i.review_note for c, i in codes.items() if i.review_flag and c in fixed}
+                             if "codes" in recheck else {})
             responses = session.list_responses(info.id, timeseries=latest)
             uses: Counter = Counter()
             examples: dict[str, list[str]] = defaultdict(list)
@@ -229,10 +234,13 @@ def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, 
                     # Earlier responses sent back: flagged ones (the user asked), and 98s
                     # nobody has edited by hand (a hand-set code is never reopened).
                     reason = ""
+                    untouched = session.last_coding_action(info.name, response.record_key) in ("", "import_review")
+                    split = next((c for c in response.final_codes if c in flagged_codes), None)
                     if "flagged" in recheck and response.flagged:
                         reason = "flagged"
-                    elif "98" in recheck and "98" in response.final_codes and \
-                            session.last_coding_action(info.name, response.record_key) in ("", "import_review"):
+                    elif split and untouched:
+                        reason = f"split {split}"
+                    elif "98" in recheck and "98" in response.final_codes and untouched:
                         reason = "98"
                     if reason and response.verbatim.strip():
                         survnum = _survnum(response.record_key)
@@ -261,10 +269,21 @@ def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, 
                       f"## Responses to code ({len(to_code)})", "survnum | lead-in | import status | verbatim"]
             for r in to_code:
                 lines.append(" | ".join([r["survnum"], _clean(r["lead"]), r["status"], _clean(r["verbatim"])]))
+            if flagged_codes:
+                lines += ["", f"## Codes flagged for review ({len(flagged_codes)})",
+                          "The user flagged these codes, usually because they look too broad or combine ideas. Read all "
+                          "their responses (marked 'split N' below). If a code holds more than one proposition, keep its "
+                          "number for the part that fits best (you may narrow its label) and add new codes after the "
+                          "highest number, under the same NET, for the rest. If it is fine as it is, say why in the notes.",
+                          "code | label | NET | responses | user's note"]
+                for code, note in sorted(flagged_codes.items(), key=lambda kv: int(kv[0]) if kv[0].isdigit() else 0):
+                    lines.append(" | ".join([code, _clean(fixed[code]["label"]), _clean(fixed[code]["net"]),
+                                             str(uses.get(code, 0)), _clean(note)]))
             if rechecks:
                 lines += ["", f"## Responses to recheck ({len(rechecks)})",
                           "Already coded on an earlier day. 98: give a code if one now fits (an existing or a new one), "
-                          "else keep 98. Flagged: the user asked for another look; read their note.",
+                          "else keep 98. Flagged: the user asked for another look; read their note. "
+                          "split N: code N is flagged for review (above); recode with the split list.",
                           "survnum | lead-in | why | current codes | user's note | verbatim"]
                 for r in rechecks:
                     lines.append(" | ".join([r["survnum"], _clean(r["lead"]), r["recheck"], ",".join(r["draft"]),
@@ -275,8 +294,11 @@ def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, 
             if rechecks:
                 notes.append(f"{info.name}: {len(rechecks)} earlier response(s) to recheck "
                              f"({sum(r['recheck'] == '98' for r in rechecks)} in 98, "
-                             f"{sum(r['recheck'] == 'flagged' for r in rechecks)} flagged)")
-            job["questions"].append({"name": name, "text": "", "fixed": fixed, "responses": to_code + rechecks})
+                             f"{sum(r['recheck'] == 'flagged' for r in rechecks)} flagged, "
+                             f"{sum(r['recheck'].startswith('split') for r in rechecks)} from "
+                             f"{len(flagged_codes)} flagged code(s))")
+            job["questions"].append({"name": name, "text": "", "fixed": fixed, "responses": to_code + rechecks,
+                                     "flagged_codes": sorted(flagged_codes)})
     (out / "job.json").write_text(json.dumps(job, indent=1), encoding="utf-8")
     return written, notes
 
@@ -380,8 +402,9 @@ def check_continue(question: dict, codes: dict[str, dict], accept_changes: bool 
         for field, name in (("label", "label"), ("net", "NET")):
             if mine[field].strip() != (info[field] or "").strip():
                 change = f"code {code}: {name} {info[field]!r} -> {mine[field]!r}"
-                (changes if accept_changes else problems).append(
-                    change if accept_changes else change + " (ask the user; rebuild with --accept-changes if agreed)")
+                agreed = accept_changes or code in question.get("flagged_codes", [])  # the user flagged it for review
+                (changes if agreed else problems).append(
+                    change if agreed else change + " (ask the user; rebuild with --accept-changes if agreed)")
     numbers = [int(c) for c in fixed if c.isdigit() and c not in STANDARD]
     highest = max(numbers, default=0)
     for code in sorted(set(codes) - set(fixed), key=int):

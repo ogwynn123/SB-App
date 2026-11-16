@@ -125,6 +125,8 @@ class RecordCoderApp:
         self.edit_supercategory_var = tk.StringVar()
         self.edit_direction_var = tk.StringVar(value="o")
         self.edit_active_var = tk.BooleanVar(value=True)
+        self.edit_review_flag_var = tk.BooleanVar(value=False)
+        self.edit_review_note_var = tk.StringVar()
         self.edit_source_var = tk.StringVar(value="user")
         self.codelist_overwrite_var = tk.BooleanVar(value=False)
         self.uses_96_var = tk.BooleanVar(value=False)
@@ -210,7 +212,7 @@ class RecordCoderApp:
         checks = ttk.Frame(setup)
         checks.grid(row=2, column=2, padx=4, pady=5, sticky="w")
         ttk.Checkbutton(checks, text="Job uses 96", variable=self.uses_96_var).pack(anchor="w")
-        ttk.Checkbutton(checks, text="Recheck earlier 98s and flagged", variable=self.recheck_var).pack(anchor="w")
+        ttk.Checkbutton(checks, text="Recheck 98s, flagged responses and codes", variable=self.recheck_var).pack(anchor="w")
         ttk.Button(setup, text="Import Review Workbook...", command=self.import_review_workbook).grid(
             row=2, column=3, columnspan=2, padx=4, pady=5, sticky="e"
         )
@@ -418,7 +420,7 @@ class RecordCoderApp:
         tree_wrap.pack(fill=tk.BOTH, expand=True, padx=(0, 8))
         tree_wrap.grid_rowconfigure(0, weight=1)
         tree_wrap.grid_columnconfigure(0, weight=1)
-        columns = ("code", "label", "supercategory", "direction", "source", "active")
+        columns = ("code", "label", "supercategory", "direction", "source", "active", "review")
         self.codebook_tree = ttk.Treeview(tree_wrap, columns=columns, show="headings", selectmode="browse")
         widths = {
             "code": 70,
@@ -427,6 +429,7 @@ class RecordCoderApp:
             "direction": 70,
             "source": 90,
             "active": 60,
+            "review": 70,
         }
         for column in columns:
             self.codebook_tree.heading(column, text=column.replace("_", " ").title())
@@ -465,8 +468,18 @@ class RecordCoderApp:
         ttk.Checkbutton(editor, text="Active", variable=self.edit_active_var).grid(
             row=5, column=1, padx=6, pady=6, sticky="w"
         )
+        ttk.Checkbutton(
+            editor, text="Flag for review (e.g. too broad: split it)", variable=self.edit_review_flag_var
+        ).grid(row=6, column=1, padx=6, pady=(6, 0), sticky="w")
+        ttk.Label(editor, text="Review note").grid(row=7, column=0, padx=6, pady=6, sticky="w")
+        ttk.Entry(editor, textvariable=self.edit_review_note_var).grid(row=7, column=1, padx=6, pady=6, sticky="ew")
+        ttk.Label(
+            editor,
+            text="Flagged codes go to the next Prepare Claude Review with all their responses.",
+            foreground="#6b6b6b",
+        ).grid(row=8, column=1, padx=6, sticky="w")
         ttk.Button(editor, text="Save Metadata", command=self.save_code_metadata).grid(
-            row=6, column=1, padx=6, pady=10, sticky="e"
+            row=9, column=1, padx=6, pady=10, sticky="e"
         )
 
     def _build_review_tab(self, tab: ttk.Frame) -> None:
@@ -702,7 +715,8 @@ class RecordCoderApp:
         what = (
             "The session has a code list, so this prepares today's new responses, coded against it. "
             "Reused codes keep their numbers; new codes are added after them. "
-            + ("Earlier responses in 98 (not edited by hand) and any you flagged go back for another look."
+            + ("Earlier responses in 98 (not edited by hand), responses you flagged, and the responses of codes "
+               "you flagged in the Codebook (to split them where they combine ideas) go back for another look."
                if self.recheck_var.get() else "")
             if continuing
             else "The session has no code list yet, so this drafts one from scratch on this PC (about a minute), "
@@ -712,7 +726,7 @@ class RecordCoderApp:
             return
         session_path = session.path
         uses_96 = self.uses_96_var.get()
-        recheck = ("98", "flagged") if self.recheck_var.get() else ()
+        recheck = ("98", "flagged", "codes") if self.recheck_var.get() else ()
         outcome: dict[str, object] = {}
 
         def work() -> None:
@@ -1508,6 +1522,7 @@ class RecordCoderApp:
                     item.direction,
                     item.source,
                     "Yes" if item.active else "No",
+                    "Flagged" if item.review_flag else "",
                 ),
             )
 
@@ -1580,6 +1595,8 @@ class RecordCoderApp:
         self.edit_direction_var.set(item.direction)
         self.edit_source_var.set(item.source)
         self.edit_active_var.set(item.active)
+        self.edit_review_flag_var.set(item.review_flag)
+        self.edit_review_note_var.set(item.review_note)
 
     def clear_code_editor(self) -> None:
         self.edit_code_var.set("")
@@ -1588,6 +1605,8 @@ class RecordCoderApp:
         self.edit_direction_var.set("o")
         self.edit_source_var.set("user")
         self.edit_active_var.set(True)
+        self.edit_review_flag_var.set(False)
+        self.edit_review_note_var.set("")
 
     def new_codebook_entry(self) -> None:
         question = self._active_codebook_question()
@@ -1610,6 +1629,11 @@ class RecordCoderApp:
                 source=self.edit_source_var.get() or "user",
                 active=self.edit_active_var.get(),
             )
+            if (item.review_flag, item.review_note) != (self.edit_review_flag_var.get(),
+                                                       core.clean_text(self.edit_review_note_var.get())):
+                item = self.session.set_code_review_flag(
+                    question.id, item.code, self.edit_review_flag_var.get(), self.edit_review_note_var.get()
+                )
         except Exception as exc:
             messagebox.showerror("Codebook save failed", str(exc))
             return
