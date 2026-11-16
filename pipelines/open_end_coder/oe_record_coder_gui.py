@@ -127,6 +127,7 @@ class RecordCoderApp:
         self.edit_active_var = tk.BooleanVar(value=True)
         self.edit_source_var = tk.StringVar(value="user")
         self.codelist_overwrite_var = tk.BooleanVar(value=False)
+        self.uses_96_var = tk.BooleanVar(value=False)
         self.wincross_overwrite_var = tk.BooleanVar(value=False)
 
         self.export_var = tk.StringVar()
@@ -198,6 +199,20 @@ class RecordCoderApp:
             variable=self.codelist_overwrite_var,
         ).grid(row=1, column=3, columnspan=2, padx=6, pady=5, sticky="e")
         ttk.Button(setup, text="Load Codelist", command=self.load_codelist).grid(row=1, column=5, padx=6, pady=5)
+
+        ttk.Label(setup, text="Claude review").grid(row=2, column=0, sticky="w", padx=6, pady=5)
+        ttk.Label(
+            setup,
+            text="No code list yet: drafts from scratch. With a code list (an earlier day or a preliminary list): "
+                 "codes only new responses, adding codes after the reused ones.",
+        ).grid(row=2, column=1, sticky="w", padx=6, pady=5)
+        ttk.Checkbutton(setup, text="Job uses 96", variable=self.uses_96_var).grid(row=2, column=2, padx=4, pady=5)
+        ttk.Button(setup, text="Import Review Workbook...", command=self.import_review_workbook).grid(
+            row=2, column=3, columnspan=2, padx=4, pady=5, sticky="e"
+        )
+        ttk.Button(setup, text="Prepare Claude Review", command=self.prepare_claude_review).grid(
+            row=2, column=5, padx=6, pady=5
+        )
 
         notebook = ttk.Notebook(outer)
         notebook.pack(fill=tk.BOTH, expand=True)
@@ -663,6 +678,158 @@ class RecordCoderApp:
             f"{len(summary.overwrites)} field(s) overwritten."
         )
         self.show_codelist_import_report(summary)
+
+    # --- Claude review ---------------------------------------------------------
+
+    def prepare_claude_review(self) -> None:
+        import threading
+
+        import oe_gui_review as review
+
+        try:
+            session = self._session_required()
+            if session.active_dataset() is None:
+                raise ValueError("Import survey data first.")
+            continuing = review.session_has_code_list(session)
+        except Exception as exc:
+            messagebox.showerror("Claude review", str(exc))
+            return
+        what = (
+            "The session has a code list, so this prepares today's new responses, coded against it. "
+            "Reused codes keep their numbers; new codes are added after them."
+            if continuing
+            else "The session has no code list yet, so this drafts one from scratch on this PC (about a minute), "
+                 "then prepares the review of every response."
+        )
+        if not messagebox.askyesno("Prepare Claude review", f"{what}\n\nContinue?"):
+            return
+        session_path = session.path
+        uses_96 = self.uses_96_var.get()
+        outcome: dict[str, object] = {}
+
+        def work() -> None:
+            try:
+                outcome["review"] = review.prepare_review_anywhere(session_path, uses_96=uses_96)
+            except Exception as exc:  # shown in the window
+                outcome["error"] = exc
+
+        thread = threading.Thread(target=work, daemon=True)
+        thread.start()
+        self.status_var.set("Preparing the Claude review...")
+        self.root.config(cursor="watch")
+
+        def wait() -> None:
+            if thread.is_alive():
+                self.root.after(500, wait)
+                return
+            self.root.config(cursor="")
+            if "error" in outcome:
+                self.status_var.set("Claude review not prepared.")
+                messagebox.showerror("Claude review", str(outcome["error"]))
+                return
+            prepared = outcome["review"]
+            self.status_var.set(f"Claude review prepared: {prepared.folder}")
+            self.show_claude_review(prepared, review)
+
+        self.root.after(500, wait)
+
+    def show_claude_review(self, prepared, review) -> None:
+        import os
+
+        window = tk.Toplevel(self.root)
+        window.title("Claude Review")
+        window.transient(self.root)
+        outer = ttk.Frame(window, padding=12)
+        outer.pack(fill=tk.BOTH, expand=True)
+        mode = "From scratch" if prepared.mode == "scratch" else "Continue from the current code list"
+        counts = ", ".join(f"{name}: {count} to code" for name, count in prepared.questions.items())
+        ttk.Label(outer, text=mode, font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        ttk.Label(outer, text=counts).pack(anchor="w", pady=(2, 6))
+        for note in prepared.notes:
+            ttk.Label(outer, text=note, wraplength=760).pack(anchor="w")
+        cli = review.claude_cli()
+        steps = (
+            "Click Run with Claude, or paste this line into Claude Code (started in the SurveyPlatform folder):"
+            if cli
+            else "Paste this line into Claude Code, started in the SurveyPlatform folder. It has been copied:"
+        )
+        ttk.Label(outer, text=steps, wraplength=760).pack(anchor="w", pady=(8, 2))
+        prompt_var = tk.StringVar(value=prepared.prompt)
+        ttk.Entry(outer, textvariable=prompt_var, width=110, state="readonly").pack(fill=tk.X)
+        ttk.Label(
+            outer,
+            text="When it finishes, the coding is already in this session: click Refresh. "
+                 "Check it in Code Responses with Import set to 'New or changed'.",
+            wraplength=760,
+        ).pack(anchor="w", pady=(8, 8))
+        status_var = tk.StringVar(value="")
+        ttk.Label(outer, textvariable=status_var, wraplength=760).pack(anchor="w")
+
+        def copy() -> None:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(prepared.prompt)
+            status_var.set("Copied.")
+
+        def run() -> None:
+            try:
+                process = review.run_claude(cli, prepared)
+            except Exception as exc:
+                messagebox.showerror("Run with Claude", str(exc), parent=window)
+                return
+            run_button.config(state="disabled")
+            status_var.set(f"Claude is coding... (log: {prepared.folder / 'claude run.log'})")
+
+            def poll() -> None:
+                code = process.poll()
+                if code is None:
+                    window.after(3000, poll)
+                    return
+                run_button.config(state="normal")
+                self.refresh_all()
+                status_var.set("Finished. The session is refreshed." if code == 0 else
+                               f"Claude stopped with exit code {code}; see the log in the review folder.")
+
+            window.after(3000, poll)
+
+        buttons = ttk.Frame(outer)
+        buttons.pack(fill=tk.X, pady=(6, 0))
+        ttk.Button(buttons, text="Copy Line", command=copy).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Open Folder", command=lambda: os.startfile(str(prepared.folder))).pack(side=tk.LEFT, padx=6)
+        ttk.Button(buttons, text="Refresh", command=self.refresh_all).pack(side=tk.LEFT)
+        run_button = ttk.Button(buttons, text="Run with Claude", command=run, state="normal" if cli else "disabled")
+        run_button.pack(side=tk.RIGHT)
+        if not cli:
+            ttk.Label(outer, text="Run with Claude needs the Claude Code command-line tool; it was not found.").pack(anchor="w")
+        copy()
+
+    def import_review_workbook(self) -> None:
+        import oe_gui_review as review
+
+        try:
+            session = self._session_required()
+        except Exception as exc:
+            messagebox.showerror("Import review", str(exc))
+            return
+        picked = filedialog.askopenfilename(
+            title="Select Review Workbook",
+            initialdir=str(session.path.parent),
+            filetypes=[("Review workbooks", "*.xlsx"), ("All files", "*.*")],
+        )
+        if not picked:
+            return
+        if not messagebox.askyesno(
+            "Import review",
+            "Write this review's codes and assignments into the session? Responses that already have codes are left as they are.",
+        ):
+            return
+        try:
+            report = review.import_review(session.path, Path(picked), uses_96=self.uses_96_var.get())
+        except Exception as exc:
+            messagebox.showerror("Import review failed", str(exc))
+            return
+        self.refresh_all()
+        self.status_var.set(f"Imported review: {Path(picked).name}")
+        messagebox.showinfo("Review imported", report[:3000])
 
     def show_codelist_import_report(self, summary: core.CodelistImportSummary) -> None:
         differences = [

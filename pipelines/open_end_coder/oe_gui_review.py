@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""The Open-End Coder's "Prepare Claude Review" and "Import Review Workbook" steps.
+
+Kept apart from the window so it can be tested and run without Tk.
+
+prepare_review(session) looks at the session and picks the mode:
+
+- **From scratch** (no codes in the session yet): drafts a first code list on
+  this PC from the session's responses (the local drafter plus its QA checks),
+  then exports it for the review.
+- **Continue** (the session already has codes: an earlier day's coding, or a
+  preliminary list loaded with Load Codelist): exports the current list and only
+  the uncoded responses. Reused codes keep their numbers; new codes are added
+  after the highest.
+
+Either way it writes a review folder beside the session and returns the one
+line to paste into Claude Code (``/oe-review "<folder>"``). The folder's
+job.json records the session and the job's unused codes, so the skill imports
+the finished review back into the same session. If the Claude Code command-line
+tool is installed, run_claude() runs that line in the background instead.
+
+import_review() brings any finished review workbook (from the skill, or a
+browser review in the same format) into the session.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+
+FROZEN = bool(getattr(sys, "frozen", False))  # running inside the packaged oe_record_coder_gui.exe
+# The packaged exe lives in pipelines/open_end_coder/dist; the scripts and the skill stay in the source tree.
+HERE = Path(sys.executable).resolve().parents[1] if FROZEN else Path(__file__).resolve().parent
+REPO = HERE.parents[1]
+sys.path.insert(0, str(HERE))
+
+import oe_llm_review as llm  # noqa: E402
+import oe_record_coder_core as oe  # noqa: E402
+
+STANDARD_LABEL_WORDS = {"have not heard enough / need more info", "nothing", "none", "other", "don't know", "dont know"}
+
+
+@dataclass
+class PreparedReview:
+    folder: Path
+    mode: str  # "scratch" or "continue"
+    prompt: str
+    questions: dict[str, int] = field(default_factory=dict)  # question -> responses to code
+    notes: list[str] = field(default_factory=list)
+
+
+def _theme_codes(session: oe.CodingSession, question_id: int) -> list[oe.CodeInfo]:
+    return [c for c in session.list_codes(question_id)
+            if not (c.code in llm.STANDARD and c.label.strip().casefold() in STANDARD_LABEL_WORDS)]
+
+
+def session_has_code_list(session: oe.CodingSession) -> bool:
+    return any(_theme_codes(session, q.id) for q in session.questions())
+
+
+def review_folder(session_path: Path, mode: str) -> Path:
+    stem = session_path.name.split(".")[0]
+    label = "from scratch" if mode == "scratch" else "continue"
+    return session_path.parent / "OE review" / f"{stem} {datetime.now():%Y-%m-%d %H%M} {label}"
+
+
+def _draft_from_session(session_path: Path, out: Path, *, not_heard: str | None, detail: str) -> Path:
+    """Draft workbook for every question, from the latest wave's responses in the session."""
+    import oe_draft_codelist as runner
+
+    rows_by_key: dict[str, dict[str, str]] = {}
+    names = []
+    with oe.CodingSession(session_path) as session:
+        latest = session.max_timeseries()
+        dataset = session.active_dataset()
+        source = str(dataset["source_path"]) if dataset is not None else ""
+        for question in session.questions():
+            names.append(question.name)
+            for response in session.list_responses(question.id, timeseries=latest):
+                row = rows_by_key.setdefault(response.record_key, {"survnum": llm._survnum(response.record_key)})
+                row[question.name] = response.verbatim
+    rows = list(rows_by_key.values())
+    spec = {"data": source, "out": str(out), "detail": detail,
+            "questions": [{"column": name, "text": ""} for name in names],
+            "options": {"bundle": 0.5, **({"not_heard": not_heard} if not_heard else {})}}
+    try:
+        from oe_codelist_eval import load_questions
+
+        knowledge = load_questions() or None
+    except Exception:  # no coded archive on this PC
+        knowledge = None
+    results = [runner.draft_question(rows, q, detail, knowledge, spec["options"]) for q in spec["questions"]]
+    return runner.write_workbook(out, spec, results)
+
+
+def prepare_review(session_path: Path, *, uses_96: bool = False, detail: str = "fine",
+                   folder: Path | None = None) -> PreparedReview:
+    session_path = Path(session_path).resolve()
+    with oe.CodingSession(session_path) as session:
+        if session.active_dataset() is None:
+            raise ValueError("Import survey data into the session first.")
+        mode = "continue" if session_has_code_list(session) else "scratch"
+    folder = folder or review_folder(session_path, mode)
+    folder.mkdir(parents=True, exist_ok=True)
+    notes: list[str] = []
+    if mode == "scratch":
+        draft = _draft_from_session(session_path, folder / f"{session_path.name.split('.')[0]} Draft Code Lists.xlsx",
+                                    not_heard=None if uses_96 else "97", detail=detail)
+        llm.export(draft, folder)
+    else:
+        _written, notes = llm.continue_export(session_path, folder)
+    job_path = folder / "job.json"
+    job = json.loads(job_path.read_text(encoding="utf-8"))
+    job.update({"mode": mode, "session": str(session_path), "unused_codes": [] if uses_96 else ["96"]})
+    job_path.write_text(json.dumps(job, indent=1), encoding="utf-8")
+    counts = {q["name"]: len(q["responses"]) for q in job["questions"]}
+    return PreparedReview(folder, mode, f'/oe-review "{folder}"', counts, notes)
+
+
+def _python() -> list[str]:
+    launcher = shutil.which("py")
+    return [launcher, "-3"] if launcher else [shutil.which("python") or "python"]
+
+
+def prepare_review_anywhere(session_path: Path, *, uses_96: bool = False) -> PreparedReview:
+    """prepare_review, run through the source Python when this is the packaged exe:
+    drafting needs numpy and the local embedding model, which the exe does not carry."""
+    if not FROZEN:
+        return prepare_review(session_path, uses_96=uses_96)
+    command = _python() + [str(HERE / "oe_gui_review.py"), "prepare", str(session_path)] + (["--uses-96"] if uses_96 else [])
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    done = subprocess.run(command, cwd=str(HERE), capture_output=True, text=True, encoding="utf-8", creationflags=flags)
+    if done.returncode != 0:
+        raise RuntimeError((done.stderr or done.stdout or "Preparing the review failed.").strip()[-1500:])
+    data = json.loads(done.stdout.strip().splitlines()[-1])
+    return PreparedReview(Path(data["folder"]), data["mode"], data["prompt"], data["questions"], data["notes"])
+
+
+# --- running and importing -----------------------------------------------------
+
+def claude_cli() -> str | None:
+    """The Claude Code command-line tool, if installed."""
+    found = shutil.which("claude")
+    if found:
+        return found
+    home = Path.home()
+    for candidate in (home / ".local" / "bin" / "claude.exe", Path(os.environ.get("APPDATA", "")) / "npm" / "claude.cmd",
+                      Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "claude" / "claude.exe"):
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def claude_command(cli: str, review: PreparedReview) -> list[str]:
+    """Run the skill headless from the repository (where the skill lives), allowed to
+    run the platform's Python scripts and read and write files in the review folder."""
+    return [cli, "-p", review.prompt, "--add-dir", str(review.folder), "--add-dir", str(Path(json.loads(
+        (review.folder / "job.json").read_text(encoding="utf-8"))["session"]).parent),
+            "--allowedTools", "Bash(py -3:*)", "Read", "Write", "Edit", "Glob", "Grep"]
+
+
+def run_claude(cli: str, review: PreparedReview, log_path: Path | None = None) -> subprocess.Popen:
+    log_path = log_path or review.folder / "claude run.log"
+    log = log_path.open("w", encoding="utf-8")
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    return subprocess.Popen(claude_command(cli, review), cwd=str(REPO), stdout=log, stderr=subprocess.STDOUT,
+                            stdin=subprocess.DEVNULL, creationflags=flags)
+
+
+def import_review(session_path: Path, workbook: Path, *, uses_96: bool = False, overwrite_coded: bool = False) -> str:
+    """Apply a finished review workbook to the session; returns the import report."""
+    import oe_review_import as review_import
+
+    questions = review_import.read_review(Path(workbook), () if uses_96 else ("96",))
+    if not questions:
+        raise ValueError("No 'Qn final list' / 'Qn recoded' sheets in that workbook.")
+    with oe.CodingSession(Path(session_path)) as session:
+        applied = review_import.apply_to_session(session, questions, overwrite_coded=overwrite_coded)
+    _codelist, _assignments, report = review_import.write_outputs(questions, Path(workbook).parent, Path(workbook).stem)
+    text = review_import.render_report(questions, applied)
+    report.write_text(text, encoding="utf-8")
+    return text
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("prepare", help="prepare a Claude review folder for a coder session (prints JSON)")
+    p.add_argument("session")
+    p.add_argument("--uses-96", action="store_true", help="the job uses 96 Have not heard enough")
+    args = parser.parse_args()
+    prepared = prepare_review(Path(args.session), uses_96=args.uses_96)
+    print(json.dumps({"folder": str(prepared.folder), "mode": prepared.mode, "prompt": prepared.prompt,
+                      "questions": prepared.questions, "notes": prepared.notes}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

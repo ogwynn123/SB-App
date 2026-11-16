@@ -42,7 +42,7 @@ SUITES: tuple[Suite, ...] = (
     Suite("oe", "pipelines/open_end_coder", (
         "-m", "unittest", "test_oe_codebook_gui.py", "test_oe_record_coder_core.py", "test_oe_record_coder_gui.py",
         "test_oe_codelist_draft.py", "test_oe_lead_in.py", "test_oe_draft_codelist.py", "test_oe_review_import.py",
-        "test_oe_draft_qa.py", "test_oe_llm_review.py",
+        "test_oe_draft_qa.py", "test_oe_llm_review.py", "test_oe_gui_review.py",
     )),
     Suite("tomas", "pipelines/thomas_in_a_box", (
         "-m", "unittest", "test_tomas_docx_rebuilder.py", "test_tomas_pipeline.py", "test_tomas_translate.py",

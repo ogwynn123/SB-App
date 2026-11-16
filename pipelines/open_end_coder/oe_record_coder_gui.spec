@@ -50,7 +50,10 @@ a = Analysis(
     hookspath=[str(HOOK_ROOT)],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # Drafting (numpy + the local embedding model) runs through the source Python
+    # (oe_gui_review.prepare_review_anywhere), so the exe does not carry it.
+    excludes=["oe_draft_codelist", "oe_codelist_embed", "oe_embeddings", "oe_draft_qa", "oe_codelist_eval",
+              "oe_codelist_draft", "oe_codelist_kb", "oe_lead_in_corpus", "numpy", "fastembed", "onnxruntime"],
     noarchive=False,
     optimize=0,
 )

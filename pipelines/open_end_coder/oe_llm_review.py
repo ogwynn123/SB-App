@@ -197,7 +197,7 @@ def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, 
     with oe.CodingSession(session_path) as session:
         if codelist is not None:
             summary = session.load_codelist(codelist)
-            notes.append(f"Loaded {codelist.name}: {summary.added} codes added, {summary.updated} updated; "
+            notes.append(f"Loaded {codelist.name}: {summary.added_code_count} codes added, {summary.updated_code_count} updated; "
                          f"{len(summary.conflicts)} differing labels kept as they were in the session")
         latest = session.max_timeseries()
         for info in session.questions():

@@ -221,6 +221,16 @@ in Claude Code, under the house rules in `oe_review_rules.md`, with
   The import writes today's responses only.
 - `score` compares a draft or review with analyst-coded data, for testing.
 
+In the Open-End Coder, **Prepare Claude Review** does the export step for you
+(`oe_gui_review.py`): with no code list in the session it drafts one from
+scratch on this PC; with one (an earlier day, or a preliminary list loaded with
+**Load Codelist**) it prepares only the uncoded responses, reused codes keeping
+their numbers. It copies one `/oe-review "<folder>"` line to paste into Claude
+Code, or runs it with **Run with Claude** when the Claude Code command-line
+tool is installed; the skill imports the result into the session. **Import
+Review Workbook...** brings any finished review (also a browser review) in.
+The review folders go in `OE review` beside the session.
+
 ### Bringing a review back in
 
 After an analyst or Claude in the browser reviews the draft, import the review

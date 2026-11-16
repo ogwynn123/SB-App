@@ -19,6 +19,22 @@ The house rules are in `pipelines/open_end_coder/oe_review_rules.md`. **Read
 that file in full before coding anything**; it is the brief, and it wins over
 anything below if they differ.
 
+## Prepared by the Open-End Coder
+
+If you are given a folder that contains a `job.json` (the coder's **Prepare
+Claude Review** button makes one), the export is already done. Read `job.json`:
+
+- `mode` is `"scratch"` (go to step 3, then 4, 5 and 6) or `"continue"` (go to
+  Continue step 2 onward).
+- `session` is the coder session to import into at the end (step 6 /
+  Continue step 6), always with `--session`.
+- `unused_codes` lists codes the job does not use: pass them to `build` and
+  the importer as `--unused-codes` (leave the option out if the list is empty).
+
+Write the TSV files into that same folder. Do not ask the user for anything
+the folder already answers. When run without anyone watching, never use
+`--accept-changes`: leave a wanted label change in the notes instead.
+
 ## 0. Day 1 or a later day?
 
 - **Day 1 (from scratch):** the job has no code list yet. Follow steps 1-8.
