@@ -435,6 +435,7 @@ class RecordCoderApp:
             )
         scrollbar = ttk.Scrollbar(tree_wrap, orient=tk.VERTICAL, command=self.codebook_tree.yview)
         self.codebook_tree.configure(yscrollcommand=scrollbar.set)
+        self.codebook_tree.bind("<Double-1>", self.show_code_responses)
         self.codebook_tree.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.codebook_tree.bind("<<TreeviewSelect>>", lambda _event: self.codebook_selected())
@@ -1502,6 +1503,61 @@ class RecordCoderApp:
                     "Yes" if item.active else "No",
                 ),
             )
+
+    def show_code_responses(self, event=None) -> None:
+        """Double-click on a codebook row: every response given that code, in full,
+        with the code's key words in bold. A read-only window for review at a glance."""
+        import tkinter.font as tkfont
+
+        import oe_code_glance as glance
+
+        if self.codebook_tree is None or self.session is None:
+            return
+        code = self.codebook_tree.identify_row(event.y) if event is not None else ""
+        code = code or (self.codebook_tree.selection() or ("",))[0]
+        question = self._active_codebook_question()
+        if not code or question is None:
+            return
+        info = self.session.get_code(question.id, code)
+        responses = self.session.list_responses(question.id, code_filter=code, code_scope="final")
+        everyone = [r.verbatim for r in self.session.list_responses(question.id)]
+        terms = glance.key_terms(info.label, [r.verbatim for r in responses], everyone)
+
+        window = tk.Toplevel(self.root)
+        window.title(f"{question.name} code {code}: {info.label or '(no label)'}")
+        window.transient(self.root)
+        window.geometry(f"{min(1000, self.root.winfo_width())}x{min(700, self.root.winfo_height())}")
+        outer = ttk.Frame(window, padding=10)
+        outer.pack(fill=tk.BOTH, expand=True)
+        heading = f"{code}  {info.label or '(no label)'}"
+        ttk.Label(outer, text=heading, font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        net = f"NET: {info.supercategory}   " if info.supercategory else ""
+        ttk.Label(outer, text=f"{net}{len(responses)} response(s). Bold: words the code's responses share.").pack(
+            anchor="w", pady=(2, 8)
+        )
+        body = ttk.Frame(outer)
+        body.pack(fill=tk.BOTH, expand=True)
+        base = tkfont.nametofont("TkTextFont").actual()
+        text = tk.Text(body, wrap="word", font=(base["family"], 11), padx=8, pady=6, relief="flat")
+        bar = ttk.Scrollbar(body, orient=tk.VERTICAL, command=text.yview)
+        text.configure(yscrollcommand=bar.set)
+        text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        bar.pack(side=tk.RIGHT, fill=tk.Y)
+        text.tag_configure("bold", font=(base["family"], 11, "bold"))
+        text.tag_configure("key", foreground="#6b6b6b", font=(base["family"], 9))
+        for response in responses:
+            others = [c for c in response.final_codes if c != code]
+            text.insert(tk.END, response.record_key + ("   also " + ", ".join(others) if others else "") + "\n", "key")
+            verbatim = response.verbatim
+            position = 0
+            for start, end in glance.bold_spans(verbatim, terms):
+                text.insert(tk.END, verbatim[position:start])
+                text.insert(tk.END, verbatim[start:end], "bold")
+                position = end
+            text.insert(tk.END, verbatim[position:] + "\n\n")
+        if not responses:
+            text.insert(tk.END, "No responses have this code.")
+        text.configure(state="disabled")
 
     def codebook_selected(self) -> None:
         if self.codebook_tree is None or self.session is None:
