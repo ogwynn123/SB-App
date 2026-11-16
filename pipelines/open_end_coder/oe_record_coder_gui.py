@@ -754,7 +754,9 @@ class RecordCoderApp:
             else "Paste this line into Claude Code, started in the SurveyPlatform folder. It has been copied:"
         )
         ttk.Label(outer, text=steps, wraplength=760).pack(anchor="w", pady=(8, 2))
-        prompt_var = tk.StringVar(value=prepared.prompt)
+        # Tk variables are emptied when Python drops them, so the window keeps them.
+        prompt_var = tk.StringVar(master=window, value=prepared.prompt)
+        window.prompt_var = prompt_var
         ttk.Entry(outer, textvariable=prompt_var, width=110, state="readonly").pack(fill=tk.X)
         ttk.Label(
             outer,
@@ -762,7 +764,8 @@ class RecordCoderApp:
                  "Check it in Code Responses with Import set to 'New or changed'.",
             wraplength=760,
         ).pack(anchor="w", pady=(8, 8))
-        status_var = tk.StringVar(value="")
+        status_var = tk.StringVar(master=window, value="")
+        window.status_var = status_var
         ttk.Label(outer, textvariable=status_var, wraplength=760).pack(anchor="w")
 
         def copy() -> None:
