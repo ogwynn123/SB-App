@@ -57,6 +57,7 @@ class ReviewRow:
     survnum: str
     verbatim: str
     codes: list[str]
+    recheck: str = ""  # "98" or "flagged": an earlier response sent back for another look
 
 
 @dataclass
@@ -73,6 +74,8 @@ class ApplySummary:
     codes_written: int = 0
     assigned: int = 0
     kept_analyst_codes: int = 0
+    rechecked: int = 0
+    recheck_skipped: list[str] = field(default_factory=list)
     not_found: list[str] = field(default_factory=list)
     verbatim_mismatch: list[str] = field(default_factory=list)
     locked: list[str] = field(default_factory=list)
@@ -172,6 +175,7 @@ def _read_recoded(question: ReviewQuestion, rows: list[tuple], title: str) -> No
         question.problems.append(f"{title}: no 'New c{number}_1' (or c{number}_1) code columns.")
         return
     verbatim_column = columns.get("verbatim")
+    recheck_column = columns.get("recheck")
     seen: set[str] = set()
     for row in rows[start + 1:]:
         survnum = oe.normalize_record_key(row[columns["survnum"]])
@@ -188,7 +192,8 @@ def _read_recoded(question: ReviewQuestion, rows: list[tuple], title: str) -> No
             if code and code not in codes:
                 codes.append(code)
         verbatim = _text(row[verbatim_column]) if verbatim_column is not None and verbatim_column < len(row) else ""
-        question.rows.append(ReviewRow(survnum, verbatim, codes))
+        recheck = _text(row[recheck_column]).lower() if recheck_column is not None and recheck_column < len(row) else ""
+        question.rows.append(ReviewRow(survnum, verbatim, codes, recheck if recheck in {"98", "flagged"} else ""))
 
 
 NON_ANSWERS = {"96", "97", "99"}  # coded alone: a response with a theme is not a non-answer
@@ -254,12 +259,24 @@ def render_report(questions: dict[str, ReviewQuestion], applied: list[ApplySumma
     for summary in applied or []:
         lines.append("")
         lines.append(f"Applied {summary.question}: {summary.codes_written} codes written, {summary.assigned} responses coded, "
-                     f"{summary.kept_analyst_codes} already coded and left as they were")
+                     f"{summary.kept_analyst_codes} already coded and left as they were"
+                     + (f"; {summary.rechecked} earlier responses rechecked" if summary.rechecked else ""))
         for label, keys in (("not in the session", summary.not_found), ("verbatim differs, skipped", summary.verbatim_mismatch),
+                            ("sent back but edited by hand or unflagged since, left as they were", summary.recheck_skipped),
                             ("locked prior wave, skipped", summary.locked)):
             if keys:
                 lines.append(f"  - {len(keys)} {label}: {', '.join(keys[:20])}{' ...' if len(keys) > 20 else ''}")
     return "\n".join(lines) + "\n"
+
+
+def _recheck_allowed(session: oe.CodingSession, question_name: str, response: oe.ResponseInfo, reason: str) -> bool:
+    """May a review replace this earlier response's codes? A flagged response only
+    while it is still flagged; a 98 only if its codes were never set by hand."""
+    if reason == "flagged":
+        return response.flagged
+    if reason == "98":
+        return "98" in response.final_codes and session.last_coding_action(question_name, response.record_key) in ("", "import_review")
+    return False
 
 
 def apply_to_session(session: oe.CodingSession, questions: dict[str, ReviewQuestion], *,
@@ -292,15 +309,21 @@ def apply_to_session(session: oe.CodingSession, questions: dict[str, ReviewQuest
             if row.verbatim and not _same_text(row.verbatim, response.verbatim):
                 summary.verbatim_mismatch.append(row.survnum)
                 continue
-            if (response.override_active or response.original_codes) and not overwrite_coded:
-                summary.kept_analyst_codes += 1
+            recheck = _recheck_allowed(session, question.name, response, row.recheck)
+            if (response.override_active or response.original_codes) and not overwrite_coded and not recheck:
+                if row.recheck:  # sent back, but edited by hand or unflagged since: left alone
+                    summary.recheck_skipped.append(row.survnum)
+                else:
+                    summary.kept_analyst_codes += 1
                 continue
+            note = f"Rechecked ({row.recheck}) in a review" if recheck else "Code list review import"
             try:
-                session.set_assignment(response.id, row.codes, action="import_review", note="Code list review import")
+                session.set_assignment(response.id, row.codes, action="import_review", note=note)
             except oe.PriorWaveLockedError:
                 summary.locked.append(row.survnum)
                 continue
             summary.assigned += 1
+            summary.rechecked += bool(recheck)
         summaries.append(summary)
     return summaries
 

@@ -128,6 +128,7 @@ class RecordCoderApp:
         self.edit_source_var = tk.StringVar(value="user")
         self.codelist_overwrite_var = tk.BooleanVar(value=False)
         self.uses_96_var = tk.BooleanVar(value=False)
+        self.recheck_var = tk.BooleanVar(value=True)
         self.wincross_overwrite_var = tk.BooleanVar(value=False)
 
         self.export_var = tk.StringVar()
@@ -206,7 +207,10 @@ class RecordCoderApp:
             text="No code list yet: drafts from scratch. With a code list (an earlier day or a preliminary list): "
                  "codes only new responses, adding codes after the reused ones.",
         ).grid(row=2, column=1, sticky="w", padx=6, pady=5)
-        ttk.Checkbutton(setup, text="Job uses 96", variable=self.uses_96_var).grid(row=2, column=2, padx=4, pady=5)
+        checks = ttk.Frame(setup)
+        checks.grid(row=2, column=2, padx=4, pady=5, sticky="w")
+        ttk.Checkbutton(checks, text="Job uses 96", variable=self.uses_96_var).pack(anchor="w")
+        ttk.Checkbutton(checks, text="Recheck earlier 98s and flagged", variable=self.recheck_var).pack(anchor="w")
         ttk.Button(setup, text="Import Review Workbook...", command=self.import_review_workbook).grid(
             row=2, column=3, columnspan=2, padx=4, pady=5, sticky="e"
         )
@@ -697,7 +701,9 @@ class RecordCoderApp:
             return
         what = (
             "The session has a code list, so this prepares today's new responses, coded against it. "
-            "Reused codes keep their numbers; new codes are added after them."
+            "Reused codes keep their numbers; new codes are added after them. "
+            + ("Earlier responses in 98 (not edited by hand) and any you flagged go back for another look."
+               if self.recheck_var.get() else "")
             if continuing
             else "The session has no code list yet, so this drafts one from scratch on this PC (about a minute), "
                  "then prepares the review of every response."
@@ -706,11 +712,12 @@ class RecordCoderApp:
             return
         session_path = session.path
         uses_96 = self.uses_96_var.get()
+        recheck = ("98", "flagged") if self.recheck_var.get() else ()
         outcome: dict[str, object] = {}
 
         def work() -> None:
             try:
-                outcome["review"] = review.prepare_review_anywhere(session_path, uses_96=uses_96)
+                outcome["review"] = review.prepare_review_anywhere(session_path, uses_96=uses_96, recheck=recheck)
             except Exception as exc:  # shown in the window
                 outcome["error"] = exc
 

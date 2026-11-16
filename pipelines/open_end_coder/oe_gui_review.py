@@ -100,7 +100,7 @@ def _draft_from_session(session_path: Path, out: Path, *, not_heard: str | None,
 
 
 def prepare_review(session_path: Path, *, uses_96: bool = False, detail: str = "fine",
-                   folder: Path | None = None) -> PreparedReview:
+                   folder: Path | None = None, recheck: tuple[str, ...] = ("98", "flagged")) -> PreparedReview:
     session_path = Path(session_path).resolve()
     with oe.CodingSession(session_path) as session:
         if session.active_dataset() is None:
@@ -114,7 +114,7 @@ def prepare_review(session_path: Path, *, uses_96: bool = False, detail: str = "
                                     not_heard=None if uses_96 else "97", detail=detail)
         llm.export(draft, folder)
     else:
-        _written, notes = llm.continue_export(session_path, folder)
+        _written, notes = llm.continue_export(session_path, folder, recheck=recheck)
     job_path = folder / "job.json"
     job = json.loads(job_path.read_text(encoding="utf-8"))
     job.update({"mode": mode, "session": str(session_path), "unused_codes": [] if uses_96 else ["96"]})
@@ -128,12 +128,13 @@ def _python() -> list[str]:
     return [launcher, "-3"] if launcher else [shutil.which("python") or "python"]
 
 
-def prepare_review_anywhere(session_path: Path, *, uses_96: bool = False) -> PreparedReview:
+def prepare_review_anywhere(session_path: Path, *, uses_96: bool = False,
+                            recheck: tuple[str, ...] = ("98", "flagged")) -> PreparedReview:
     """prepare_review, run through the source Python when this is the packaged exe:
     drafting needs numpy and the local embedding model, which the exe does not carry."""
     if not FROZEN:
-        return prepare_review(session_path, uses_96=uses_96)
-    command = _python() + [str(HERE / "oe_gui_review.py"), "prepare", str(session_path)] + (["--uses-96"] if uses_96 else [])
+        return prepare_review(session_path, uses_96=uses_96, recheck=recheck)
+    command = _python() + [str(HERE / "oe_gui_review.py"), "prepare", str(session_path)] + (["--uses-96"] if uses_96 else []) + ["--recheck", ",".join(recheck)]
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     done = subprocess.run(command, cwd=str(HERE), capture_output=True, text=True, encoding="utf-8", creationflags=flags)
     if done.returncode != 0:
@@ -196,8 +197,10 @@ def main() -> int:
     p = sub.add_parser("prepare", help="prepare a Claude review folder for a coder session (prints JSON)")
     p.add_argument("session")
     p.add_argument("--uses-96", action="store_true", help="the job uses 96 Have not heard enough")
+    p.add_argument("--recheck", default="98,flagged", help="earlier responses to send back: 98, flagged (comma separated; '' for none)")
     args = parser.parse_args()
-    prepared = prepare_review(Path(args.session), uses_96=args.uses_96)
+    prepared = prepare_review(Path(args.session), uses_96=args.uses_96,
+                              recheck=tuple(r for r in args.recheck.split(",") if r))
     print(json.dumps({"folder": str(prepared.folder), "mode": prepared.mode, "prompt": prepared.prompt,
                       "questions": prepared.questions, "notes": prepared.notes}))
     return 0

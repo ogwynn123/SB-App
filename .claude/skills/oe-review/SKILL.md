@@ -179,8 +179,18 @@ highest existing theme code (skipping 96-99). Do not renumber to close gaps.
    today's responses (or today's plus earlier 98s); otherwise use the closest
    existing code or 98. If an existing label or NET is wrong, do not change it
    yourself: ask the user, and only then rebuild with `--accept-changes`.
-4. Write `q14 recode.tsv` for today's responses only, as on Day 1, and
+4. Write `q14 recode.tsv` for today's responses, as on Day 1, and
    `q14 changes.tsv` for new codes (and any agreed label changes).
+   If `draft.md` has a **Responses to recheck** section, those earlier
+   responses go in `recode.tsv` too (every one of them):
+   - **98**: give the response a code if one now fits (an existing code, or
+     one you added today: a new code may draw on today's responses and these
+     98s together for its 3+); otherwise write `98` again.
+   - **flagged**: the user asked for another look; read their note, recode
+     the verbatim from scratch, and say in the note column what changed (or
+     why the codes stay).
+   The import replaces their codes only if they are still unedited (98) or
+   still flagged; anything changed by hand since is left alone.
 5. Build (`build "<folder>" --unused-codes 96`, plus `--accept-changes` only
    after the user agreed). It refuses a missing, renumbered or misnumbered code.
    Do the QA pass on what it prints.

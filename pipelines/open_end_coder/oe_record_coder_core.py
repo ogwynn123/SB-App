@@ -1160,6 +1160,17 @@ class CodingSession:
             )
         return self.response(response_id)
 
+    def last_coding_action(self, question_name: str, record_key: str) -> str:
+        """The audit action that last set this response's codes ('' if never set in the
+        coder). 'import_review' is a review import; anything else is a hand edit."""
+        row = self.connection.execute(
+            "SELECT action FROM audit_log WHERE question_name=? AND record_key=? AND action IN "
+            "('set_assignment', 'bulk_matching_text', 'cleanup_redundant_code', 'reset_assignment', 'import_review') "
+            "ORDER BY id DESC LIMIT 1",
+            (question_name, record_key),
+        ).fetchone()
+        return str(row["action"]) if row is not None else ""
+
     def reset_assignment(self, response_id: int) -> ResponseInfo:
         response = self.response(response_id)
         self._require_editable(response)

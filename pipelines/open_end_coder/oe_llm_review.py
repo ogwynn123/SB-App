@@ -182,11 +182,13 @@ def _lead_answers(spec_path: Path | None) -> dict[str, dict[str, str]]:
 
 
 def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, codelist: Path | None = None,
-                    questions: tuple[str, ...] = ()) -> tuple[list[Path], list[str]]:
+                    questions: tuple[str, ...] = (), recheck: tuple[str, ...] = ()) -> tuple[list[Path], list[str]]:
     """Export a job's current code list and only its uncoded responses (latest
     wave) for the next day's review. With ``codelist`` (a preliminary or
     working code list), it is first loaded into the session through the
-    coder's own code-list import, which keeps any labels already there."""
+    coder's own code-list import, which keeps any labels already there.
+    ``recheck`` also sends back earlier responses: "98" (coded Other and not
+    edited by hand) and "flagged" (ticked Flag for review in the coder)."""
     import oe_record_coder_core as oe
 
     out.mkdir(parents=True, exist_ok=True)
@@ -215,6 +217,7 @@ def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, 
             uses: Counter = Counter()
             examples: dict[str, list[str]] = defaultdict(list)
             to_code = []
+            rechecks = []
             changed_coded = 0
             for response in responses:
                 if response.final_codes:
@@ -223,6 +226,20 @@ def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, 
                         if len(examples[code]) < 2:
                             examples[code].append(response.verbatim)
                     changed_coded += response.import_status == "Source changed"
+                    # Earlier responses sent back: flagged ones (the user asked), and 98s
+                    # nobody has edited by hand (a hand-set code is never reopened).
+                    reason = ""
+                    if "flagged" in recheck and response.flagged:
+                        reason = "flagged"
+                    elif "98" in recheck and "98" in response.final_codes and \
+                            session.last_coding_action(info.name, response.record_key) in ("", "import_review"):
+                        reason = "98"
+                    if reason and response.verbatim.strip():
+                        survnum = _survnum(response.record_key)
+                        rechecks.append({"survnum": survnum, "record_key": response.record_key,
+                                         "verbatim": response.verbatim, "lead": answers.get(info.name.lower(), {}).get(survnum, ""),
+                                         "draft": list(response.final_codes), "status": response.import_status,
+                                         "recheck": reason, "note": response.note})
                 elif response.verbatim.strip():
                     survnum = _survnum(response.record_key)
                     to_code.append({"survnum": survnum, "record_key": response.record_key, "verbatim": response.verbatim,
@@ -244,10 +261,22 @@ def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, 
                       f"## Responses to code ({len(to_code)})", "survnum | lead-in | import status | verbatim"]
             for r in to_code:
                 lines.append(" | ".join([r["survnum"], _clean(r["lead"]), r["status"], _clean(r["verbatim"])]))
+            if rechecks:
+                lines += ["", f"## Responses to recheck ({len(rechecks)})",
+                          "Already coded on an earlier day. 98: give a code if one now fits (an existing or a new one), "
+                          "else keep 98. Flagged: the user asked for another look; read their note.",
+                          "survnum | lead-in | why | current codes | user's note | verbatim"]
+                for r in rechecks:
+                    lines.append(" | ".join([r["survnum"], _clean(r["lead"]), r["recheck"], ",".join(r["draft"]),
+                                             _clean(r["note"]), _clean(r["verbatim"])]))
             path = out / f"{name} draft.md"
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")
             written.append(path)
-            job["questions"].append({"name": name, "text": "", "fixed": fixed, "responses": to_code})
+            if rechecks:
+                notes.append(f"{info.name}: {len(rechecks)} earlier response(s) to recheck "
+                             f"({sum(r['recheck'] == '98' for r in rechecks)} in 98, "
+                             f"{sum(r['recheck'] == 'flagged' for r in rechecks)} flagged)")
+            job["questions"].append({"name": name, "text": "", "fixed": fixed, "responses": to_code + rechecks})
     (out / "job.json").write_text(json.dumps(job, indent=1), encoding="utf-8")
     return written, notes
 
@@ -437,7 +466,7 @@ def build(folder: Path, unused_codes: tuple[str, ...] = (), *, accept_changes: b
             final.append([int(code), STANDARD[code], "", uses[code], round(100 * uses[code] / n, 1)])
         recoded = book.create_sheet(f"Q{number} recoded")
         recoded.append(["survnum", "Verbatim", "Lead-in answer"] + [f"New c{number}_{k}" for k in range(1, MAX_CODES + 1)]
-                       + ["New labels", "Note", "Draft codes"])
+                       + ["New labels", "Note", "Draft codes", "Recheck"])
         labels = {**STANDARD, **{c: i["label"] for c, i in codes.items()}}
         for response in question["responses"]:
             row = recode.get(response["survnum"], {"codes": [], "note": ""})
@@ -445,7 +474,8 @@ def build(folder: Path, unused_codes: tuple[str, ...] = (), *, accept_changes: b
             survnum = int(response["survnum"]) if response["survnum"].isdigit() else response["survnum"]
             recoded.append([survnum, response["verbatim"], response["lead"]]
                            + [int(c) if c.isdigit() else c for c in given] + [None] * (MAX_CODES - len(given))
-                           + ["; ".join(labels.get(c, "?") for c in given), row["note"], ",".join(response["draft"])])
+                           + ["; ".join(labels.get(c, "?") for c in given), row["note"], ",".join(response["draft"]),
+                              response.get("recheck", "")])
         changes_path = folder / f"{name} changes.tsv"
         if changes_path.exists():
             changes = book.create_sheet(f"Q{number} changes")
@@ -459,7 +489,7 @@ def build(folder: Path, unused_codes: tuple[str, ...] = (), *, accept_changes: b
             sheet.freeze_panes = "A2"
         for column, width in zip("ABCDE", (8, 46, 36, 11, 14)):
             final.column_dimensions[column].width = width
-        for column, width in zip("ABCDEFGHI", (10, 80, 18, 9, 9, 9, 50, 40, 14)):
+        for column, width in zip("ABCDEFGHIJ", (10, 80, 18, 9, 9, 9, 50, 40, 14, 10)):
             recoded.column_dimensions[column].width = width
         for cells in recoded.iter_rows(min_row=2, min_col=2, max_col=2):
             cells[0].alignment = Alignment(wrap_text=True, vertical="top")
@@ -553,6 +583,7 @@ def main() -> int:
     p.add_argument("--spec", help="drafting spec (oe_draft_spec.json), to show each response's lead-in answer")
     p.add_argument("--codelist", help="preliminary or working code list to load into the session first (CSV or workbook)")
     p.add_argument("--questions", default="", help="only these questions, comma separated (e.g. q14,q16)")
+    p.add_argument("--recheck", default="", help="also send back earlier responses: 98, flagged (comma separated)")
     p = sub.add_parser("build", help="the model's TSV files -> checked review workbook")
     p.add_argument("folder")
     p.add_argument("--unused-codes", default="", help="codes this job does not use, comma separated (e.g. 96)")
@@ -570,7 +601,8 @@ def main() -> int:
     if args.command == "continue":
         written, notes = continue_export(Path(args.session), Path(args.out), spec=Path(args.spec) if args.spec else None,
                                          codelist=Path(args.codelist) if args.codelist else None,
-                                         questions=tuple(q for q in args.questions.split(",") if q))
+                                         questions=tuple(q for q in args.questions.split(",") if q),
+                                         recheck=tuple(r for r in args.recheck.split(",") if r))
         for line in notes:
             print(line)
         for path in written:

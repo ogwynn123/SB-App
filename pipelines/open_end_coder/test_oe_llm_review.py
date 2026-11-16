@@ -182,5 +182,66 @@ class ContinueTests(unittest.TestCase):
         self.assertEqual(codes["104"], ("2", "1"))
 
 
+class RecheckTests(unittest.TestCase):
+    """Earlier 98s and flagged responses go back for another look; hand edits never do."""
+
+    def setUp(self):
+        import oe_record_coder_core as oe
+
+        self.oe = oe
+        self.folder = TMP_ROOT / uuid.uuid4().hex
+        self.folder.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        rows = [(101, "Veteran"), (102, "Served in the army"), (103, "Purple"), (104, "Ads"), (105, "Old soldier"),
+                (106, "Veteran and patriot")]
+        data = self.folder / "data.csv"
+        with data.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["survnum", "q5", "c5_1", "c5_2", "c5_3"])
+            writer.writerows([s, t, "", "", ""] for s, t in rows)
+        self.session_path = self.folder / "JOB.oe_session.sqlite"
+        with oe.CodingSession(self.session_path) as session:
+            session.import_data(data, key_column="survnum")
+            question = session.questions()[0]
+            session.upsert_code(question.id, "1", label="Seen ads", supercategory="Ads")
+            session.upsert_code(question.id, "98", label="Other")
+            by_key = {r.record_key: r for r in session.list_responses(question.id)}
+            session.set_assignment(by_key["101"].id, ["98"], action="import_review")  # a review's 98
+            session.set_assignment(by_key["102"].id, ["98"], action="import_review")  # a review's 98
+            session.set_assignment(by_key["103"].id, ["98"])                          # set by hand
+            session.set_assignment(by_key["104"].id, ["1"], flagged=True, note="ads or attack ads?")  # flagged by hand
+            self.ids = {k: r.id for k, r in by_key.items()}
+        self.out = self.folder / "day 2"
+        review.continue_export(self.session_path, self.out, recheck=("98", "flagged"))
+
+    def write(self, name: str, text: str) -> None:
+        (self.out / name).write_text(text, encoding="utf-8")
+
+    def test_export_sends_back_review_98s_and_flagged_only(self):
+        text = (self.out / "q5 draft.md").read_text(encoding="utf-8")
+        recheck = text.split("## Responses to recheck")[1]
+        self.assertIn("101 |  | 98 | 98 |  | Veteran", recheck)
+        self.assertIn("104 |  | flagged | 1 | ads or attack ads? | Ads", recheck)
+        self.assertNotIn("103 |", recheck)  # a hand-set 98 is never reopened
+        self.assertIn("105 |  | New | Old soldier", text.split("## Responses to code")[1])
+
+    def test_import_replaces_rechecks_but_not_later_hand_edits(self):
+        self.write("q5 list.tsv", "1\tSeen ads\tAds\n2\tVeteran\tMilitary\n")
+        self.write("q5 recode.tsv", "101\t2\n102\t2\n104\t1\tkept: no attack in the verbatim\n105\t2\n106\t2\n")
+        out, problems, _ = review.build(self.out)
+        self.assertEqual(problems, {"q5": []})
+        with self.oe.CodingSession(self.session_path) as session:
+            session.set_assignment(self.ids["102"], ["98"])  # edited by hand after the export
+            applied = review_import.apply_to_session(session, review_import.read_review(out))[0]
+            codes = {r.record_key: (r.final_codes, r.flagged) for r in session.list_responses(session.questions()[0].id)}
+        self.assertEqual(codes["101"], (("2",), False))   # rechecked
+        self.assertEqual(codes["102"], (("98",), False))  # hand edit since the export wins
+        self.assertEqual(codes["103"], (("98",), False))  # never sent
+        self.assertEqual(codes["104"], (("1",), False))   # rechecked; flag cleared
+        self.assertEqual(codes["105"], (("2",), False))   # today's
+        self.assertEqual(applied.rechecked, 2)
+        self.assertEqual(applied.recheck_skipped, ["102"])
+
+
 if __name__ == "__main__":
     unittest.main()
