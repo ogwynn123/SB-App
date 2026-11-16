@@ -275,7 +275,8 @@ class FlaggedCodeTests(unittest.TestCase):
             session.set_code_review_flag(question.id, "1", True, "too broad: seen ads vs attack ads?")
             self.ids = {k: r.id for k, r in by_key.items()}
         self.out = self.folder / "day 2"
-        review.continue_export(self.session_path, self.out, recheck=("98", "flagged", "codes"))
+        # Five respondents: every code is over 9%, so the share rule is off here (AutoFlagTests covers it).
+        review.continue_export(self.session_path, self.out, recheck=("98", "flagged", "codes"), auto_flag_share=None)
 
     def write(self, name: str, text: str) -> None:
         (self.out / name).write_text(text, encoding="utf-8")
@@ -320,6 +321,53 @@ class FlaggedCodeTests(unittest.TestCase):
         out, problems, _ = review.build(self.out)
         self.assertIsNone(out)
         self.assertIn("code 2: label 'Veteran' -> 'Military service'", " ".join(problems["q5"]))
+
+
+class AutoFlagTests(unittest.TestCase):
+    """A theme code held by more than 9% of respondents is flagged for review once."""
+
+    def setUp(self):
+        import oe_record_coder_core as oe
+
+        self.oe = oe
+        self.folder = TMP_ROOT / uuid.uuid4().hex
+        self.folder.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        data = self.folder / "data.csv"
+        with data.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["survnum", "q5", "c5_1", "c5_2", "c5_3"])
+            writer.writerows([100 + k, f"answer {k}", "", "", ""] for k in range(20))
+        self.session_path = self.folder / "JOB.oe_session.sqlite"
+        with oe.CodingSession(self.session_path) as session:
+            session.import_data(data, key_column="survnum")
+            self.qid = session.questions()[0].id
+            for code, label in (("1", "Ads"), ("2", "Veteran"), ("3", "Economy"), ("98", "Other")):
+                session.upsert_code(self.qid, code, label=label, supercategory="")
+            ids = [r.id for r in session.list_responses(self.qid)]
+            plan = {"1": ids[0:3], "2": ids[3:4], "3": ids[4:7], "98": ids[7:12]}  # 15%, 5%, 15%, 25%
+            for code, chosen in plan.items():
+                for response_id in chosen:
+                    session.set_assignment(response_id, [code], action="import_review")
+            session.set_code_review_flag(self.qid, "3", False, "Reviewed (split) 2026-11-15: auto")
+
+    def test_large_codes_are_flagged_once(self):
+        out = self.folder / "day 2"
+        _written, notes = review.continue_export(self.session_path, out, recheck=("98", "flagged", "codes"))
+        with self.oe.CodingSession(self.session_path) as session:
+            flags = {c.code: c.review_flag for c in session.list_codes(self.qid)}
+            note = session.get_code(self.qid, "1").review_note
+        self.assertEqual(flags, {"1": True, "2": False, "3": False, "98": False})  # 3 already reviewed; 98 is standard
+        self.assertIn("3 of 20 respondents (15%)", note)
+        self.assertIn("q5: code 1 flagged for review (15% of respondents)", notes)
+        text = (out / "q5 draft.md").read_text(encoding="utf-8")
+        self.assertEqual(text.count("| split 1 |"), 3)
+        self.assertNotIn("split 3", text)
+
+    def test_no_auto_flag_without_code_rechecks(self):
+        review.continue_export(self.session_path, self.folder / "day 2", recheck=("98",))
+        with self.oe.CodingSession(self.session_path) as session:
+            self.assertFalse(session.get_code(self.qid, "1").review_flag)
 
 
 if __name__ == "__main__":

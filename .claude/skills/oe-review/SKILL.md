@@ -190,7 +190,8 @@ highest existing theme code (skipping 96-99). Do not renumber to close gaps.
      the verbatim from scratch, and say in the note column what changed (or
      why the codes stay).
    - **split N**: code N is in **Codes flagged for review** (the user thinks
-     it is too broad). If its responses hold more than one idea, keep N for
+     it is too broad, or its note starts "Auto:" because it holds more than 9%
+     of respondents; a large code may still be one clear idea). If its responses hold more than one idea, keep N for
      the part that fits best (you may narrow its label; no `--accept-changes`
      needed for a flagged code) and add new codes after the highest number,
      same NET, for the rest; recode each of these responses with the result.

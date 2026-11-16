@@ -762,7 +762,8 @@ class RecordCoderApp:
             body,
             text="Questions with a code list: today's new responses are coded against it. Reused codes keep "
                  "their numbers; new codes are added after them."
-                 + (" Earlier 98s (not edited by hand), flagged responses and flagged codes go back for another look."
+                 + (" Earlier 98s (not edited by hand), flagged responses and flagged codes go back for another look;"
+                    " codes held by more than 9% of respondents are flagged automatically (once)."
                     if recheck else "")
                  + "\nQuestions without one: a list is drafted from scratch on this PC (about a minute), "
                    "then every response is reviewed.\nTick the questions to prepare (all with a list, or all without).",

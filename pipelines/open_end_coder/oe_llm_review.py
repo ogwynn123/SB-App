@@ -57,6 +57,7 @@ sys.path.insert(0, str(HERE))
 from oe_lead_in import option_direction  # noqa: E402
 
 STANDARD = {"96": "Have not heard enough / need more info", "97": "Nothing", "98": "Other", "99": "Don't know"}
+AUTO_FLAG_SHARE = 0.09  # a theme code held by more than this share of respondents is flagged for a split review
 NON_ANSWERS = {"96", "97", "99"}
 MAX_CODES = 3
 LARGE_SHARE = 0.08  # the improvement brief: review codes of roughly 5-8% or more of mentions
@@ -182,7 +183,8 @@ def _lead_answers(spec_path: Path | None) -> dict[str, dict[str, str]]:
 
 
 def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, codelist: Path | None = None,
-                    questions: tuple[str, ...] = (), recheck: tuple[str, ...] = ()) -> tuple[list[Path], list[str]]:
+                    questions: tuple[str, ...] = (), recheck: tuple[str, ...] = (),
+                    auto_flag_share: float | None = AUTO_FLAG_SHARE) -> tuple[list[Path], list[str]]:
     """Export a job's current code list and only its uncoded responses (latest
     wave) for the next day's review. With ``codelist`` (a preliminary or
     working code list), it is first loaded into the session through the
@@ -190,7 +192,9 @@ def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, 
     ``recheck`` also sends back earlier responses: "98" (coded Other and not
     edited by hand), "flagged" (ticked Flag for review in the coder) and
     "codes" (the responses of codes flagged for review in the Codebook, to
-    split a broad code; hand-edited responses stay out)."""
+    split a broad code; hand-edited responses stay out). With "codes", any code
+    held by more than ``auto_flag_share`` of the question's respondents is
+    flagged too, once (a code a review has already split or kept is left)."""
     import oe_record_coder_core as oe
 
     out.mkdir(parents=True, exist_ok=True)
@@ -219,6 +223,20 @@ def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, 
             flagged_codes = ({c: i.review_note for c, i in codes.items() if i.review_flag and c in fixed}
                              if "codes" in recheck else {})
             responses = session.list_responses(info.id, timeseries=latest)
+            if "codes" in recheck and auto_flag_share:
+                # Large codes often hide more than one idea: flag them in the session (the user sees
+                # "Flagged" in the Codebook) unless a review has already looked at them once.
+                answered = [r for r in responses if r.verbatim.strip()]
+                held = Counter(code for r in answered for code in set(r.final_codes))
+                for code, count in sorted(held.items()):
+                    share = count / len(answered)
+                    if (code in fixed and code not in flagged_codes and share > auto_flag_share
+                            and not codes[code].review_note.startswith("Reviewed (split)")):
+                        note = (f"Auto: {count} of {len(answered)} respondents ({share:.0%}), over "
+                                f"{auto_flag_share:.0%}; check whether it combines ideas")
+                        session.set_code_review_flag(info.id, code, True, note)
+                        flagged_codes[code] = note
+                        notes.append(f"{info.name}: code {code} flagged for review ({share:.0%} of respondents)")
             uses: Counter = Counter()
             examples: dict[str, list[str]] = defaultdict(list)
             to_code = []
@@ -271,7 +289,9 @@ def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, 
                 lines.append(" | ".join([r["survnum"], _clean(r["lead"]), r["status"], _clean(r["verbatim"])]))
             if flagged_codes:
                 lines += ["", f"## Codes flagged for review ({len(flagged_codes)})",
-                          "The user flagged these codes, usually because they look too broad or combine ideas. Read all "
+                          "These codes were flagged because they look too broad or combine ideas (by the user, or "
+                          "automatically when a code holds a large share of respondents: a large code can be one "
+                          "clear idea, so split it only when its responses really differ). Read all "
                           "their responses (marked 'split N' below). If a code holds more than one proposition, keep its "
                           "number for the part that fits best (you may narrow its label) and add new codes after the "
                           "highest number, under the same NET, for the rest. If it is fine as it is, say why in the notes.",
