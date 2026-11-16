@@ -708,30 +708,23 @@ class RecordCoderApp:
             session = self._session_required()
             if session.active_dataset() is None:
                 raise ValueError("Import survey data first.")
-            continuing = review.session_has_code_list(session)
+            status = review.question_status(session)
         except Exception as exc:
             messagebox.showerror("Claude review", str(exc))
             return
-        what = (
-            "The session has a code list, so this prepares today's new responses, coded against it. "
-            "Reused codes keep their numbers; new codes are added after them. "
-            + ("Earlier responses in 98 (not edited by hand), responses you flagged, and the responses of codes "
-               "you flagged in the Codebook (to split them where they combine ideas) go back for another look."
-               if self.recheck_var.get() else "")
-            if continuing
-            else "The session has no code list yet, so this drafts one from scratch on this PC (about a minute), "
-                 "then prepares the review of every response."
-        )
-        if not messagebox.askyesno("Prepare Claude review", f"{what}\n\nContinue?"):
+        picked = self.ask_review_questions(status)
+        if picked is None:
             return
         session_path = session.path
+        questions = () if len(picked) == len(status) else tuple(picked)
         uses_96 = self.uses_96_var.get()
         recheck = ("98", "flagged", "codes") if self.recheck_var.get() else ()
         outcome: dict[str, object] = {}
 
         def work() -> None:
             try:
-                outcome["review"] = review.prepare_review_anywhere(session_path, uses_96=uses_96, recheck=recheck)
+                outcome["review"] = review.prepare_review_anywhere(session_path, uses_96=uses_96, recheck=recheck,
+                                                                   questions=questions)
             except Exception as exc:  # shown in the window
                 outcome["error"] = exc
 
@@ -754,6 +747,71 @@ class RecordCoderApp:
             self.show_claude_review(prepared, review)
 
         self.root.after(500, wait)
+
+    def ask_review_questions(self, status: list[tuple[str, bool]]) -> list[str] | None:
+        """Pick the questions for the review; None when cancelled. Questions with a code list
+        continue it (today's new responses); questions without one are drafted from scratch."""
+        window = tk.Toplevel(self.root)
+        window.title("Prepare Claude review")
+        window.transient(self.root)
+        window.resizable(False, False)
+        body = ttk.Frame(window, padding=12)
+        body.pack(fill=tk.BOTH, expand=True)
+        recheck = self.recheck_var.get()
+        ttk.Label(
+            body,
+            text="Questions with a code list: today's new responses are coded against it. Reused codes keep "
+                 "their numbers; new codes are added after them."
+                 + (" Earlier 98s (not edited by hand), flagged responses and flagged codes go back for another look."
+                    if recheck else "")
+                 + "\nQuestions without one: a list is drafted from scratch on this PC (about a minute), "
+                   "then every response is reviewed.\nTick the questions to prepare (all with a list, or all without).",
+            wraplength=520, justify="left",
+        ).pack(anchor="w", pady=(0, 8))
+        boxes = ttk.Frame(body)
+        boxes.pack(anchor="w", fill=tk.X)
+        picks: list[tuple[str, tk.BooleanVar]] = []
+        any_list = any(has for _name, has in status)
+        for name, has in status:
+            # Default: everything when the whole job is in one state, otherwise the questions with a list.
+            var = tk.BooleanVar(master=window, value=has or not any_list)
+            ttk.Checkbutton(boxes, text=f"{name}  ({'continue its code list' if has else 'no code list yet: from scratch'})",
+                            variable=var).pack(anchor="w")
+            picks.append((name, var))
+
+        def set_all(value: bool) -> None:
+            for _name, var in picks:
+                var.set(value)
+
+        result: dict[str, list[str]] = {}
+
+        def ok() -> None:
+            chosen = [name for name, var in picks if var.get()]
+            if not chosen:
+                messagebox.showerror("Claude review", "Tick at least one question.", parent=window)
+                return
+            states = {has for name, has in status if name in chosen}
+            if len(states) > 1:
+                messagebox.showerror(
+                    "Claude review",
+                    "Questions with and without a code list need separate reviews. "
+                    "Prepare the ones without a list first (from scratch), then the others.",
+                    parent=window,
+                )
+                return
+            result["picked"] = chosen
+            window.destroy()
+
+        buttons = ttk.Frame(body)
+        buttons.pack(fill=tk.X, pady=(10, 0))
+        ttk.Button(buttons, text="All", command=lambda: set_all(True)).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="None", command=lambda: set_all(False)).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(buttons, text="Cancel", command=window.destroy).pack(side=tk.RIGHT)
+        ttk.Button(buttons, text="Prepare", command=ok).pack(side=tk.RIGHT, padx=(0, 6))
+        window.bind("<Escape>", lambda _event: window.destroy())
+        window.grab_set()
+        self.root.wait_window(window)
+        return result.get("picked")
 
     def show_claude_review(self, prepared, review) -> None:
         import os

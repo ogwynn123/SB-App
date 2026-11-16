@@ -84,6 +84,36 @@ class GuiReviewTests(unittest.TestCase):
         self.assertEqual(job["unused_codes"], [])
         self.assertIn("1 | Age | 0 | Too old", (self.folder / "review" / "q6 draft.md").read_text(encoding="utf-8"))
 
+    def test_individual_questions(self):
+        data = self.folder / "two.csv"
+        with data.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["survnum", "q6", "c6_1", "c6_2", "c6_3", "q7", "c7_1", "c7_2", "c7_3"])
+            for k, text in enumerate(TEXTS, 1):
+                writer.writerow([k, text, "", "", "", text, "", "", ""])
+        session_path = self.folder / "TWO.oe_session.sqlite"
+        codelist = self.folder / "preliminary.csv"
+        codelist.write_text("question_col,code,label,supercategory\nq6,1,Too old,Age\n", encoding="utf-8")
+        with oe.CodingSession(session_path) as session:
+            session.import_data(data, key_column="survnum")
+            session.load_codelist(codelist)
+            self.assertEqual(gui_review.question_status(session), [("q6", True), ("q7", False)])
+
+        with mock.patch.object(embed_drafter, "embed", fake_embed), \
+                mock.patch("oe_codelist_eval.load_questions", return_value=[]):
+            scratch = gui_review.prepare_review(session_path, questions=("Q7",), folder=self.folder / "q7 review")
+        self.assertEqual((scratch.mode, scratch.questions), ("scratch", {"q7": len(TEXTS)}))
+        self.assertFalse((self.folder / "q7 review" / "q6 draft.md").exists())
+
+        cont = gui_review.prepare_review(session_path, questions=("q6",), folder=self.folder / "q6 review")
+        self.assertEqual((cont.mode, list(cont.questions)), ("continue", ["q6"]))
+        self.assertIn("q6", gui_review.review_folder(session_path, "continue", ["q6"]).name)
+
+        with self.assertRaisesRegex(ValueError, "separately"):
+            gui_review.prepare_review(session_path, questions=("q6", "q7"), folder=self.folder / "mixed")
+        with self.assertRaisesRegex(ValueError, "Not in the session"):
+            gui_review.prepare_review(session_path, questions=("q99",), folder=self.folder / "missing")
+
     def test_claude_command_runs_the_skill_on_the_folder(self):
         prepared = gui_review.PreparedReview(self.folder, "scratch", f'/oe-review "{self.folder}"')
         (self.folder / "job.json").write_text(json.dumps({"session": str(self.session_path)}), encoding="utf-8")

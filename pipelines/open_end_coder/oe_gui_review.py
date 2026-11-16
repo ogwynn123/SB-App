@@ -64,14 +64,42 @@ def session_has_code_list(session: oe.CodingSession) -> bool:
     return any(_theme_codes(session, q.id) for q in session.questions())
 
 
-def review_folder(session_path: Path, mode: str) -> Path:
+def question_status(session: oe.CodingSession) -> list[tuple[str, bool]]:
+    """Each question's name and whether it already has a code list (continue) or not (from scratch)."""
+    return [(q.name, bool(_theme_codes(session, q.id))) for q in session.questions()]
+
+
+def _pick_questions(session: oe.CodingSession, questions: tuple[str, ...]) -> tuple[list[str], str]:
+    """The questions to prepare and their mode. Questions with and without a code list
+    need different reviews, so a mixed choice is refused."""
+    status = question_status(session)
+    if questions:
+        wanted = {q.casefold() for q in questions}
+        status = [s for s in status if s[0].casefold() in wanted]
+        missing = wanted - {name.casefold() for name, _ in status}
+        if missing:
+            raise ValueError(f"Not in the session: {', '.join(sorted(missing))}")
+    if not status:
+        raise ValueError("Pick at least one question.")
+    with_list = [name for name, has in status if has]
+    without = [name for name, has in status if not has]
+    if questions and with_list and without:
+        raise ValueError("These questions have no code list yet: " + ", ".join(without)
+                         + ".\nThese already have one: " + ", ".join(with_list)
+                         + ".\nPrepare the two groups separately (from scratch, then continue).")
+    return [name for name, _ in status], "continue" if with_list else "scratch"
+
+
+def review_folder(session_path: Path, mode: str, questions: list[str] | None = None) -> Path:
     stem = session_path.name.split(".")[0]
     label = "from scratch" if mode == "scratch" else "continue"
-    return session_path.parent / "OE review" / f"{stem} {datetime.now():%Y-%m-%d %H%M} {label}"
+    which = f" {'+'.join(questions)}" if questions else ""
+    return session_path.parent / "OE review" / f"{stem} {datetime.now():%Y-%m-%d %H%M}{which} {label}"
 
 
-def _draft_from_session(session_path: Path, out: Path, *, not_heard: str | None, detail: str) -> Path:
-    """Draft workbook for every question, from the latest wave's responses in the session."""
+def _draft_from_session(session_path: Path, out: Path, *, not_heard: str | None, detail: str,
+                        questions: list[str] | None = None) -> Path:
+    """Draft workbook for every question (or only ``questions``), from the latest wave's responses in the session."""
     import oe_draft_codelist as runner
 
     rows_by_key: dict[str, dict[str, str]] = {}
@@ -81,6 +109,8 @@ def _draft_from_session(session_path: Path, out: Path, *, not_heard: str | None,
         dataset = session.active_dataset()
         source = str(dataset["source_path"]) if dataset is not None else ""
         for question in session.questions():
+            if questions is not None and question.name not in questions:
+                continue
             names.append(question.name)
             for response in session.list_responses(question.id, timeseries=latest):
                 row = rows_by_key.setdefault(response.record_key, {"survnum": llm._survnum(response.record_key)})
@@ -100,21 +130,25 @@ def _draft_from_session(session_path: Path, out: Path, *, not_heard: str | None,
 
 
 def prepare_review(session_path: Path, *, uses_96: bool = False, detail: str = "fine",
-                   folder: Path | None = None, recheck: tuple[str, ...] = ("98", "flagged", "codes")) -> PreparedReview:
+                   folder: Path | None = None, recheck: tuple[str, ...] = ("98", "flagged", "codes"),
+                   questions: tuple[str, ...] = ()) -> PreparedReview:
+    """``questions`` limits the review to those questions (all of them when empty).
+    The picked questions must all have a code list (continue) or all lack one (from scratch)."""
     session_path = Path(session_path).resolve()
     with oe.CodingSession(session_path) as session:
         if session.active_dataset() is None:
             raise ValueError("Import survey data into the session first.")
-        mode = "continue" if session_has_code_list(session) else "scratch"
-    folder = folder or review_folder(session_path, mode)
+        picked, mode = _pick_questions(session, tuple(questions))
+        everything = len(picked) == len(session.questions())
+    folder = folder or review_folder(session_path, mode, None if everything else picked)
     folder.mkdir(parents=True, exist_ok=True)
     notes: list[str] = []
     if mode == "scratch":
         draft = _draft_from_session(session_path, folder / f"{session_path.name.split('.')[0]} Draft Code Lists.xlsx",
-                                    not_heard=None if uses_96 else "97", detail=detail)
+                                    not_heard=None if uses_96 else "97", detail=detail, questions=picked)
         llm.export(draft, folder)
     else:
-        _written, notes = llm.continue_export(session_path, folder, recheck=recheck)
+        _written, notes = llm.continue_export(session_path, folder, recheck=recheck, questions=tuple(picked))
     job_path = folder / "job.json"
     job = json.loads(job_path.read_text(encoding="utf-8"))
     job.update({"mode": mode, "session": str(session_path), "unused_codes": [] if uses_96 else ["96"]})
@@ -129,12 +163,14 @@ def _python() -> list[str]:
 
 
 def prepare_review_anywhere(session_path: Path, *, uses_96: bool = False,
-                            recheck: tuple[str, ...] = ("98", "flagged", "codes")) -> PreparedReview:
+                            recheck: tuple[str, ...] = ("98", "flagged", "codes"),
+                            questions: tuple[str, ...] = ()) -> PreparedReview:
     """prepare_review, run through the source Python when this is the packaged exe:
     drafting needs numpy and the local embedding model, which the exe does not carry."""
     if not FROZEN:
-        return prepare_review(session_path, uses_96=uses_96, recheck=recheck)
-    command = _python() + [str(HERE / "oe_gui_review.py"), "prepare", str(session_path)] + (["--uses-96"] if uses_96 else []) + ["--recheck", ",".join(recheck)]
+        return prepare_review(session_path, uses_96=uses_96, recheck=recheck, questions=questions)
+    command = (_python() + [str(HERE / "oe_gui_review.py"), "prepare", str(session_path)] + (["--uses-96"] if uses_96 else [])
+               + ["--recheck", ",".join(recheck), "--questions", ",".join(questions)])
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     done = subprocess.run(command, cwd=str(HERE), capture_output=True, text=True, encoding="utf-8", creationflags=flags)
     if done.returncode != 0:
@@ -198,9 +234,11 @@ def main() -> int:
     p.add_argument("session")
     p.add_argument("--uses-96", action="store_true", help="the job uses 96 Have not heard enough")
     p.add_argument("--recheck", default="98,flagged,codes", help="send back: 98, flagged (responses), codes (flagged codes); comma separated, '' for none")
+    p.add_argument("--questions", default="", help="only these questions, comma separated (e.g. Q12,Q14); '' for all")
     args = parser.parse_args()
     prepared = prepare_review(Path(args.session), uses_96=args.uses_96,
-                              recheck=tuple(r for r in args.recheck.split(",") if r))
+                              recheck=tuple(r for r in args.recheck.split(",") if r),
+                              questions=tuple(q for q in args.questions.split(",") if q))
     print(json.dumps({"folder": str(prepared.folder), "mode": prepared.mode, "prompt": prepared.prompt,
                       "questions": prepared.questions, "notes": prepared.notes}))
     return 0

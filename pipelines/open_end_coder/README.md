@@ -225,7 +225,9 @@ In the Open-End Coder, **Prepare Claude Review** does the export step for you
 (`oe_gui_review.py`): with no code list in the session it drafts one from
 scratch on this PC; with one (an earlier day, or a preliminary list loaded with
 **Load Codelist**) it prepares only the uncoded responses, reused codes keeping
-their numbers. It copies one `/oe-review "<folder>"` line to paste into Claude
+their numbers. It first asks which questions to prepare (all, or some: those
+picked must all have a code list or all lack one; `prepare --questions Q12,Q14`
+on the command line). It copies one `/oe-review "<folder>"` line to paste into Claude
 Code, or runs it with **Run with Claude** when the Claude Code command-line
 tool is installed; the skill imports the result into the session. **Import
 Review Workbook...** brings any finished review (also a browser review) in.
