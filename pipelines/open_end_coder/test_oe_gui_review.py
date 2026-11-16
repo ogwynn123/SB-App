@@ -55,6 +55,23 @@ class GuiReviewTests(unittest.TestCase):
         self.assertIn("Gas prices", text)
         self.assertNotIn("5550000", text)  # only verbatims leave the session
 
+    def test_capitalised_question_names_draft_from_scratch(self):
+        data = self.folder / "upper.csv"
+        with data.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["survnum", "Q12", "C12_1", "C12_2", "C12_3"])
+            for k, text in enumerate(TEXTS, 1):
+                writer.writerow([k, text, "", "", ""])
+        session_path = self.folder / "UPPER.oe_session.sqlite"
+        with oe.CodingSession(session_path) as session:
+            session.import_data(data, key_column="survnum")
+            self.assertEqual([q.name for q in session.questions()], ["Q12"])
+        with mock.patch.object(embed_drafter, "embed", fake_embed), \
+                mock.patch("oe_codelist_eval.load_questions", return_value=[]):
+            prepared = gui_review.prepare_review(session_path, folder=self.folder / "upper review")
+        self.assertEqual(prepared.questions, {"q12": len(TEXTS)})
+        self.assertIn("Gas prices", (self.folder / "upper review" / "q12 draft.md").read_text(encoding="utf-8"))
+
     def test_preliminary_list_continues_with_reused_codes(self):
         codelist = self.folder / "preliminary.csv"
         codelist.write_text("question_col,code,label,supercategory\nq6,1,Too old,Age\nq6,2,Gas prices,Costs\n", encoding="utf-8")

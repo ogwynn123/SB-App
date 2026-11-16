@@ -87,6 +87,7 @@ def read_draft(path: Path) -> list[dict]:
         if row and re.fullmatch(r"q\d+[a-z]?", _text(row[0]).lower()) and len(row) > 1:
             texts[_text(row[0]).lower()] = _text(row[1])
     questions = []
+    sheets = {s.casefold(): s for s in book.sheetnames}  # question names keep their case ("Q12 responses")
     for sheet in book.sheetnames:
         match = re.fullmatch(r"(q\d+[a-z]?) code list", sheet, re.IGNORECASE)
         if not match:
@@ -95,7 +96,9 @@ def read_draft(path: Path) -> list[dict]:
         code_rows = _sheet_rows(book, sheet)
         head = [_text(h).lower() for h in code_rows[0]]
         codes = [dict(zip(head, (_text(v) for v in row))) for row in code_rows[1:] if row and _text(row[0])]
-        response_rows = _sheet_rows(book, f"{name} responses")
+        response_rows = _sheet_rows(book, sheets.get(f"{name} responses", f"{name} responses"))
+        if not response_rows:
+            raise ValueError(f"The draft has a '{sheet}' sheet but no '{match.group(1)} responses' sheet.")
         head = [_text(h).lower() for h in response_rows[0]]
         slots = [k for k, h in enumerate(head) if re.fullmatch(rf"c{name[1:]}_\d", h)]
         responses = []
