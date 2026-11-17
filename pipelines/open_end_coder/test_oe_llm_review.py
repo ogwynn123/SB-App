@@ -340,6 +340,14 @@ class FlaggedCodeTests(unittest.TestCase):
             applied = review_import.apply_to_session(session, review_import.read_review(out))[0]
             state = {r.record_key: r for r in session.list_responses(self.qid)}
             self.assertEqual(session.last_coding_action("q5", "104"), "set_assignment")  # still a hand edit
+            session.set_assignment(state["105"].id, ["2"], flagged=True, note="mine")  # an ordinary flag
+            split_only = [r.record_key for r in session.list_responses(self.qid, status=self.oe.SPLIT_CHECK)]
+            all_flagged = sorted(r.record_key for r in session.list_responses(self.qid, status="flagged"))
+            session.set_assignment(state["105"].id, ["2"])
+            state = {r.record_key: r for r in session.list_responses(self.qid)}
+        self.assertEqual(split_only, ["104"])  # the GUI's "Split check" filter
+        self.assertEqual(all_flagged, ["104", "105"])
+        self.assertEqual(state["104"].review_status, self.oe.SPLIT_CHECK)
         self.assertEqual(applied.flagged_after_split, ["104"])
         self.assertTrue(state["104"].flagged)
         self.assertEqual(state["104"].final_codes, ("1",))  # codes untouched

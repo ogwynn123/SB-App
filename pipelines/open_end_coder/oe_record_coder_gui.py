@@ -24,7 +24,7 @@ APP = "open_end_coder"
 
 
 APP_TITLE = "Open-End Coder"
-STATUS_VALUES = ("All", "Pending", "Coded", "Flagged")
+STATUS_VALUES = ("All", "Pending", "Coded", "Flagged", "Split check")
 ALL_CODE_FILTER = "(all codes)"
 BLANK_CODE_FILTER = "(blank)"
 CODE_SCOPE_VALUES = ("Original", "Final", "Either")
@@ -305,6 +305,7 @@ class RecordCoderApp:
         tree_wrap.grid_columnconfigure(0, weight=1)
         columns = ("key", "import", "status", "original", "final", "verbatim")
         self.response_tree = ttk.Treeview(tree_wrap, columns=columns, show="headings", selectmode="browse")
+        self.response_tree.tag_configure("split_check", background="#fde9c8")  # left on a code a review split
         headings = {
             "key": ("Record", 100),
             "import": ("Import", 105),
@@ -1243,11 +1244,14 @@ class RecordCoderApp:
             import_scope=import_scope_key(self.response_import_scope_var.get()),
         )
         for response in self.responses:
-            status = "Flagged" if response.flagged else ("Coded" if response.override_active else "Pending")
+            split_check = response.flagged and response.review_status == core.SPLIT_CHECK
+            status = ("Split check" if split_check else "Flagged") if response.flagged else (
+                "Coded" if response.override_active else "Pending")
             self.response_tree.insert(
                 "",
                 tk.END,
                 iid=str(response.id),
+                tags=("split_check",) if split_check else (),
                 values=(
                     response.record_key,
                     response.import_status,

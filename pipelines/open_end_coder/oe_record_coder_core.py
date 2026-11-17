@@ -506,6 +506,9 @@ def _json_codes(raw: str | None) -> tuple[str, ...]:
     return tuple(code for code in (normalize_code(value) for value in values) if code)
 
 
+SPLIT_CHECK = "split check"  # review_status of a response flagged because its code was split
+
+
 class PriorWaveLockedError(ValueError):
     """Raised when a prior-wave response would change while prior waves are locked."""
 
@@ -993,6 +996,8 @@ class CodingSession:
             clauses.append("s.override_active=1")
         elif normalized_status == "flagged":
             clauses.append("s.flagged=1")
+        elif normalized_status == SPLIT_CHECK:
+            clauses.append(f"s.flagged=1 AND s.review_status='{SPLIT_CHECK}'")
         if clean_text(search):
             clauses.append("(r.verbatim LIKE ? OR r.record_key LIKE ?)")
             pattern = f"%{clean_text(search)}%"
@@ -1170,12 +1175,13 @@ class CodingSession:
             )
         return self.response(response_id)
 
-    def set_response_flag(self, response_id: int, flagged: bool, note: str) -> ResponseInfo:
-        """Flag (or unflag) a response for another look without touching its codes."""
+    def set_response_flag(self, response_id: int, flagged: bool, note: str, *, status: str = "flagged") -> ResponseInfo:
+        """Flag (or unflag) a response for another look without touching its codes. ``status``
+        names the kind of flag (SPLIT_CHECK: left on a code after a review split it)."""
         response = self.response(response_id)
         self._require_editable(response)
         question = self.question(response.question_id)
-        status = "flagged" if flagged else ("coded" if response.override_active else "pending")
+        status = status if flagged else ("coded" if response.override_active else "pending")
         timestamp = now_iso()
         with self.connection:
             self.connection.execute(

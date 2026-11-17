@@ -300,7 +300,8 @@ def _flag_left_on_split(session: oe.CodingSession, question: oe.QuestionInfo, co
         if code not in response.final_codes or response.record_key in recoded or response.flagged:
             continue
         try:
-            session.set_response_flag(response.id, True, f"{response.note}; {note}" if response.note else note)
+            session.set_response_flag(response.id, True, f"{response.note}; {note}" if response.note else note,
+                                      status=oe.SPLIT_CHECK)
         except oe.PriorWaveLockedError:
             continue
         summary.flagged_after_split.append(response.record_key.rsplit("|", 1)[-1])

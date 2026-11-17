@@ -280,7 +280,7 @@ def split_summary(session_path: Path, folder: Path) -> str:
                 if left:
                     lines.append(f"    Still on {code} without a recheck (coded by hand, or an earlier wave): "
                                  f"{len(left)}; check they fit the label ({sum(r.flagged for r in left)} flagged: "
-                                 "Status 'Flagged' in Code Responses, and they go to the next review's rechecks):")
+                                 "Status 'Split check' in Code Responses, and they go to the next review's rechecks):")
                     for response in left[:40]:
                         lines.append(f"      {llm._survnum(response.record_key)}{'  [flagged]' if response.flagged else ''}  "
                                      f"{response.verbatim.strip()[:120]}")
