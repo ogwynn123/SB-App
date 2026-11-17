@@ -210,6 +210,14 @@ TOOLS: tuple[ToolSpec, ...] = (
         create_on_launch=False,
     ),
     ToolSpec(
+        key="weighting",
+        label="Sample Weighting",
+        create_work_dir=("Data",),
+        existing_work_dirs=(("Data",),),
+        entry_candidates=(("pipelines", "weighting", "weighting_gui.py"),),
+        create_on_launch=False,
+    ),
+    ToolSpec(
         key="trend_table_updater",
         label="Trend Table Updater",
         create_work_dir=("Job", "Table Gen"),

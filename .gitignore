@@ -56,3 +56,6 @@ Desktop.ini
 
 # Local ML model downloads
 /.models/
+
+# Client data used to hand-test the weighting app; never commit
+pipelines/weighting/Testing/

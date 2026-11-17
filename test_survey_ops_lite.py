@@ -1031,9 +1031,10 @@ class SurveyLauncherTests(unittest.TestCase):
         keys = [tool.key for tool in core.TOOLS]
         for key in (
             "project_startup", "wincross", "table_merger", "sample_append", "open_end_coder", "quota_checker",
-            "trend_table_updater", "auto_results", "prelim_qc", "dashboard", "browser_workbench",
+            "weighting", "trend_table_updater", "auto_results", "prelim_qc", "dashboard", "browser_workbench",
         ):
             self.assertIn(key, keys)
+        self.assertEqual(core.resolve_tool_entry(core.TOOL_BY_KEY["weighting"]).name, "weighting_gui.py")
         self.assertEqual(core.resolve_tool_entry(core.TOOL_BY_KEY["dashboard"]).name, "survey_platform_gui.py")
         self.assertEqual(core.resolve_tool_entry(core.TOOL_BY_KEY["browser_workbench"]).name, "run_survey_browser.bat")
 

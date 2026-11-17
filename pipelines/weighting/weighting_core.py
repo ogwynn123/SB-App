@@ -9,20 +9,31 @@ data column through a label -> codes mapping.
 from __future__ import annotations
 
 import argparse
+import codecs
+import io
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from openpyxl import load_workbook
 
+from recode_script import RecodeError, apply_recode_script, evaluate_condition
+
 YELLOW_FILLS = {"FFFFFF00", "00FFFF00"}
 DEFAULT_CAP = 4.0
 DEFAULT_FLOOR = 0.001  # no respondent is zeroed out or negative
 DEFAULT_TOLERANCE = 0.0001  # 0.01 percentage points
 DEFAULT_MAX_ITERATIONS = 500
+DEFAULT_WEIGHT_DECIMALS = 6
+WINCROSS_TOLERANCE = 0.00005  # WinCross sample balancing's default goodness-of-fit threshold
+METHOD_LABELS = {
+    "rake": "Raking (multiplicative)",
+    "wincross": "WinCross sample balancing (additive)",
+}
+MAX_WEIGHT_DECIMALS = 12  # a weight under 10 then still fits in a float's ~15 significant digits
 BLANK_TOKEN = "blank"
 REST_TOKEN = "*"
 
@@ -185,13 +196,105 @@ class BlockAxes:
 
 
 @dataclass
+class ManualTarget:
+    """A target typed in by hand for a variable the workbook does not cover.
+
+    targets are shares of the total (0.4 = 40%) keyed by the variable's labels.
+    """
+
+    variable: str
+    targets: dict[str, float] = field(default_factory=dict)
+    enabled: bool = True
+
+    @property
+    def key(self) -> str:
+        return f"{self.variable} [manual]"
+
+    def to_block(self) -> TargetBlock:
+        labels = list(self.targets)
+        return TargetBlock(
+            title=self.variable,
+            cell_range="manual",
+            row_labels=labels,
+            col_labels=[TOTAL_LABEL],
+            values=[[float(self.targets[label])] for label in labels],
+            enabled=self.enabled,
+        )
+
+
+TOTAL_VARIABLE = "(total)"
+TOTAL_LABEL = "Total"
+
+
+@dataclass
 class WeightingConfig:
     variables: dict[str, Variable] = field(default_factory=dict)
     blocks: list[BlockAxes] = field(default_factory=list)
+    manual_targets: list[ManualTarget] = field(default_factory=list)
+    recode_script: str = ""  # WinCross-style lines that build derived variables before weighting
     cap: float = DEFAULT_CAP
     floor: float = DEFAULT_FLOOR
     weight_column: str = "weight"
+    weight_decimals: int = DEFAULT_WEIGHT_DECIMALS  # CSV writes every weight with exactly this many decimals
+    target_n: float | None = None  # weights sum to this; None = the number of weighted respondents
+    method: str = "rake"  # "rake" (multiplicative, capped) or "wincross" (additive sample balancing)
     base_weight_column: str = ""
+    # Sample filter: weight only the rows this condition keeps, e.g. "TIMESERIES (MAX) AND QSTYPE (1)"
+    # (same tests as recode IF lines, plus (MAX) / (MIN)); blank means everyone is weighted.
+    sample_filter: str = ""
+    # Which workbook this setup was made from, so reopening the data file can reload it.
+    targets_path: str = ""
+    targets_sheet: str = ""
+    targets_max_row: int | None = None
+    # Target grids edited in the app, by block key; they replace the workbook's figures (the workbook is not changed).
+    target_overrides: dict[str, list[list[float]]] = field(default_factory=dict)
+
+    @property
+    def filter_active(self) -> bool:
+        return bool(self.sample_filter.strip())
+
+    def filter_text(self) -> str:
+        return self.sample_filter.strip()
+
+
+def effective_blocks(blocks: list[TargetBlock], config: WeightingConfig) -> tuple[list[TargetBlock], list[str]]:
+    """The workbook blocks with any targets edited in the app swapped in, plus a note per edited block."""
+    out: list[TargetBlock] = []
+    notes: list[str] = []
+    for block in blocks:
+        override = config.target_overrides.get(block.key)
+        if override is None:
+            out.append(block)
+            continue
+        shape = (len(block.row_labels), len(block.col_labels))
+        if (len(override), len(override[0]) if override else 0) != shape or any(len(r) != shape[1] for r in override):
+            notes.append(f"{block.title}: edited targets no longer fit the workbook block, so the workbook figures were used.")
+            out.append(block)
+            continue
+        out.append(replace(block, values=[[float(v) for v in row] for row in override]))
+        notes.append(f"{block.title}: using targets edited in the app, not the workbook figures.")
+    return out, notes
+
+
+def filter_mask(df: pd.DataFrame, config: WeightingConfig) -> tuple[np.ndarray, list[str]]:
+    """Rows the sample filter keeps (all when no filter is set), and how (MAX)/(MIN) resolved.
+
+    Raises ValueError naming the problem when the filter cannot be read.
+    """
+    if not config.filter_active:
+        return np.ones(len(df), dtype=bool), []
+    try:
+        found = evaluate_condition(df, config.sample_filter)
+    except RecodeError as exc:
+        reason = str(exc).split("\n")[0].split(": ", 1)[-1]
+        raise ValueError(f"Sample filter '{config.filter_text()}': {reason}") from None
+    return found.mask, found.resolved
+
+
+def legacy_filter(column: str, codes: str) -> str:
+    """Setups saved before the sample filter stored a column and codes; e.g. ('timeseries', '12') -> 'timeseries (12)'."""
+    column, codes = column.strip(), codes.strip()
+    return f"{column} ({codes})" if column and codes else ""
 
 
 def config_to_dict(config: WeightingConfig) -> dict:
@@ -199,13 +302,25 @@ def config_to_dict(config: WeightingConfig) -> dict:
         "cap": config.cap,
         "floor": config.floor,
         "weight_column": config.weight_column,
+        "weight_decimals": config.weight_decimals,
+        "target_n": config.target_n,
+        "method": config.method,
         "base_weight_column": config.base_weight_column,
+        "sample_filter": config.sample_filter,
+        "targets_path": config.targets_path,
+        "targets_sheet": config.targets_sheet,
+        "targets_max_row": config.targets_max_row,
+        "target_overrides": {key: [list(row) for row in grid] for key, grid in config.target_overrides.items()},
+        "recode_script": config.recode_script,
         "variables": {
             name: {"column": var.column, "labels": dict(var.labels)} for name, var in config.variables.items()
         },
         "blocks": [
             {"block": b.block_key, "rows": b.row_variable, "cols": b.col_variable, "enabled": b.enabled}
             for b in config.blocks
+        ],
+        "manual_targets": [
+            {"variable": m.variable, "targets": dict(m.targets), "enabled": m.enabled} for m in config.manual_targets
         ],
     }
 
@@ -224,13 +339,38 @@ def config_from_dict(data: dict) -> WeightingConfig:
         )
         for item in data.get("blocks") or []
     ]
+    manual = [
+        ManualTarget(
+            variable=str(item["variable"]),
+            targets={str(k): float(v) for k, v in (item.get("targets") or {}).items()},
+            enabled=bool(item.get("enabled", True)),
+        )
+        for item in data.get("manual_targets") or []
+    ]
     return WeightingConfig(
         variables=variables,
         blocks=blocks,
+        manual_targets=manual,
+        recode_script=str(data.get("recode_script", "")),
         cap=float(data.get("cap", DEFAULT_CAP)),
         floor=float(data.get("floor", DEFAULT_FLOOR)),
         weight_column=str(data.get("weight_column", "weight")),
+        weight_decimals=int(data.get("weight_decimals", DEFAULT_WEIGHT_DECIMALS)),
+        target_n=float(data["target_n"]) if data.get("target_n") else None,
+        method=str(data.get("method", "rake")) if data.get("method") in METHOD_LABELS else "rake",
         base_weight_column=str(data.get("base_weight_column", "")),
+        sample_filter=str(
+            data["sample_filter"]
+            if "sample_filter" in data
+            else legacy_filter(str(data.get("filter_column", "")), str(data.get("filter_codes", "")))
+        ),
+        targets_path=str(data.get("targets_path", "")),
+        targets_sheet=str(data.get("targets_sheet", "")),
+        targets_max_row=int(data["targets_max_row"]) if data.get("targets_max_row") else None,
+        target_overrides={
+            str(key): [[float(v) for v in row] for row in grid]
+            for key, grid in (data.get("target_overrides") or {}).items()
+        },
     )
 
 
@@ -433,6 +573,17 @@ class RakeResult:
     warnings: list[str]
     cap: float
     floor: float
+    rows: np.ndarray | None = None  # positions in the full data of the weighted rows (None = all rows)
+    total_rows: int | None = None
+    target_n: float | None = None  # weights are scaled to sum to this when saved (None = n)
+    method: str = "rake"
+    fit_measure: float | None = None  # WinCross goodness-of-fit measure (wincross method only)
+    filter_label: str = ""  # the sample filter as run, with (MAX)/(MIN) resolved
+
+    @property
+    def scale(self) -> float:
+        """Factor from the mean-1 raking weights to the saved weights."""
+        return self.target_n / self.n if self.target_n else 1.0
 
     @property
     def n(self) -> int:
@@ -453,15 +604,19 @@ class RakeResult:
 
     def summary(self) -> dict[str, float | int | bool]:
         w = self.weights
+        s = self.scale
+        extra = {} if self.fit_measure is None else {"goodness_of_fit": float(f"{self.fit_measure:.3g}")}
         return {
+            "method": METHOD_LABELS.get(self.method, self.method),
+            **extra,
             "respondents": self.n,
-            "weighted_n": round(float(w.sum()), 4),
+            "weighted_n": round(float(w.sum()) * s, 4),
             "converged": self.converged,
             "iterations": self.iterations,
             "max_error_pts": round(self.max_error * 100, 3),
-            "min_weight": round(float(w.min()), 4),
-            "max_weight": round(float(w.max()), 4),
-            "at_cap": int(np.sum(w >= self.cap - 1e-9)),
+            "min_weight": round(float(w.min()) * s, 4),
+            "max_weight": round(float(w.max()) * s, 4),
+            "at_cap": int(np.sum(w >= self.cap - 1e-9)) if np.isfinite(self.cap) else 0,
             "at_floor": int(np.sum(w <= self.floor + 1e-9)),
             "design_effect": round(self.design_effect, 3),
             "efficiency_pct": round(self.efficiency * 100, 1),
@@ -472,34 +627,48 @@ class RakeResult:
 def build_dimensions(df: pd.DataFrame, blocks: list[TargetBlock], config: WeightingConfig) -> tuple[list[Dimension], list[str]]:
     """Turn enabled target blocks into raking dimensions; raise on unmapped respondents."""
     by_key = {block.key: block for block in blocks}
+    for manual in config.manual_targets:
+        by_key[manual.key] = manual.to_block()
+    all_axes = list(config.blocks) + [
+        BlockAxes(m.key, m.variable, TOTAL_VARIABLE, m.enabled) for m in config.manual_targets
+    ]
+    variables = dict(config.variables)
+    variables[TOTAL_VARIABLE] = Variable(TOTAL_VARIABLE, "", {TOTAL_LABEL: REST_TOKEN})
     dims: list[Dimension] = []
     warnings: list[str] = []
     problems: list[str] = []
     usage: dict[str, int] = {}
-    for axes in config.blocks:
+    margins: dict[str, list[tuple[str, dict[str, float]]]] = {}  # variable -> (block, label shares) per block
+    for axes in all_axes:
         if axes.enabled:
-            for name in {axes.row_variable, axes.col_variable}:
+            for name in {axes.row_variable, axes.col_variable} - {TOTAL_VARIABLE}:
                 usage[name] = usage.get(name, 0) + 1
-    for axes in config.blocks:
+    for axes in all_axes:
         if not axes.enabled:
             continue
         block = by_key.get(axes.block_key)
         if block is None:
             problems.append(f"Target block not found in workbook: {axes.block_key}")
             continue
-        row_var = config.variables.get(axes.row_variable)
-        col_var = config.variables.get(axes.col_variable)
+        row_var = variables.get(axes.row_variable)
+        col_var = variables.get(axes.col_variable)
         if row_var is None or col_var is None:
             problems.append(f"{block.title}: choose a variable for both rows and columns.")
             continue
-        missing = [v.column for v in (row_var, col_var) if v.column not in df.columns]
+        missing = [
+            v.column or "(none chosen)"
+            for v in (row_var, col_var)
+            if v.name != TOTAL_VARIABLE and v.column not in df.columns
+        ]
         if missing:
             problems.append(f"{block.title}: column(s) not in data: {', '.join(missing)}")
             continue
 
-        row_labels = assign_labels(df[row_var.column], row_var)
-        col_labels = assign_labels(df[col_var.column], col_var)
+        row_labels = _labels_for(df, row_var)
+        col_labels = _labels_for(df, col_var)
         for var, assigned in ((row_var, row_labels), (col_var, col_labels)):
+            if var.name == TOTAL_VARIABLE:
+                continue
             unmapped = df.loc[assigned.isna(), var.column].map(normalize_code).value_counts()
             if len(unmapped):
                 shown = ", ".join(f"{code or '(blank)'} x{count}" for code, count in unmapped.items())
@@ -526,11 +695,53 @@ def build_dimensions(df: pd.DataFrame, blocks: list[TargetBlock], config: Weight
         if abs(total - 1.0) > 0.005:
             warnings.append(f"{block.title}: targets sum to {total:.2%}; rescaled to 100%.")
         dims.append(Dimension(name=block.title, cells=cells, targets=target_arr / total, index=index))
+        for var, labels, sums in ((row_var, block.row_labels, grid.sum(axis=1)), (col_var, block.col_labels, grid.sum(axis=0))):
+            if var.name != TOTAL_VARIABLE:
+                margins.setdefault(var.name, []).append((block.title, dict(zip(labels, sums / total))))
+    warnings.extend(_margin_conflicts(margins))
     if problems:
         raise ValueError("\n".join(problems))
     if not dims:
         raise ValueError("No target blocks are enabled.")
     return dims, warnings
+
+
+MARGIN_CONFLICT_PTS = 0.0005  # 0.05 percentage points
+
+
+def _margin_conflicts(margins: dict[str, list[tuple[str, dict[str, float]]]]) -> list[str]:
+    """Warn when two blocks imply different totals for the same variable (e.g. Men 47% vs 45%).
+
+    No set of weights can hit both, whichever method is used, so the misses are spread
+    across the blocks. Only blocks with the same labels for the variable are compared.
+    """
+    notes = []
+    for name, entries in margins.items():
+        by_labels: dict[frozenset, list[tuple[str, dict[str, float]]]] = {}
+        for title, shares in entries:
+            by_labels.setdefault(frozenset(shares), []).append((title, shares))
+        for group in by_labels.values():
+            if len(group) < 2:
+                continue
+            worst_label, worst_gap = "", 0.0
+            for label in group[0][1]:
+                values = [shares[label] for _title, shares in group]
+                if max(values) - min(values) > worst_gap:
+                    worst_label, worst_gap = label, max(values) - min(values)
+            if worst_gap > MARGIN_CONFLICT_PTS:
+                detail = "; ".join(f"{shares[worst_label]:.2%} in {title}" for title, shares in group)
+                notes.append(
+                    f"Blocks disagree on {name}: {worst_label} is {detail}. No weights can hit "
+                    f"{'both' if len(group) == 2 else 'all of these'} exactly, so the misses are spread across them - "
+                    "make the totals match (Edit Targets) or turn a block off."
+                )
+    return notes
+
+
+def _labels_for(df: pd.DataFrame, var: Variable) -> pd.Series:
+    if var.name == TOTAL_VARIABLE:
+        return pd.Series(TOTAL_LABEL, index=df.index, dtype=object)
+    return assign_labels(df[var.column], var)
 
 
 def _reallocate_empty_cells(
@@ -643,6 +854,81 @@ def rake(
     )
 
 
+def balance_wincross(
+    dims: list[Dimension],
+    base_weights: np.ndarray | None = None,
+    floor: float = DEFAULT_FLOOR,
+    tolerance: float = WINCROSS_TOLERANCE,
+    max_rounds: int = DEFAULT_MAX_ITERATIONS,
+) -> RakeResult:
+    """WinCross sample balancing (The Analytical Group, "WinCross's Sample Balancing").
+
+    Each round makes one pass per block. A pass adds to every respondent in a cell
+    delta = (target share - current weighted share) / unweighted sample share,
+    which puts that block exactly on target. Rounds stop when the goodness-of-fit
+    measure sqrt(sum of squared deltas over every cell / number of cells) is below
+    tolerance (WinCross default 0.00005). Weights are not capped. Weights that end up
+    negative (or below the min weight) are set to the min weight afterwards, as
+    WinCross does with 0.001; then the weights are scaled to average 1.
+    """
+    n = len(dims[0].index)
+    w = np.ones(n) if base_weights is None else np.asarray(base_weights, dtype=float).copy()
+    w = w * n / w.sum()
+    shares = [np.bincount(d.index, minlength=len(d.cells)) / n for d in dims]
+    cells_used = sum(int(np.sum(f > 0)) for f in shares)
+
+    def measure(weights: np.ndarray) -> float:
+        total = 0.0
+        for d, f in zip(dims, shares):
+            current = np.bincount(d.index, weights=weights, minlength=len(d.cells)) / n
+            gap = np.divide(d.targets - current, f, out=np.zeros_like(f), where=f > 0)
+            total += float(np.sum(gap**2))
+        return float(np.sqrt(total / max(1, cells_used)))
+
+    best_w, best_fit, rounds, converged = w.copy(), measure(w), 0, False
+    for rounds in range(1, max_rounds + 1):
+        for d, f in zip(dims, shares):
+            current = np.bincount(d.index, weights=w, minlength=len(d.cells)) / n
+            delta = np.divide(d.targets - current, f, out=np.zeros_like(f), where=f > 0)
+            w = w + delta[d.index]
+        fit = measure(w)
+        if not np.isfinite(fit):
+            break
+        if fit < best_fit:
+            best_w, best_fit = w.copy(), fit
+        if fit < tolerance:
+            converged = True
+            break
+
+    warnings: list[str] = []
+    low = best_w < floor
+    if low.any():
+        negative = int(np.sum(best_w < 0))
+        warnings.append(
+            f"{int(low.sum())} respondent(s) balanced to a weight below {floor:g} ({negative} negative) were set to "
+            f"{floor:g}, as WinCross does; the cells they sit in come out slightly over target."
+        )
+    final = np.where(low, floor, best_w)
+    final = final * n / final.sum()
+    if not converged:
+        warnings.append(
+            f"WinCross sample balancing did not reach a goodness of fit below {tolerance:g} in {rounds} rounds "
+            f"(best {best_fit:.3g}); the targets probably conflict. The closest round was used."
+        )
+    return RakeResult(
+        weights=final,
+        iterations=rounds,
+        converged=converged,
+        max_error=_max_error(dims, final),
+        cells=_cell_results(dims, final),
+        warnings=warnings,
+        cap=float("inf"),
+        floor=floor,
+        method="wincross",
+        fit_measure=best_fit,
+    )
+
+
 def polish_least_squares(
     dims: list[Dimension],
     start: np.ndarray,
@@ -747,12 +1033,32 @@ def read_data(path: str | Path) -> pd.DataFrame:
             raise RuntimeError("Reading .sav files needs pyreadstat (pip install pyreadstat).") from exc
         df, _meta = pyreadstat.read_sav(str(path))
         return df.astype(object).where(df.notna(), "").astype(str)
-    for encoding in ("utf-8-sig", "cp1252"):
-        try:
-            return pd.read_csv(path, dtype=str, keep_default_na=False, encoding=encoding)
-        except UnicodeDecodeError:
-            continue
-    raise ValueError(f"Could not decode {path.name} as UTF-8 or Windows-1252.")
+    raw = path.read_bytes()
+    try:
+        text = raw.decode("utf-8-sig")
+        notes: list[str] = []
+    except UnicodeDecodeError:
+        # Mostly UTF-8 with stray Windows-1252 characters (text pasted into open ends), or a
+        # plain Windows-1252 file: keep the UTF-8 and read each byte that is not as Windows-1252.
+        text, stray = _decode_mixed(raw)
+        notes = [f"{stray:,} character(s) in {path.name} were not UTF-8 and were read as Windows-1252."]
+    df = pd.read_csv(io.StringIO(text), dtype=str, keep_default_na=False)
+    df.attrs["read_notes"] = notes
+    return df
+
+
+def _decode_mixed(raw: bytes) -> tuple[str, int]:
+    stray = 0
+
+    def as_cp1252(err: UnicodeDecodeError):
+        nonlocal stray
+        stray += err.end - err.start
+        chunk = err.object[err.start:err.end]
+        return chunk.decode("cp1252", errors="replace"), err.end
+
+    codecs.register_error("weighting_cp1252", as_cp1252)
+    text = raw.decode("utf-8", errors="weighting_cp1252")
+    return text.lstrip("﻿"), stray
 
 
 def run_weighting(
@@ -762,23 +1068,58 @@ def run_weighting(
     tolerance: float = DEFAULT_TOLERANCE,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
 ) -> RakeResult:
+    """Weight df; derived variables from config.recode_script are built first (df is not changed)."""
+    recoded = apply_recode_script(df, config.recode_script)
+    full = recoded.data
+    keep, resolved = filter_mask(full, config)
+    filter_label = config.filter_text() + (f" [{'; '.join(resolved)}]" if resolved else "")
+    if not keep.any():
+        raise ValueError(f"No respondents match the sample filter {filter_label}.")
+    df = full.loc[keep].reset_index(drop=True)
+    blocks, edited = effective_blocks(blocks, config)
     dims, warnings = build_dimensions(df, blocks, config)
+    warnings = recoded.notes + edited + warnings
+    if config.filter_active:
+        warnings.insert(
+            0,
+            f"Sample filter {filter_label}: weighted {int(keep.sum()):,} of {len(full):,} respondents; "
+            "the other rows keep the weight column they already had (blank if none).",
+        )
     base = None
     if config.base_weight_column:
         base = pd.to_numeric(df[config.base_weight_column], errors="coerce").fillna(0).to_numpy()
-    result = rake(dims, base, cap=config.cap, floor=config.floor, tolerance=tolerance, max_iterations=max_iterations)
+    if config.method == "wincross":
+        result = balance_wincross(dims, base, floor=config.floor, max_rounds=max_iterations)
+    else:
+        result = rake(dims, base, cap=config.cap, floor=config.floor, tolerance=tolerance, max_iterations=max_iterations)
     result.warnings[:0] = warnings
+    if config.filter_active:
+        result.rows = np.flatnonzero(keep)
+        result.total_rows = len(full)
+        result.filter_label = filter_label
+    if config.target_n is not None:
+        if config.target_n <= 0:
+            raise ValueError("Target N must be above 0.")
+        result.target_n = float(config.target_n)
+        result.warnings.insert(
+            0,
+            f"Weights scaled to a target N of {config.target_n:g} ({result.n:,} respondents, "
+            f"x{result.scale:.6g}); the max/min weight limits apply before scaling.",
+        )
     return result
 
 
-def rounded_weights(weights: np.ndarray, cap: float, decimals: int = 6) -> np.ndarray:
-    """Round weights so they still sum to exactly the number of respondents.
+def rounded_weights(weights: np.ndarray, cap: float, decimals: int = 6, total: float | None = None) -> np.ndarray:
+    """Round weights so they still sum to exactly total (default: the number of respondents).
 
-    The rounding remainder goes onto the largest weight that has room under the cap.
+    The rounding remainder goes onto the largest weight that has room under the cap
+    (the cap is on the mean-1 scale, so it is scaled with the weights).
     """
     n = len(weights)
-    out = np.round(weights * n / weights.sum(), decimals)
-    remainder = round(n - out.sum(), decimals)
+    total = float(n) if total is None else float(total)
+    cap = cap * total / n
+    out = np.round(weights * total / weights.sum(), decimals)
+    remainder = round(total - out.sum(), decimals)
     if remainder:
         room = np.where(out + remainder <= cap, out, -np.inf)
         out[int(np.argmax(room))] += remainder
@@ -786,8 +1127,22 @@ def rounded_weights(weights: np.ndarray, cap: float, decimals: int = 6) -> np.nd
 
 
 def write_outputs(df: pd.DataFrame, result: RakeResult, config: WeightingConfig, data_out: Path, report_out: Path) -> None:
+    decimals = config.weight_decimals
+    if not 0 <= decimals <= MAX_WEIGHT_DECIMALS:
+        raise ValueError(f"Weight decimals must be 0 to {MAX_WEIGHT_DECIMALS}.")
     out = df.copy()
-    out[config.weight_column] = rounded_weights(result.weights, result.cap)
+    weights = rounded_weights(result.weights, result.cap, decimals, result.target_n)
+    if data_out.suffix.lower() not in (".xlsx", ".xlsm"):
+        # Fixed decimals so every weight in the CSV has the same width (1.500000, not 1.5).
+        weights = np.array([f"{w:.{decimals}f}" for w in weights], dtype=object)
+    if result.rows is None:
+        out[config.weight_column] = weights
+    else:
+        # Filtered run: only the weighted rows change; others keep any weight they had.
+        column = out[config.weight_column] if config.weight_column in out.columns else pd.Series("", index=out.index)
+        column = column.astype(object).copy()
+        column.iloc[result.rows] = weights
+        out[config.weight_column] = column
     if data_out.suffix.lower() in (".xlsx", ".xlsm"):
         out.to_excel(data_out, index=False)
     else:
@@ -807,7 +1162,11 @@ def write_outputs(df: pd.DataFrame, result: RakeResult, config: WeightingConfig,
             for c in result.cells
         ]
     )
-    summary = pd.DataFrame(list(result.summary().items()), columns=["Measure", "Value"])
+    measures = list(result.summary().items())
+    if result.rows is not None:
+        measures.insert(0, ("sample_filter", result.filter_label or config.filter_text()))
+        measures.insert(1, ("rows_in_file", result.total_rows))
+    summary = pd.DataFrame(measures, columns=["Measure", "Value"])
     warnings = pd.DataFrame({"Warning": result.warnings or ["None"]})
     weights = pd.Series(result.weights)
     bins = [0, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, result.cap + 1e-9]
@@ -828,6 +1187,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sheet", default=None)
     parser.add_argument("--max-row", type=int, default=None)
     parser.add_argument("--cap", type=float, default=None)
+    parser.add_argument("--target-n", type=float, default=None, help="Weights sum to this (default: weighted respondents; 0 = default)")
+    parser.add_argument("--decimals", type=int, default=None, help=f"Weight decimals (default {DEFAULT_WEIGHT_DECIMALS})")
+    parser.add_argument(
+        "--filter", default=None, help='Sample filter, e.g. "TIMESERIES (MAX) AND QSTYPE (1)" ("" = everyone)'
+    )
     parser.add_argument("--out-data", default=None)
     parser.add_argument("--out-report", default=None)
     args = parser.parse_args(argv)
@@ -835,6 +1199,12 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
     if args.cap is not None:
         config.cap = args.cap
+    if args.decimals is not None:
+        config.weight_decimals = args.decimals
+    if args.target_n is not None:
+        config.target_n = args.target_n or None
+    if args.filter is not None:
+        config.sample_filter = args.filter
     df = read_data(args.data)
     blocks = read_target_blocks(args.targets, args.sheet, args.max_row)
     result = run_weighting(df, blocks, config)

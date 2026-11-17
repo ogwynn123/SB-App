@@ -16,15 +16,18 @@ if str(THIS_DIR) not in sys.path:
 
 from weighting_core import (  # noqa: E402
     BlockAxes,
+    ManualTarget,
     Variable,
     WeightingConfig,
     assign_labels,
     build_dimensions,
     draft_config,
+    load_config,
     parse_code_spec,
     rake,
     read_target_blocks,
     run_weighting,
+    save_config,
     write_outputs,
 )
 
@@ -179,6 +182,338 @@ class RakeTests(unittest.TestCase):
         self.assertAlmostEqual(written["weight"].sum(), 600, places=9)
         self.assertAlmostEqual(result.summary()["weighted_n"], 600, places=6)
         self.assertEqual(set(sheets), {"Summary", "Targets vs achieved", "Weight spread", "Warnings"})
+
+
+    def test_target_n_scales_saved_weights_only(self):
+        result, blocks, config = self._run([[0.2, 0.3], [0.25, 0.25]], [[0.22, 0.28], [0.23, 0.27]])
+        config.target_n = 1000
+        scaled = run_weighting(_sample(), blocks, config)
+        np.testing.assert_allclose(scaled.weights, result.weights)  # raking itself is unchanged
+        self.assertAlmostEqual(scaled.summary()["weighted_n"], 1000, places=6)
+        self.assertTrue(any("target N of 1000" in w for w in scaled.warnings))
+        with tempfile.TemporaryDirectory() as tmp:
+            write_outputs(_sample(), scaled, config, Path(tmp) / "out.csv", Path(tmp) / "report.xlsx")
+            written = pd.read_csv(Path(tmp) / "out.csv", dtype={"weight": str})["weight"]
+            save_config(config, Path(tmp) / "setup.json")
+            self.assertEqual(load_config(Path(tmp) / "setup.json").target_n, 1000)
+        self.assertAlmostEqual(written.astype(float).sum(), 1000, places=9)
+        self.assertTrue(written.str.fullmatch(r"\d+\.\d{6}").all())
+        config.target_n = -5
+        with self.assertRaisesRegex(ValueError, "Target N"):
+            run_weighting(_sample(), blocks, config)
+
+    def test_target_n_with_timeseries_filter(self):
+        df = _sample(n=900)
+        df["TIMESERIES"] = ["1"] * 600 + ["2"] * 300
+        config = _config()
+        config.sample_filter, config.target_n = "TIMESERIES(2)", 500
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "targets.xlsx"
+            _workbook(path, [[0.2, 0.3], [0.25, 0.25]], [[0.22, 0.28], [0.23, 0.27]])
+            result = run_weighting(df, read_target_blocks(path), config)
+            write_outputs(df, result, config, Path(tmp) / "out.csv", Path(tmp) / "report.xlsx")
+            written = pd.read_csv(Path(tmp) / "out.csv", dtype=str, keep_default_na=False)["weight"]
+        self.assertAlmostEqual(written[600:].astype(float).sum(), 500, places=9)
+
+    def test_weight_decimals_set_a_fixed_width(self):
+        result, _blocks, config = self._run([[0.2, 0.3], [0.25, 0.25]], [[0.22, 0.28], [0.23, 0.27]])
+        for decimals in (4, 12):
+            config.weight_decimals = decimals
+            with tempfile.TemporaryDirectory() as tmp:
+                data_out = Path(tmp) / "out.csv"
+                write_outputs(_sample(), result, config, data_out, Path(tmp) / "report.xlsx")
+                text = pd.read_csv(data_out, dtype=str)["weight"]
+            self.assertTrue(text.str.fullmatch(rf"\d+\.\d{{{decimals}}}").all(), decimals)
+            self.assertAlmostEqual(text.astype(float).sum(), 600, places=9)
+        with tempfile.TemporaryDirectory() as tmp:
+            save_config(config, Path(tmp) / "setup.json")
+            self.assertEqual(load_config(Path(tmp) / "setup.json").weight_decimals, 12)
+            config.weight_decimals = 13
+            with self.assertRaisesRegex(ValueError, "0 to 12"):
+                write_outputs(_sample(), result, config, Path(tmp) / "out.csv", Path(tmp) / "report.xlsx")
+
+
+class WinCrossMethodTests(unittest.TestCase):
+    def _blocks(self, region_sex=((0.2, 0.3), (0.25, 0.25)), age_sex=((0.22, 0.28), (0.23, 0.27))):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "targets.xlsx"
+            _workbook(path, [list(r) for r in region_sex], [list(r) for r in age_sex])
+            return read_target_blocks(path)
+
+    def test_first_pass_puts_that_block_on_target_additively(self):
+        from weighting_core import Dimension, balance_wincross
+
+        index = np.array([0] * 30 + [1] * 70)  # 30% / 70% in the sample, target 50 / 50
+        result = balance_wincross([Dimension("Sex", ["Men", "Women"], np.array([0.5, 0.5]), index)])
+        self.assertTrue(result.converged)
+        self.assertEqual(result.iterations, 1)
+        # additive: 1 + (0.5 - 0.3) / 0.3 and 1 + (0.5 - 0.7) / 0.7
+        self.assertAlmostEqual(result.weights[0], 1 + 0.2 / 0.3, places=9)
+        self.assertAlmostEqual(result.weights[-1], 1 - 0.2 / 0.7, places=9)
+
+    def test_consistent_targets_are_hit(self):
+        config = _config()
+        config.method = "wincross"
+        result = run_weighting(_sample(), self._blocks(), config)
+        self.assertTrue(result.converged)
+        self.assertEqual(result.method, "wincross")
+        self.assertLess(result.fit_measure, 0.00005)
+        self.assertLess(result.max_error, 1e-4)
+        self.assertAlmostEqual(result.weights.mean(), 1.0, places=9)
+        self.assertEqual(result.summary()["method"], "WinCross sample balancing (additive)")
+
+    def test_negative_weights_become_min_weight_and_cap_is_not_applied(self):
+        from weighting_core import Dimension, balance_wincross
+
+        # Two over-represented groups overlap: additive steps push their shared cell below zero.
+        a = np.array([0] * 45 + [0] * 45 + [1] * 5 + [1] * 5)
+        b = np.array([0] * 45 + [1] * 45 + [0] * 5 + [1] * 5)
+        dims = [
+            Dimension("A", ["a0", "a1"], np.array([0.3, 0.7]), a),
+            Dimension("B", ["b0", "b1"], np.array([0.3, 0.7]), b),
+        ]
+        result = balance_wincross(dims, floor=0.001)
+        self.assertGreaterEqual(result.weights.min(), 0.0)
+        self.assertTrue(any("set to 0.001" in w for w in result.warnings))
+        self.assertGreater(result.weights.max(), 4)  # not capped
+        self.assertEqual(result.summary()["at_cap"], 0)
+
+    def test_method_round_trips_and_unknown_falls_back(self):
+        config = _config()
+        config.method = "wincross"
+        with tempfile.TemporaryDirectory() as tmp:
+            save_config(config, Path(tmp) / "setup.json")
+            self.assertEqual(load_config(Path(tmp) / "setup.json").method, "wincross")
+        from weighting_core import config_from_dict
+
+        self.assertEqual(config_from_dict({"method": "magic"}).method, "rake")
+
+    def test_blocks_that_disagree_on_a_shared_variable_are_flagged(self):
+        # Men are 50% in the region block but 40% in the age block.
+        result = run_weighting(_sample(), self._blocks(((0.25, 0.25), (0.25, 0.25)), ((0.2, 0.3), (0.2, 0.3))), _config())
+        self.assertTrue(any("Blocks disagree on Sex" in w and "50.00%" in w and "40.00%" in w for w in result.warnings))
+        consistent = run_weighting(_sample(), self._blocks(), _config())
+        self.assertFalse(any("Blocks disagree" in w for w in consistent.warnings))
+
+
+class EditedTargetTests(unittest.TestCase):
+    def _blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "targets.xlsx"
+            _workbook(path, [[0.2, 0.3], [0.25, 0.25]], [[0.22, 0.28], [0.23, 0.27]])
+            return read_target_blocks(path)
+
+    def test_edited_targets_replace_workbook_figures(self):
+        config = _config()
+        config.blocks = config.blocks[:1]
+        config.target_overrides["Sex within Region [C5:D6]"] = [[0.3, 0.3], [0.2, 0.2]]
+        blocks = self._blocks()
+        result = run_weighting(_sample(), blocks, config)
+        cells = {c.cell: c.weighted_share for c in result.cells}
+        self.assertAlmostEqual(cells["Region 1 | Men"], 0.3, places=3)
+        self.assertAlmostEqual(cells["Region 2 | Women"], 0.2, places=3)
+        self.assertTrue(any("edited in the app" in w for w in result.warnings))
+        self.assertEqual(blocks[0].values, [[0.2, 0.3], [0.25, 0.25]])  # workbook figures untouched
+
+    def test_edits_round_trip_and_wrong_shape_falls_back(self):
+        config = _config()
+        config.target_overrides["Sex within Region [C5:D6]"] = [[0.3, 0.3], [0.2, 0.2]]
+        with tempfile.TemporaryDirectory() as tmp:
+            save_config(config, Path(tmp) / "setup.json")
+            loaded = load_config(Path(tmp) / "setup.json")
+        self.assertEqual(loaded.target_overrides, config.target_overrides)
+        config.targets_path, config.targets_sheet, config.targets_max_row = r"C:\x\combos.xlsx", "Weighting", 40
+        with tempfile.TemporaryDirectory() as tmp:
+            save_config(config, Path(tmp) / "setup.json")
+            again = load_config(Path(tmp) / "setup.json")
+        self.assertEqual((again.targets_path, again.targets_sheet, again.targets_max_row), (r"C:\x\combos.xlsx", "Weighting", 40))
+        from weighting_core import effective_blocks
+
+        loaded.target_overrides["Sex within Region [C5:D6]"] = [[0.5, 0.5]]
+        blocks, notes = effective_blocks(self._blocks(), loaded)
+        self.assertEqual(blocks[0].values, [[0.2, 0.3], [0.25, 0.25]])
+        self.assertIn("no longer fit", notes[0])
+
+
+class ReadDataTests(unittest.TestCase):
+    def _read(self, raw: bytes) -> pd.DataFrame:
+        from weighting_core import read_data
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "data.csv"
+            path.write_bytes(raw)
+            return read_data(path)
+
+    def test_utf8_with_a_stray_windows_1252_character(self):
+        raw = "id,oe\n1,café “quoted”\n2,na".encode("utf-8") + b"\xefve\n"
+        df = self._read(raw)
+        self.assertEqual(list(df["oe"]), ["café “quoted”", "naïve"])
+        self.assertIn("1 character(s)", df.attrs["read_notes"][0])
+
+    def test_plain_windows_1252_and_utf8_bom(self):
+        self.assertEqual(self._read("id,oe\n1,naïve\n".encode("cp1252"))["oe"][0], "naïve")
+        clean = self._read("id,oe\n1,naïve\n".encode("utf-8-sig"))
+        self.assertEqual(list(clean.columns), ["id", "oe"])
+        self.assertEqual(clean.attrs["read_notes"], [])
+
+
+class ManualTargetTests(unittest.TestCase):
+    def _blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "targets.xlsx"
+            _workbook(path, [[0.2, 0.3], [0.25, 0.25]], [[0.22, 0.28], [0.23, 0.27]])
+            return read_target_blocks(path)
+
+    def _config_with_age_split(self, targets: dict[str, float]) -> WeightingConfig:
+        config = _config()
+        config.blocks = config.blocks[:1]  # sex within region from the workbook
+        config.variables["Age band"] = Variable("Age band", "age", {"Under 40": "1-3", "40-64": "4-7", "65+": "*"})
+        config.manual_targets = [ManualTarget("Age band", targets)]
+        return config
+
+    def test_manual_target_is_hit_alongside_workbook_block(self):
+        config = self._config_with_age_split({"Under 40": 0.2, "40-64": 0.5, "65+": 0.3})
+        result = run_weighting(_sample(), self._blocks(), config)
+        self.assertTrue(result.converged)
+        manual = {c.cell: c.weighted_share for c in result.cells if c.dimension == "Age band"}
+        self.assertAlmostEqual(manual["Under 40 | Total"], 0.2, places=3)
+        self.assertAlmostEqual(manual["40-64 | Total"], 0.5, places=3)
+
+    def test_manual_target_round_trips_through_setup_file(self):
+        config = self._config_with_age_split({"Under 40": 0.2, "40-64": 0.5, "65+": 0.3})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "setup.json"
+            save_config(config, path)
+            loaded = load_config(path)
+        self.assertEqual(loaded.manual_targets[0].variable, "Age band")
+        self.assertAlmostEqual(loaded.manual_targets[0].targets["40-64"], 0.5)
+        self.assertEqual(loaded.variables["Age band"].labels["Under 40"], "1-3")
+
+    def test_manual_target_on_derived_variable(self):
+        config = _config()
+        config.blocks = config.blocks[:1]
+        config.recode_script = "IF AGE (1-3) ASSIGN AGEBAND = (1)\nIF AGE (4-10) ASSIGN AGEBAND = (2)"
+        config.variables["AGEBAND"] = Variable("AGEBAND", "AGEBAND", {"Young": "1", "Older": "2"})
+        config.manual_targets = [ManualTarget("AGEBAND", {"Young": 0.4, "Older": 0.6})]
+        df = _sample()
+        result = run_weighting(df, self._blocks(), config)
+        self.assertNotIn("AGEBAND", df.columns)
+        young = next(c for c in result.cells if c.dimension == "AGEBAND" and c.cell.startswith("Young"))
+        self.assertAlmostEqual(young.weighted_share, 0.4, places=3)
+        with tempfile.TemporaryDirectory() as tmp:
+            save_config(config, Path(tmp) / "setup.json")
+            self.assertEqual(load_config(Path(tmp) / "setup.json").recode_script, config.recode_script)
+
+    def test_disabled_manual_target_is_ignored(self):
+        config = self._config_with_age_split({"Under 40": 0.9, "40-64": 0.05, "65+": 0.05})
+        config.manual_targets[0].enabled = False
+        result = run_weighting(_sample(), self._blocks(), config)
+        self.assertFalse(any(c.dimension == "Age band" for c in result.cells))
+
+    def test_empty_manual_group_share_spreads_over_other_groups(self):
+        config = self._config_with_age_split({"Under 40": 0.2, "40-64": 0.5, "65+": 0.3})
+        config.variables["Age band"].labels["Nobody"] = "99"
+        config.manual_targets[0].targets = {"Under 40": 0.2, "40-64": 0.4, "65+": 0.3, "Nobody": 0.1}
+        result = run_weighting(_sample(), self._blocks(), config)
+        self.assertTrue(any("'Nobody | Total'" in w for w in result.warnings))
+        self.assertLess(result.max_error, 1e-3)
+
+
+class SampleFilterTests(unittest.TestCase):
+    def _blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "targets.xlsx"
+            _workbook(path, [[0.2, 0.3], [0.25, 0.25]], [[0.22, 0.28], [0.23, 0.27]])
+            return read_target_blocks(path)
+
+    def _waves(self) -> pd.DataFrame:
+        df = _sample(n=900)
+        df["TIMESERIES"] = ["1"] * 300 + ["2"] * 300 + ["3"] * 300
+        df["QSTYPE"] = (["1", "2"] * 450)
+        df["weight"] = ["0.5"] * 600 + [""] * 300  # earlier waves already weighted
+        return df
+
+    def _filtered_config(self, text: str) -> WeightingConfig:
+        config = _config()
+        config.sample_filter = text
+        return config
+
+    def test_only_filtered_wave_is_weighted(self):
+        result = run_weighting(self._waves(), self._blocks(), self._filtered_config("TIMESERIES(3)"))
+        self.assertTrue(result.converged)
+        self.assertEqual(result.n, 300)
+        self.assertEqual(list(result.rows), list(range(600, 900)))
+        self.assertAlmostEqual(result.weights.sum(), 300, places=6)
+        self.assertTrue(any("weighted 300 of 900" in w for w in result.warnings))
+
+    def test_max_picks_the_latest_wave_and_is_reported(self):
+        df = self._waves()
+        config = self._filtered_config("timeseries(MAX)")
+        result = run_weighting(df, self._blocks(), config)
+        self.assertEqual(list(result.rows), list(range(600, 900)))
+        self.assertEqual(result.filter_label, "timeseries(MAX) [TIMESERIES (MAX) = 3]")
+        with tempfile.TemporaryDirectory() as tmp:
+            write_outputs(df, result, config, Path(tmp) / "out.csv", Path(tmp) / "report.xlsx")
+            summary = pd.read_excel(Path(tmp) / "report.xlsx", sheet_name="Summary")
+        self.assertIn("timeseries(MAX) [TIMESERIES (MAX) = 3]", summary["Value"].astype(str).tolist())
+
+    def test_and_or_not_and_ranges_combine(self):
+        df = self._waves()
+        cases = {
+            "TIMESERIES(MAX) AND QSTYPE(1)": 150,
+            "TIMESERIES (2-3) and not QSTYPE (2)": 300,
+            "{TIMESERIES(1) OR TIMESERIES(3)} AND QSTYPE(2)": 300,
+            "TIMESERIES(MIN)": 300,
+        }
+        for text, expected in cases.items():
+            with self.subTest(text):
+                self.assertEqual(run_weighting(df, self._blocks(), self._filtered_config(text)).n, expected)
+
+    def test_other_waves_keep_their_existing_weight(self):
+        df = self._waves()
+        config = self._filtered_config("TIMESERIES(3)")
+        result = run_weighting(df, self._blocks(), config)
+        with tempfile.TemporaryDirectory() as tmp:
+            write_outputs(df, result, config, Path(tmp) / "out.csv", Path(tmp) / "report.xlsx")
+            written = pd.read_csv(Path(tmp) / "out.csv", dtype=str, keep_default_na=False)
+        self.assertEqual(set(written["weight"][:600]), {"0.5"})
+        self.assertAlmostEqual(written["weight"][600:].astype(float).sum(), 300, places=6)
+
+    def test_blank_filter_weights_everyone_and_blank_weight_when_none_existed(self):
+        result = run_weighting(self._waves(), self._blocks(), self._filtered_config("  "))
+        self.assertEqual(result.n, 900)
+        self.assertIsNone(result.rows)
+        df = self._waves().drop(columns="weight")
+        config = self._filtered_config("TIMESERIES(2-3)")
+        result = run_weighting(df, self._blocks(), config)
+        with tempfile.TemporaryDirectory() as tmp:
+            write_outputs(df, result, config, Path(tmp) / "out.csv", Path(tmp) / "report.xlsx")
+            written = pd.read_csv(Path(tmp) / "out.csv", dtype=str, keep_default_na=False)
+        self.assertEqual(set(written["weight"][:300]), {""})
+
+    def test_problems_are_named(self):
+        df = self._waves()
+        with self.assertRaisesRegex(ValueError, "No respondents match"):
+            run_weighting(df, self._blocks(), self._filtered_config("TIMESERIES(9)"))
+        with self.assertRaisesRegex(ValueError, "'WAVE' is not a column in the data"):
+            run_weighting(df, self._blocks(), self._filtered_config("WAVE(MAX)"))
+        with self.assertRaisesRegex(ValueError, "'TIMESERIES' is not a column"):
+            run_weighting(_sample(), self._blocks(), self._filtered_config("TIMESERIES(MAX)"))  # strict, unlike recodes
+        with self.assertRaisesRegex(ValueError, "unexpected text"):
+            run_weighting(df, self._blocks(), self._filtered_config("TIMESERIES(3) QSTYPE(1)"))
+        with self.assertRaisesRegex(ValueError, "Sample filter"):
+            run_weighting(df, self._blocks(), self._filtered_config("TIMESERIES = 3"))
+
+    def test_filter_round_trips_and_old_setups_convert(self):
+        from weighting_core import config_from_dict
+
+        with tempfile.TemporaryDirectory() as tmp:
+            save_config(self._filtered_config("TIMESERIES(MAX) AND QSTYPE(1)"), Path(tmp) / "setup.json")
+            loaded = load_config(Path(tmp) / "setup.json")
+        self.assertEqual(loaded.sample_filter, "TIMESERIES(MAX) AND QSTYPE(1)")
+        old = config_from_dict({"filter_column": "timeseries", "filter_codes": "12"})
+        self.assertEqual(old.sample_filter, "timeseries (12)")
+        self.assertEqual(config_from_dict({"filter_column": "timeseries", "filter_codes": ""}).sample_filter, "")
 
 
 class DirectRakeTests(unittest.TestCase):

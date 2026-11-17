@@ -243,6 +243,7 @@ def _launcher_contract(context: launcher.ProjectContext, run_dir: Path) -> StepO
         "table_merger": context.project_root / "Data",
         "open_end_coder": context.project_root / "Data" / "Partial" / "OEs",
         "quota_checker": context.project_root / "Data",
+        "weighting": context.project_root / "Data",
         "trend_table_updater": context.project_root / "Job" / "Table Gen",
         "auto_results": context.project_root / "Data" / "Partial" / "Results",
         "tomas": context.project_root / "Qst" / "Spanish Ver",

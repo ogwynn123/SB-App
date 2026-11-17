@@ -13,6 +13,7 @@ remains inside each specialist application or pipeline module.
 | Open-End Coder | OE app | `Data\Partial\Open Ends` or `Data` |
 | Draft Open-End Code Lists | launcher dialog over `pipelines\open_end_coder\oe_draft_codelist.py` | `Data\Partial\Open Ends` or `Data` |
 | Sample Quota Checker | Quota app | `Data` |
+| Sample Weighting | Weighting app (`pipelines\weighting\weighting_gui.py`) | `Data` |
 | Trend Table Updater | Trend app | `Job\Table Gen` |
 | Auto Results | Auto Results app | `Data\Partial\Results` or `Data` |
 | Preliminary QC | launcher action over `pipelines\qc_checker\prelim_qc.py`; report in `Job\QC\<timestamp>` | `Job` |
@@ -37,9 +38,12 @@ touching its live folders. While it is on (it is remembered between sessions):
 - the Open-End Coder keeps its session and coded CSV there, apart from real coding;
 - Auto Results saves the filled document there instead of beside the template;
 - Preliminary QC writes `QC\<timestamp>` there;
-- the draft open-end workbook goes there.
+- the draft open-end workbook goes there;
+- Sample Weighting saves the weighted data, its report and the weighting setup
+  (`<data>_weighting.json`) there. A setup already saved beside the live data is
+  read as the starting point but never written to.
 
-Weighting and TOMAS do not follow the switch yet. Sample Append and Project
+TOMAS does not follow the switch yet. Sample Append and Project
 Startup always write to the project as usual.
 
 ## Folders the apps remember
