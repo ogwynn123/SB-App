@@ -152,7 +152,9 @@ def prepare_review(session_path: Path, *, uses_96: bool = False, detail: str = "
         _written, notes = llm.continue_export(session_path, folder, recheck=recheck, questions=tuple(picked))
     job_path = folder / "job.json"
     job = json.loads(job_path.read_text(encoding="utf-8"))
-    job.update({"mode": mode, "session": str(session_path), "unused_codes": [] if uses_96 else ["96"]})
+    # 96 is unused unless the job uses it for "Have not heard enough", or a question's own list makes it a theme.
+    theme_96 = any("96" in q.get("fixed", {}) for q in job["questions"])
+    job.update({"mode": mode, "session": str(session_path), "unused_codes": [] if uses_96 or theme_96 else ["96"]})
     job_path.write_text(json.dumps(job, indent=1), encoding="utf-8")
     counts = {q["name"]: len(q["responses"]) for q in job["questions"]}
     return PreparedReview(folder, mode, f'/oe-review "{folder}"', counts, notes)

@@ -384,10 +384,17 @@ def check_question(question: dict, codes: dict[str, dict], recode: dict[str, dic
         problems.append(f"survnum(s) not in the draft: {', '.join(extra[:30])}")
     for code in sorted(set(codes) & set(STANDARD) - set(question.get("fixed", {})), key=int):
         problems.append(f"code {code} is a standard code; leave it off the theme list")
+    fixed = question.get("fixed", {})
+    # 96 on a job's own list as a theme (not "Have not heard enough") is a code like any other.
+    unused = unused - {c for c, info in fixed.items() if info["label"].strip().casefold() != STANDARD.get(c, "").casefold()}
     labels = Counter(c["label"].casefold() for c in codes.values() if c["label"])
     for label, count in labels.items():
         if count > 1:
-            problems.append(f"codes {', '.join(sorted((c['code'] for c in codes.values() if c['label'].casefold() == label), key=int))} share the label {label!r}")
+            same = sorted((c for c in codes if codes[c]["label"].casefold() == label), key=int)
+            # A list the job already had (e.g. an analyst's preliminary list) may repeat a label: not this review's doing.
+            inherited = all(c in fixed and fixed[c]["label"].strip().casefold() == label for c in same)
+            if not inherited:
+                problems.append(f"codes {', '.join(same)} share the label {label!r}")
     for survnum, row in recode.items():
         given = row["codes"]
         if not given:
@@ -402,8 +409,9 @@ def check_question(question: dict, codes: dict[str, dict], recode: dict[str, dic
         for code in given:
             if code in unused:
                 problems.append(f"survnum {survnum}: code {code} is not used on this job")
-        if any(c in NON_ANSWERS for c in given) and len(given) > 1:
-            problems.append(f"survnum {survnum}: a non-answer code ({', '.join(c for c in given if c in NON_ANSWERS)}) "
+        non_answers = [c for c in given if c in NON_ANSWERS and c not in fixed]
+        if non_answers and len(given) > 1:
+            problems.append(f"survnum {survnum}: a non-answer code ({', '.join(non_answers)}) "
                             "with other codes; code a remark as the remark, a non-answer alone")
     return problems
 

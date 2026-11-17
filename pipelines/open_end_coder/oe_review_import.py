@@ -205,6 +205,8 @@ NON_ANSWERS = {"96", "97", "99"}  # coded alone: a response with a theme is not 
 def _check(question: ReviewQuestion, unused_codes: tuple[str, ...] = ()) -> None:
     listed = set(question.codes) | set(STANDARD_LABELS)
     unused = {str(c).strip() for c in unused_codes if str(c).strip()}
+    # 96 on the question's list as a theme (not "Have not heard enough") is used like any other code.
+    unused -= {c for c, info in question.codes.items() if c in STANDARD_LABELS and info.label != STANDARD_LABELS[c]}
     for row in question.rows:
         unknown = [c for c in row.codes if c not in listed]
         if unknown:

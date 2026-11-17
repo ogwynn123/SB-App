@@ -114,6 +114,35 @@ class GuiReviewTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Not in the session"):
             gui_review.prepare_review(session_path, questions=("q99",), folder=self.folder / "missing")
 
+    def test_preliminary_list_with_repeated_labels_and_a_96_theme(self):
+        import oe_llm_review as llm
+
+        codelist = self.folder / "preliminary.csv"
+        codelist.write_text("question_col,code,label,supercategory\nq6,1,Too old,\nq6,2,Gas prices,\nq6,3,Too old,\n"
+                            "q6,96,Stance on taxing tips,\n", encoding="utf-8")
+        with oe.CodingSession(self.session_path) as session:
+            session.load_codelist(codelist)
+        folder = self.folder / "review"
+        gui_review.prepare_review(self.session_path, folder=folder)  # "Job uses 96" not ticked
+        job = json.loads((folder / "job.json").read_text(encoding="utf-8"))
+        self.assertEqual(job["unused_codes"], [])  # 96 is a theme on this list
+        (folder / "q6 list.tsv").write_text("1\tToo old\t\n2\tGas prices\t\n3\tToo old\t\n96\tStance on taxing tips\t\n",
+                                            encoding="utf-8")
+        codes = ["1", "1", "1", "1", "1", "2", "2,96", "2", "2", "97", "99", "98"]
+        (folder / "q6 recode.tsv").write_text("".join(f"{k}\t{c}\n" for k, c in enumerate(codes, 1)), encoding="utf-8")
+        out, problems, _ = llm.build(folder, ("96",))
+        self.assertEqual(problems, {"q6": []})  # the list's own repeated label and 96 theme are not problems
+        report = gui_review.import_review(self.session_path, out)
+        self.assertNotIn("does not use 96", report)
+        with oe.CodingSession(self.session_path) as session:
+            coded = {r.record_key: r.final_codes for r in session.list_responses(session.questions()[0].id)}
+        self.assertEqual(coded["7"], ("2", "96"))
+        # A label this review repeats is still a problem.
+        (folder / "q6 list.tsv").write_text("1\tToo old\t\n2\tGas prices\t\n3\tToo old\t\n96\tStance on taxing tips\t\n"
+                                            "4\tGas prices\t\n", encoding="utf-8")
+        _out, problems, _ = llm.build(folder, ("96",))
+        self.assertTrue(any("share the label 'gas prices'" in p for p in problems["q6"]))
+
     def test_claude_command_runs_the_skill_on_the_folder(self):
         prepared = gui_review.PreparedReview(self.folder, "scratch", f'/oe-review "{self.folder}"')
         (self.folder / "job.json").write_text(json.dumps({"session": str(self.session_path)}), encoding="utf-8")
