@@ -30,6 +30,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -223,6 +224,68 @@ def import_review(session_path: Path, workbook: Path, *, uses_96: bool = False, 
     text = review_import.render_report(questions, applied)
     report.write_text(text, encoding="utf-8")
     return text
+
+
+def split_summary(session_path: Path, folder: Path) -> str:
+    """What became of the codes a review was sent to split, read from the review folder's
+    job.json (labels and codes at export) and the session now. Empty if none were sent."""
+    job_path = Path(folder) / "job.json"
+    if not job_path.is_file():
+        return ""
+    job = json.loads(job_path.read_text(encoding="utf-8"))
+    lines: list[str] = []
+    with oe.CodingSession(Path(session_path)) as session:
+        by_name = {q.name.casefold(): q for q in session.questions()}
+        for question in job.get("questions", []):
+            flagged = question.get("flagged_codes") or []
+            info = by_name.get(question["name"].casefold())
+            if not flagged or info is None:
+                continue
+            codes = {c.code: c for c in session.list_codes(info.id)}
+            now = {r.record_key: r for r in session.list_responses(info.id)}
+            lines.append(f"{info.name}")
+            for code in flagged:
+                before = question["fixed"].get(code, {})
+                current = codes.get(code)
+                label = current.label if current else "(missing)"
+                if current and current.review_flag:
+                    state = "not reviewed yet (still flagged)"
+                elif label != before.get("label", ""):
+                    state = f"label {before.get('label', '')!r} -> {label!r}"
+                else:
+                    state = f"label kept: {label!r}"
+                lines.append(f"  Code {code}: {state}")
+                sent = [r for r in question.get("responses", []) if r.get("recheck") == f"split {code}"]
+                kept, moved, unchanged = 0, Counter(), 0
+                for row in sent:
+                    response = now.get(row["record_key"])
+                    if response is None:
+                        continue
+                    final = tuple(response.final_codes)
+                    if final == tuple(row["draft"]):
+                        unchanged += 1
+                    if code in final:
+                        kept += 1
+                    for other in final:
+                        if other != code and other not in row["draft"]:
+                            moved[other] += 1
+                lines.append(f"    Sent to the review: {len(sent)}; still on {code}: {kept}"
+                             + (f"; codes left as they were: {unchanged}" if unchanged and unchanged != len(sent) else ""))
+                for other, count in sorted(moved.items(), key=lambda kv: int(kv[0]) if kv[0].isdigit() else 0):
+                    target = codes.get(other)
+                    new = "new " if other not in question["fixed"] and other not in llm.STANDARD else ""
+                    lines.append(f"    Moved to {new}{other} {target.label if target else ''}: {count}")
+                sent_keys = {r["record_key"] for r in sent}
+                left = [r for r in now.values() if code in r.final_codes and r.record_key not in sent_keys]
+                if left:
+                    lines.append(f"    Still on {code} without a recheck (coded by hand, or an earlier wave): "
+                                 f"{len(left)}; check they fit the label:")
+                    for response in left[:40]:
+                        lines.append(f"      {llm._survnum(response.record_key)}  {response.verbatim.strip()[:120]}")
+                    if len(left) > 40:
+                        lines.append(f"      ... and {len(left) - 40} more (Codebook: double-click code {code})")
+            lines.append("")
+    return "\n".join(lines).strip()
 
 
 def main() -> int:

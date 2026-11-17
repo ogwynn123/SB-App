@@ -315,6 +315,23 @@ class FlaggedCodeTests(unittest.TestCase):
         self.assertIn("Reviewed (split)", flag.review_note)
         self.assertEqual(flag.label, "Seen ads")
 
+    def test_split_summary_after_the_import(self):
+        import oe_gui_review as gui_review
+
+        self.assertIn("not reviewed yet", gui_review.split_summary(self.session_path, self.out))
+        self.write("q5 list.tsv", "1\tSeen ads\tCampaign\n2\tVeteran\tBackground\n3\tAttack ads\tCampaign\n")
+        self.write("q5 recode.tsv", "101\t1\n102\t3\n103\t1\n")
+        out, _problems, _ = review.build(self.out)
+        with self.oe.CodingSession(self.session_path) as session:
+            review_import.apply_to_session(session, review_import.read_review(out))
+        text = gui_review.split_summary(self.session_path, self.out)
+        self.assertIn("Code 1: label 'Ads' -> 'Seen ads'", text)
+        self.assertIn("Sent to the review: 3; still on 1: 2", text)
+        self.assertIn("Moved to new 3 Attack ads: 1", text)
+        self.assertIn("without a recheck (coded by hand, or an earlier wave): 1", text)
+        self.assertIn("104  Nasty attack ads", text)
+        self.assertEqual(gui_review.split_summary(self.session_path, self.folder), "")  # no job.json there
+
     def test_relabelling_an_unflagged_code_still_needs_agreement(self):
         self.write("q5 list.tsv", "1\tSeen ads\tCampaign\n2\tMilitary service\tBackground\n")
         self.write("q5 recode.tsv", "101\t1\n102\t1\n103\t1\n")

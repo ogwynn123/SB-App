@@ -872,14 +872,20 @@ class RecordCoderApp:
                 self.refresh_all()
                 status_var.set("Finished. The session is refreshed." if code == 0 else
                                f"Claude stopped with exit code {code}; see the log in the review folder.")
+                if code == 0:
+                    self.show_split_summary(prepared.folder, parent=window)
 
             window.after(3000, poll)
+
+        def refresh() -> None:
+            self.refresh_all()
+            self.show_split_summary(prepared.folder, parent=window)
 
         buttons = ttk.Frame(outer)
         buttons.pack(fill=tk.X, pady=(6, 0))
         ttk.Button(buttons, text="Copy Line", command=copy).pack(side=tk.LEFT)
         ttk.Button(buttons, text="Open Folder", command=lambda: os.startfile(str(prepared.folder))).pack(side=tk.LEFT, padx=6)
-        ttk.Button(buttons, text="Refresh", command=self.refresh_all).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Refresh", command=refresh).pack(side=tk.LEFT)
         run_button = ttk.Button(buttons, text="Run with Claude", command=run, state="normal" if cli else "disabled")
         run_button.pack(side=tk.RIGHT)
         if not cli:
@@ -914,6 +920,36 @@ class RecordCoderApp:
         self.refresh_all()
         self.status_var.set(f"Imported review: {Path(picked).name}")
         messagebox.showinfo("Review imported", report[:3000])
+        self.show_split_summary(Path(picked).parent)
+
+    def show_split_summary(self, folder: Path, parent=None) -> None:
+        """Pop up what became of the codes this review was sent to split (nothing is saved)."""
+        import oe_gui_review as review
+
+        try:
+            text = review.split_summary(self._session_required().path, Path(folder))
+        except Exception as exc:  # the summary is a convenience; never block the import
+            self.status_var.set(f"Split summary not available: {exc}")
+            return
+        if not text:
+            return
+        window = tk.Toplevel(parent or self.root)
+        window.title("Split summary")
+        window.transient(parent or self.root)
+        window.geometry("820x480")
+        frame = ttk.Frame(window, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Codes this review was sent to split", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        box = tk.Text(frame, wrap="word", font=("Segoe UI", 10), height=20)
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=box.yview)
+        box.configure(yscrollcommand=scroll.set)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y, pady=(6, 0))
+        box.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
+        box.tag_configure("head", font=("Segoe UI", 10, "bold"))
+        for line in text.splitlines():
+            box.insert("end", line + "\n", "head" if line.lstrip().startswith("Code ") or (line and not line.startswith(" ")) else ())
+        box.configure(state="disabled")
+        ttk.Button(frame, text="Close", command=window.destroy).pack(anchor="e", pady=(8, 0))
 
     def show_codelist_import_report(self, summary: core.CodelistImportSummary) -> None:
         differences = [
