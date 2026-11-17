@@ -329,8 +329,34 @@ class FlaggedCodeTests(unittest.TestCase):
         self.assertIn("Sent to the review: 3; still on 1: 2", text)
         self.assertIn("Moved to new 3 Attack ads: 1", text)
         self.assertIn("without a recheck (coded by hand, or an earlier wave): 1", text)
-        self.assertIn("104  Nasty attack ads", text)
+        self.assertIn("104  [flagged]  Nasty attack ads", text)
         self.assertEqual(gui_review.split_summary(self.session_path, self.folder), "")  # no job.json there
+
+    def test_responses_left_on_a_split_code_are_flagged(self):
+        self.write("q5 list.tsv", "1\tSeen ads\tCampaign\n2\tVeteran\tBackground\n3\tAttack ads\tCampaign\n")
+        self.write("q5 recode.tsv", "101\t1\n102\t3\n103\t1\n")
+        out, _problems, _ = review.build(self.out)
+        with self.oe.CodingSession(self.session_path) as session:
+            applied = review_import.apply_to_session(session, review_import.read_review(out))[0]
+            state = {r.record_key: r for r in session.list_responses(self.qid)}
+            self.assertEqual(session.last_coding_action("q5", "104"), "set_assignment")  # still a hand edit
+        self.assertEqual(applied.flagged_after_split, ["104"])
+        self.assertTrue(state["104"].flagged)
+        self.assertEqual(state["104"].final_codes, ("1",))  # codes untouched
+        self.assertIn("Code 1 was split ('Ads' -> 'Seen ads')", state["104"].note)
+        self.assertFalse(state["101"].flagged or state["105"].flagged)
+        # The next export sends it back as a flagged response.
+        nxt = self.folder / "day 3"
+        review.continue_export(self.session_path, nxt, recheck=("98", "flagged", "codes"), auto_flag_share=None)
+        self.assertIn("104 |  | flagged | 1 |", (nxt / "q5 draft.md").read_text(encoding="utf-8"))
+
+    def test_a_code_kept_as_it_was_flags_nothing(self):
+        self.write("q5 list.tsv", "1\tAds\tCampaign\n2\tVeteran\tBackground\n")
+        self.write("q5 recode.tsv", "101\t1\n102\t1\n103\t1\n")
+        out, _problems, _ = review.build(self.out)
+        with self.oe.CodingSession(self.session_path) as session:
+            applied = review_import.apply_to_session(session, review_import.read_review(out))[0]
+        self.assertEqual(applied.flagged_after_split, [])
 
     def test_relabelling_an_unflagged_code_still_needs_agreement(self):
         self.write("q5 list.tsv", "1\tSeen ads\tCampaign\n2\tMilitary service\tBackground\n")

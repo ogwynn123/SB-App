@@ -188,7 +188,9 @@ highest existing theme code (skipping 96-99). Do not renumber to close gaps.
      98s together for its 3+); otherwise write `98` again.
    - **flagged**: the user asked for another look; read their note, recode
      the verbatim from scratch, and say in the note column what changed (or
-     why the codes stay).
+     why the codes stay). A note "Code N was split" means the response kept
+     N after an earlier split: give it N only if it fits N's new label,
+     otherwise one of the codes split from N (or another code).
    - **split N**: code N is in **Codes flagged for review** (the user thinks
      it is too broad, or its note starts "Auto:" because it holds more than 9%
      of respondents; a large code may still be one clear idea). If its responses hold more than one idea, keep N for

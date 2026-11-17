@@ -279,9 +279,11 @@ def split_summary(session_path: Path, folder: Path) -> str:
                 left = [r for r in now.values() if code in r.final_codes and r.record_key not in sent_keys]
                 if left:
                     lines.append(f"    Still on {code} without a recheck (coded by hand, or an earlier wave): "
-                                 f"{len(left)}; check they fit the label:")
+                                 f"{len(left)}; check they fit the label ({sum(r.flagged for r in left)} flagged: "
+                                 "Status 'Flagged' in Code Responses, and they go to the next review's rechecks):")
                     for response in left[:40]:
-                        lines.append(f"      {llm._survnum(response.record_key)}  {response.verbatim.strip()[:120]}")
+                        lines.append(f"      {llm._survnum(response.record_key)}{'  [flagged]' if response.flagged else ''}  "
+                                     f"{response.verbatim.strip()[:120]}")
                     if len(left) > 40:
                         lines.append(f"      ... and {len(left) - 40} more (Codebook: double-click code {code})")
             lines.append("")

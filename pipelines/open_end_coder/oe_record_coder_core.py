@@ -1170,6 +1170,25 @@ class CodingSession:
             )
         return self.response(response_id)
 
+    def set_response_flag(self, response_id: int, flagged: bool, note: str) -> ResponseInfo:
+        """Flag (or unflag) a response for another look without touching its codes."""
+        response = self.response(response_id)
+        self._require_editable(response)
+        question = self.question(response.question_id)
+        status = "flagged" if flagged else ("coded" if response.override_active else "pending")
+        timestamp = now_iso()
+        with self.connection:
+            self.connection.execute(
+                "UPDATE response_state SET flagged=?, review_status=?, note=?, updated_at=? WHERE response_id=?",
+                (int(flagged), status, clean_text(note), timestamp, response_id),
+            )
+            self.connection.execute(
+                "INSERT INTO audit_log(changed_at, action, question_name, record_key, new_value, detail) "
+                "VALUES(?, 'flag_response', ?, ?, ?, ?)",
+                (timestamp, question.name, response.record_key, json.dumps(bool(flagged)), clean_text(note)),
+            )
+        return self.response(response_id)
+
     def last_coding_action(self, question_name: str, record_key: str) -> str:
         """The audit action that last set this response's codes ('' if never set in the
         coder). 'import_review' is a review import; anything else is a hand edit."""

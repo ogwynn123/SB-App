@@ -77,6 +77,7 @@ class ApplySummary:
     rechecked: int = 0
     recheck_skipped: list[str] = field(default_factory=list)
     codes_reviewed: list[str] = field(default_factory=list)
+    flagged_after_split: list[str] = field(default_factory=list)  # left on a split code: flagged to check
     not_found: list[str] = field(default_factory=list)
     verbatim_mismatch: list[str] = field(default_factory=list)
     locked: list[str] = field(default_factory=list)
@@ -266,7 +267,8 @@ def render_report(questions: dict[str, ReviewQuestion], applied: list[ApplySumma
                      + (f"; flagged code(s) reviewed: {', '.join(summary.codes_reviewed)}" if summary.codes_reviewed else ""))
         for label, keys in (("not in the session", summary.not_found), ("verbatim differs, skipped", summary.verbatim_mismatch),
                             ("sent back but edited by hand or unflagged since, left as they were", summary.recheck_skipped),
-                            ("locked prior wave, skipped", summary.locked)):
+                            ("locked prior wave, skipped", summary.locked),
+                            ("left on a split code, flagged to check", summary.flagged_after_split)):
             if keys:
                 lines.append(f"  - {len(keys)} {label}: {', '.join(keys[:20])}{' ...' if len(keys) > 20 else ''}")
     return "\n".join(lines) + "\n"
@@ -285,6 +287,25 @@ def _recheck_allowed(session: oe.CodingSession, question_name: str, response: oe
     return False
 
 
+def _flag_left_on_split(session: oe.CodingSession, question: oe.QuestionInfo, code: str, old_label: str,
+                        new_label: str, recoded: set[str], summary: ApplySummary) -> None:
+    """After a split, responses still on the code that the review did not recode (coded by
+    hand, edited since the export, or an earlier wave) may not fit its new meaning: flag
+    them, so they show as flagged in the coder and go to the next review's rechecks."""
+    moved = any(code not in r.final_codes for r in session.list_responses(question.id) if r.record_key in recoded)
+    if old_label == new_label and not moved:  # kept as it was: nothing to check
+        return
+    note = f"Code {code} was split ({old_label!r} -> {new_label!r}): check it still fits, or recode"
+    for response in session.list_responses(question.id):
+        if code not in response.final_codes or response.record_key in recoded or response.flagged:
+            continue
+        try:
+            session.set_response_flag(response.id, True, f"{response.note}; {note}" if response.note else note)
+        except oe.PriorWaveLockedError:
+            continue
+        summary.flagged_after_split.append(response.record_key.rsplit("|", 1)[-1])
+
+
 def apply_to_session(session: oe.CodingSession, questions: dict[str, ReviewQuestion], *,
                      overwrite_coded: bool = False) -> list[ApplySummary]:
     """Write the reviewed codes and assignments into an Open-End Coder session."""
@@ -297,6 +318,8 @@ def apply_to_session(session: oe.CodingSession, questions: dict[str, ReviewQuest
             summaries.append(ApplySummary(name, not_found=[f"question {name}"]))
             continue
         summary = ApplySummary(question.name)
+        labels_before = {c.code: c.label for c in session.list_codes(question.id)}
+        split_done: set[str] = set()  # record keys this review recoded for a split
         for code in review.codes.values():
             session.upsert_code(question.id, code.code, label=code.label, supercategory=code.net,
                                 direction=code.direction, source="review")
@@ -330,6 +353,8 @@ def apply_to_session(session: oe.CodingSession, questions: dict[str, ReviewQuest
                 continue
             summary.assigned += 1
             summary.rechecked += bool(recheck)
+            if recheck and row.recheck.startswith("split "):
+                split_done.add(response.record_key)
         # Codes sent to be split have now been reviewed: clear their flag (the note says so).
         for code in sorted({row.recheck.split()[1] for row in review.rows if row.recheck.startswith("split ")}):
             try:
@@ -339,6 +364,7 @@ def apply_to_session(session: oe.CodingSession, questions: dict[str, ReviewQuest
             if info.review_flag:
                 session.set_code_review_flag(question.id, code, False, f"Reviewed (split) {oe.now_iso()[:10]}: {info.review_note}")
                 summary.codes_reviewed.append(code)
+                _flag_left_on_split(session, question, code, labels_before.get(code, ""), info.label, split_done, summary)
         summaries.append(summary)
     return summaries
 
