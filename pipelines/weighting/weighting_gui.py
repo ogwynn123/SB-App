@@ -25,6 +25,7 @@ from weighting_core import (
     assign_labels,
     draft_config,
     effective_blocks,
+    existing_column,
     filter_mask,
     load_config,
     normalize_code,
@@ -56,6 +57,78 @@ _TEXT_LOOK = {
     "borderwidth": 1,
     "highlightthickness": 0,
 }
+
+
+class SearchableCombobox(ttk.Combobox):
+    """A column picker you can type into: the list narrows to names containing what you type.
+
+    Down arrow opens the narrowed list; Return or leaving the box picks the typed name, or
+    the first match when it is not a full name. Esc puts the last choice back. With
+    allow_new, a name that is not in the list is kept (e.g. a new weight column).
+    A choice fires <<ComboboxSelected>>, the same as picking from the list.
+    """
+
+    def __init__(self, master, values=(), allow_new: bool = False, allow_blank: bool = True, **kw):
+        kw["state"] = "normal"
+        super().__init__(master, values=list(values), **kw)
+        self._all = list(values)
+        self._allow_new = allow_new
+        self._allow_blank = allow_blank
+        self._last = self.get()
+        self.bind("<FocusIn>", lambda _e: self._remember(), add="+")
+        self.bind("<KeyRelease>", self._narrow, add="+")
+        self.bind("<Return>", lambda _e: self._commit(first_match=True), add="+")
+        self.bind("<FocusOut>", lambda _e: self._commit(first_match=False), add="+")
+        self.bind("<Escape>", self._restore, add="+")
+        self.bind("<<ComboboxSelected>>", lambda _e: self._remember(), add="+")
+
+    def set_values(self, values) -> None:
+        self._all = [str(v) for v in values]
+        self["values"] = self._all
+
+    def _remember(self) -> None:
+        self._last = self.get()
+        self["values"] = self._all
+
+    def _matches(self, text: str) -> list[str]:
+        folded = text.strip().casefold()
+        if not folded:
+            return self._all
+        starts = [v for v in self._all if v.casefold().startswith(folded)]
+        return starts + [v for v in self._all if folded in v.casefold() and v not in starts]
+
+    def _narrow(self, event) -> None:
+        if event.keysym in ("Return", "Escape", "Tab", "Up", "Down", "Left", "Right", "Shift_L", "Shift_R"):
+            return
+        self["values"] = self._matches(self.get())
+
+    def _restore(self, _event=None) -> str:
+        self.set(self._last)
+        self["values"] = self._all
+        return "break"
+
+    def _commit(self, first_match: bool) -> None:
+        text = self.get().strip()
+        exact = next((v for v in self._all if v == text), None) or next(
+            (v for v in self._all if v.casefold() == text.casefold()), None
+        )
+        if exact is None and text:
+            matches = self._matches(text)
+            if matches and (first_match or len(matches) == 1) and not self._allow_new:
+                exact = matches[0]
+        if exact is not None:
+            choice = exact
+        elif not text and self._allow_blank:
+            choice = ""
+        elif text and self._allow_new:
+            choice = text
+        else:
+            choice = self._last  # nothing matched: keep the last choice
+        self.set(choice)
+        self["values"] = self._all
+        if choice != self._last:
+            self._last = choice
+            self.event_generate("<<ComboboxSelected>>")
 
 
 DATA_EXTENSIONS = (".csv", ".xlsx", ".xlsm")
@@ -223,10 +296,11 @@ class WeightingApp:
         col_row = ttk.Frame(right)
         col_row.pack(fill=tk.X)
         ttk.Label(col_row, text="Data column").pack(side=tk.LEFT)
-        self.column_combo = ttk.Combobox(col_row, textvariable=self.column_var, state="readonly", width=24)
+        self.column_combo = SearchableCombobox(col_row, textvariable=self.column_var, width=24)
         self.column_combo.pack(side=tk.LEFT, padx=(6, 8))
         self.column_combo.bind("<<ComboboxSelected>>", self._column_changed)
         ttk.Button(col_row, text="Suggest Codes", command=self._suggest_codes).pack(side=tk.LEFT)
+        ttk.Label(col_row, text="type to search", foreground="#555555").pack(side=tk.LEFT, padx=(8, 0))
         self.values_label = ttk.Label(right, text="", foreground="#555555", wraplength=520, justify=tk.LEFT)
         self.values_label.pack(fill=tk.X, pady=(4, 0))
         ttk.Label(
@@ -252,7 +326,11 @@ class WeightingApp:
         ttk.Label(actions, text="Min weight").pack(side=tk.LEFT)
         ttk.Entry(actions, textvariable=self.floor_var, width=6).pack(side=tk.LEFT, padx=(4, 10))
         ttk.Label(actions, text="Weight column").pack(side=tk.LEFT)
-        ttk.Entry(actions, textvariable=self.weight_col_var, width=14).pack(side=tk.LEFT, padx=(4, 10))
+        self.weight_combo = SearchableCombobox(
+            actions, textvariable=self.weight_col_var, width=18, allow_new=True, allow_blank=False
+        )
+        self.weight_combo.pack(side=tk.LEFT, padx=(4, 10))
+        self.weight_combo.bind("<<ComboboxSelected>>", self._weight_column_changed, add="+")
         ttk.Label(actions, text="Decimals").pack(side=tk.LEFT)
         ttk.Spinbox(actions, textvariable=self.decimals_var, from_=0, to=MAX_WEIGHT_DECIMALS, width=4).pack(
             side=tk.LEFT, padx=(4, 10)
@@ -472,7 +550,8 @@ class WeightingApp:
             messagebox.showerror("Derived variables", f"The derived variable script has a problem:\n\n{exc}")
             ok = False
         self._apply_filter_view()
-        self.column_combo["values"] = list(self.full_df.columns)
+        self.column_combo.set_values(self.full_df.columns)
+        self.weight_combo.set_values(self.raw_df.columns)
         return ok
 
     def _apply_filter_view(self) -> None:
@@ -492,6 +571,17 @@ class WeightingApp:
             self.filter_info_var.set(f"Weighting {int(keep.sum()):,} of {len(keep):,} respondents{how}.")
         else:
             self.filter_info_var.set(f"Everyone is weighted ({len(keep):,} respondents).")
+
+    def _weight_column_changed(self, _event=None) -> None:
+        name = self.weight_col_var.get().strip()
+        if not name or self.raw_df is None:
+            return
+        found = existing_column(self.raw_df.columns, name)
+        if found:
+            self.weight_col_var.set(found)
+            self.summary_var.set(f"Weights will be written into the existing column {found}.")
+        else:
+            self.summary_var.set(f"Weights will go in a new column, {name}, at the end of the data.")
 
     def _selected_method(self) -> str:
         label = self.method_var.get()
@@ -579,6 +669,14 @@ class WeightingApp:
         self.config = config
         self.cap_var.set(f"{config.cap:g}")
         self.floor_var.set(f"{config.floor:g}")
+        if self.raw_df is not None:
+            # Show an existing column under its own spelling (e.g. WEIGHT for "weight").
+            config.weight_column = existing_column(self.raw_df.columns, config.weight_column) or config.weight_column
+        if self.full_df is not None:
+            # Same for each variable's data column, so a setup saved on "timeseries" finds TIMESERIES.
+            for var in config.variables.values():
+                if var.column:
+                    var.column = existing_column(self.full_df.columns, var.column) or var.column
         self.weight_col_var.set(config.weight_column)
         self.decimals_var.set(str(config.weight_decimals))
         self._show_target_n()
@@ -1099,8 +1197,10 @@ class TargetEditDialog(tk.Toplevel):
             self.col_totals.append(total)
         self.grand_total = ttk.Label(grid, text="", font=bold)
         self.grand_total.grid(row=foot, column=len(block.col_labels) + 1, padx=(12, 0), pady=(6, 0), sticky="w")
+        self.remaining = ttk.Label(body, text="", font=(brand.FONT, 11, "bold"))
+        self.remaining.pack(fill=tk.X, pady=(10, 0))
         self.status = ttk.Label(body, text="")
-        self.status.pack(fill=tk.X, pady=(8, 0))
+        self.status.pack(fill=tk.X, pady=(2, 0))
 
         buttons = ttk.Frame(body)
         buttons.pack(fill=tk.X, pady=(8, 0))
@@ -1138,8 +1238,11 @@ class TargetEditDialog(tk.Toplevel):
     def _update(self) -> None:
         values = self.values()
         if values is None:
+            self.remaining.configure(text="")
             self.status.configure(text="Every cell must be a number of 0 or more.", foreground="#b00020")
             return
+        text, colour = _remaining(sum(map(sum, values)) * 100)
+        self.remaining.configure(text=text, foreground=colour)
         for r, row in enumerate(values):
             self.row_totals[r].configure(text=f"{sum(row):.2%}")
             for c, value in enumerate(row):
@@ -1161,6 +1264,21 @@ class TargetEditDialog(tk.Toplevel):
         else:
             self.result = values
             self.destroy()
+
+
+REMAINING_OK = "#1E7B34"
+REMAINING_SHORT = "#A15C00"
+REMAINING_OVER = "#B00020"
+
+
+def _remaining(total_pct: float) -> tuple[str, str]:
+    """What is left to reach 100%, and the colour to show it in."""
+    left = 100.0 - total_pct
+    if abs(left) < 0.005:
+        return "100% allocated", REMAINING_OK
+    if left > 0:
+        return f"Remaining: {left:.2f}% to reach 100%", REMAINING_SHORT
+    return f"Over by {-left:.2f}% (above 100%)", REMAINING_OVER
 
 
 def _percent_text(share: float) -> str:
@@ -1191,7 +1309,7 @@ class ManualTargetDialog(tk.Toplevel):
         ttk.Label(top, text="Name").pack(side=tk.LEFT)
         ttk.Entry(top, textvariable=self.name_var, width=20).pack(side=tk.LEFT, padx=(6, 12))
         ttk.Label(top, text="Data column").pack(side=tk.LEFT)
-        combo = ttk.Combobox(top, textvariable=self.column_var, values=list(df.columns), state="readonly", width=22)
+        combo = SearchableCombobox(top, textvariable=self.column_var, values=list(df.columns), width=22)
         combo.pack(side=tk.LEFT, padx=(6, 8))
         combo.bind("<<ComboboxSelected>>", self._column_changed)
         ttk.Button(top, text="Fill From Data", command=self.fill_from_data).pack(side=tk.LEFT)
@@ -1207,6 +1325,8 @@ class ManualTargetDialog(tk.Toplevel):
         bottom.pack(fill=tk.X, pady=(8, 0))
         ttk.Button(bottom, text="Add Row", command=self._add_row).pack(side=tk.LEFT)
         ttk.Label(bottom, textvariable=self.total_var).pack(side=tk.LEFT, padx=(12, 0))
+        self.remaining = ttk.Label(bottom, text="", font=(brand.FONT, 10, "bold"))
+        self.remaining.pack(side=tk.LEFT, padx=(12, 0))
         ttk.Button(bottom, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
         ttk.Button(bottom, text="OK", command=self._ok).pack(side=tk.RIGHT, padx=(0, 8))
 
@@ -1269,6 +1389,7 @@ class ManualTargetDialog(tk.Toplevel):
             target = ttk.Entry(self.grid_frame, textvariable=row["target"], width=8)
             target.grid(row=r, column=2, sticky="w", pady=1)
             target.bind("<FocusOut>", lambda _e: self._update_total())
+            target.bind("<KeyRelease>", lambda _e: self._update_total())  # remaining % updates as you type
             count = counts.get(row["label"].get().strip(), 0)
             ttk.Label(self.grid_frame, text=str(count)).grid(row=r, column=3, sticky="w")
             ttk.Label(self.grid_frame, text=f"{count / n:.1%}").grid(row=r, column=4, sticky="w")
@@ -1300,10 +1421,13 @@ class ManualTargetDialog(tk.Toplevel):
         targets = self._targets()
         if targets is None:
             self.total_var.set("Targets must be numbers of 0 or more.")
+            self.remaining.configure(text="")
             return
         total = sum(targets.values())
         note = "" if abs(total - 100) < 0.05 else " (will be rescaled to 100%)"
         self.total_var.set(f"Total {total:g}%{note}")
+        text, colour = _remaining(total)
+        self.remaining.configure(text=text, foreground=colour)
 
     def _ok(self) -> None:
         name = self.name_var.get().strip()

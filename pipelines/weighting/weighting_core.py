@@ -493,13 +493,17 @@ def normalize_code(value) -> str:
 
 
 def assign_labels(series: pd.Series, variable: Variable) -> pd.Series:
-    """Map each respondent's code to a target label; unmatched codes become NaN."""
-    codes = series.map(normalize_code)
+    """Map each respondent's code to a target label; unmatched codes become NaN.
+
+    Letters match whatever their case: a spec of "w" or "Democrat" catches W / DEMOCRAT in the data.
+    """
+    codes = series.map(normalize_code).str.casefold()
     result = pd.Series(np.nan, index=series.index, dtype=object)
     rest_labels = []
     claimed: set[str] = set()
     for label, spec in variable.labels.items():
         label_codes, is_rest = parse_code_spec(spec)
+        label_codes = {code.casefold() for code in label_codes}
         if is_rest:
             rest_labels.append(label)
         claimed |= label_codes
@@ -632,7 +636,11 @@ def build_dimensions(df: pd.DataFrame, blocks: list[TargetBlock], config: Weight
     all_axes = list(config.blocks) + [
         BlockAxes(m.key, m.variable, TOTAL_VARIABLE, m.enabled) for m in config.manual_targets
     ]
-    variables = dict(config.variables)
+    # Column names match the data whatever their case (a setup saved on "timeseries" works on "TIMESERIES").
+    variables = {
+        name: replace(var, column=existing_column(df.columns, var.column) or var.column) if var.column else var
+        for name, var in config.variables.items()
+    }
     variables[TOTAL_VARIABLE] = Variable(TOTAL_VARIABLE, "", {TOTAL_LABEL: REST_TOKEN})
     dims: list[Dimension] = []
     warnings: list[str] = []
@@ -1087,7 +1095,10 @@ def run_weighting(
         )
     base = None
     if config.base_weight_column:
-        base = pd.to_numeric(df[config.base_weight_column], errors="coerce").fillna(0).to_numpy()
+        base_column = existing_column(df.columns, config.base_weight_column)
+        if base_column is None:
+            raise ValueError(f"Base weight column not in data: {config.base_weight_column}")
+        base = pd.to_numeric(df[base_column], errors="coerce").fillna(0).to_numpy()
     if config.method == "wincross":
         result = balance_wincross(dims, base, floor=config.floor, max_rounds=max_iterations)
     else:
@@ -1126,6 +1137,15 @@ def rounded_weights(weights: np.ndarray, cap: float, decimals: int = 6, total: f
     return np.round(out, decimals)
 
 
+def existing_column(columns, name: str) -> str | None:
+    """The data column matching name exactly, else ignoring case and surrounding spaces; None if there is none."""
+    wanted = name.strip()
+    if wanted in columns:
+        return wanted
+    folded = wanted.casefold()
+    return next((c for c in columns if str(c).strip().casefold() == folded), None)
+
+
 def write_outputs(df: pd.DataFrame, result: RakeResult, config: WeightingConfig, data_out: Path, report_out: Path) -> None:
     decimals = config.weight_decimals
     if not 0 <= decimals <= MAX_WEIGHT_DECIMALS:
@@ -1135,14 +1155,16 @@ def write_outputs(df: pd.DataFrame, result: RakeResult, config: WeightingConfig,
     if data_out.suffix.lower() not in (".xlsx", ".xlsm"):
         # Fixed decimals so every weight in the CSV has the same width (1.500000, not 1.5).
         weights = np.array([f"{w:.{decimals}f}" for w in weights], dtype=object)
+    # An existing column (any case, e.g. WEIGHT for "weight") is filled in place, keeping its name and position.
+    name = existing_column(out.columns, config.weight_column) or config.weight_column
     if result.rows is None:
-        out[config.weight_column] = weights
+        out[name] = weights
     else:
         # Filtered run: only the weighted rows change; others keep any weight they had.
-        column = out[config.weight_column] if config.weight_column in out.columns else pd.Series("", index=out.index)
+        column = out[name] if name in out.columns else pd.Series("", index=out.index)
         column = column.astype(object).copy()
         column.iloc[result.rows] = weights
-        out[config.weight_column] = column
+        out[name] = column
     if data_out.suffix.lower() in (".xlsx", ".xlsm"):
         out.to_excel(data_out, index=False)
     else:

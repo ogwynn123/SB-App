@@ -92,6 +92,23 @@ class CodeSpecTests(unittest.TestCase):
         out = assign_labels(pd.Series(["Democrat", "Libertarian", "Republican", ""]), var)
         self.assertEqual(list(out), ["Dem", "Ind", "GOP", "Ind"])
 
+    def test_letter_codes_match_whatever_their_case(self):
+        var = Variable("Party", "party", {"Dem": "democrat,d", "GOP": "R", "Other": "*"})
+        out = assign_labels(pd.Series(["Democrat", "D", "r", "REPUBLICAN", "DEMOCRAT"]), var)
+        self.assertEqual(list(out), ["Dem", "Dem", "GOP", "Other", "Dem"])
+
+    def test_columns_match_the_data_whatever_their_case(self):
+        df = _sample().rename(columns={"sex": "SEX", "region": "Region"})
+        df["BaseWt"] = "1"
+        config = _config()  # saved on "sex" / "region" / "age"
+        config.base_weight_column = "basewt"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "targets.xlsx"
+            _workbook(path, [[0.2, 0.3], [0.25, 0.25]], [[0.22, 0.28], [0.23, 0.27]])
+            result = run_weighting(df, read_target_blocks(path), config)
+        self.assertTrue(result.converged)
+        self.assertEqual(config.variables["Sex"].column, "sex")  # the setup itself is left as saved
+
     def test_float_codes_from_excel_match_integer_specs(self):
         var = Variable("Sex", "q100", {"Men": "1", "Women": "2"})
         self.assertEqual(list(assign_labels(pd.Series(["1.0", "2"]), var)), ["Men", "Women"])
@@ -183,6 +200,21 @@ class RakeTests(unittest.TestCase):
         self.assertAlmostEqual(result.summary()["weighted_n"], 600, places=6)
         self.assertEqual(set(sheets), {"Summary", "Targets vs achieved", "Weight spread", "Warnings"})
 
+
+    def test_existing_weight_column_is_filled_in_place_whatever_its_case(self):
+        result, _blocks, config = self._run([[0.2, 0.3], [0.25, 0.25]], [[0.22, 0.28], [0.23, 0.27]])
+        df = _sample()
+        df.insert(1, "WEIGHT", "old")
+        config.weight_column = "weight"
+        with tempfile.TemporaryDirectory() as tmp:
+            write_outputs(df, result, config, Path(tmp) / "out.csv", Path(tmp) / "report.xlsx")
+            written = pd.read_csv(Path(tmp) / "out.csv", dtype=str)
+        self.assertEqual(list(written.columns), ["sex", "WEIGHT", "region", "age"])  # no extra column, same place
+        self.assertAlmostEqual(written["WEIGHT"].astype(float).sum(), 600, places=6)
+        from weighting_core import existing_column
+
+        self.assertEqual(existing_column(["a", " Weight "], "weight"), " Weight ")
+        self.assertIsNone(existing_column(["a"], "weight"))
 
     def test_target_n_scales_saved_weights_only(self):
         result, blocks, config = self._run([[0.2, 0.3], [0.25, 0.25]], [[0.22, 0.28], [0.23, 0.27]])

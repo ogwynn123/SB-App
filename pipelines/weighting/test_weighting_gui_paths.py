@@ -55,5 +55,71 @@ class LaunchPathTests(unittest.TestCase):
         self.assertEqual(gui._with_data_extension(Path("out.xlsx"), "CSV").name, "out.xlsx")
 
 
+class SearchableComboboxTests(unittest.TestCase):
+    def setUp(self):
+        import tkinter as tk
+
+        try:
+            self.root = tk.Tk()
+        except tk.TclError as exc:  # no display
+            self.skipTest(f"Tk unavailable: {exc}")
+        self.root.withdraw()
+        self.picked = []
+
+    def tearDown(self):
+        self.root.destroy()
+
+    def _combo(self, **kw):
+        import tkinter as tk
+
+        var = tk.StringVar(value="")
+        combo = gui.SearchableCombobox(self.root, textvariable=var, **kw)
+        combo.set_values(["sex", "region", "age_group", "AGE", "3880_WEIGHT", "2026GeneralWeight"])
+        combo.bind("<<ComboboxSelected>>", lambda _e: self.picked.append(var.get()), add="+")
+        return combo, var
+
+    def _type(self, combo, text):
+        combo.set(text)
+        combo._narrow(type("E", (), {"keysym": "a"})())
+
+    def test_typing_narrows_the_list_with_prefix_matches_first(self):
+        combo, _var = self._combo()
+        self._type(combo, "age")
+        self.assertEqual(list(combo["values"]), ["age_group", "AGE"])
+        self._type(combo, "weight")
+        self.assertEqual(list(combo["values"]), ["3880_WEIGHT", "2026GeneralWeight"])
+
+    def test_return_picks_the_first_match_and_fires_selected(self):
+        combo, var = self._combo()
+        self._type(combo, "reg")
+        combo._commit(first_match=True)
+        self.assertEqual(var.get(), "region")
+        self.assertEqual(self.picked, ["region"])
+        self.assertEqual(len(combo["values"]), 6)  # full list back
+
+    def test_leaving_keeps_a_full_name_in_its_own_case_or_restores_the_last_choice(self):
+        combo, var = self._combo()
+        self._type(combo, "age")  # exact name, other case
+        combo._commit(first_match=False)
+        self.assertEqual(var.get(), "AGE")
+        self._type(combo, "zzz")
+        combo._commit(first_match=False)
+        self.assertEqual(var.get(), "AGE")
+
+    def test_weight_box_keeps_a_new_name(self):
+        combo, var = self._combo(allow_new=True, allow_blank=False)
+        self._type(combo, "3887_WEIGHT")
+        combo._commit(first_match=True)
+        self.assertEqual(var.get(), "3887_WEIGHT")
+
+
+class RemainingTests(unittest.TestCase):
+    def test_remaining_says_what_is_left_or_over(self):
+        self.assertEqual(gui._remaining(100.0)[0], "100% allocated")
+        self.assertEqual(gui._remaining(99.996)[0], "100% allocated")
+        self.assertEqual(gui._remaining(95.5), ("Remaining: 4.50% to reach 100%", gui.REMAINING_SHORT))
+        self.assertEqual(gui._remaining(102.25), ("Over by 2.25% (above 100%)", gui.REMAINING_OVER))
+
+
 if __name__ == "__main__":
     unittest.main()
