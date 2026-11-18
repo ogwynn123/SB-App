@@ -152,6 +152,19 @@ def _backup(folder: Path, files: list[Path]) -> Path:
     return backup
 
 
+def _same_bytes(a: Path, b: Path) -> bool:
+    """True when two files hold the same bytes.
+
+    filecmp remembers earlier answers by size and modified time, so in a long-running
+    launcher a file rewritten with the same size inside one clock tick looked unchanged
+    and was not copied. Clearing that memory makes it compare the bytes every time.
+    """
+    import filecmp
+
+    filecmp.clear_cache()
+    return filecmp.cmp(a, b, shallow=False)
+
+
 def seed_first_merge(context: ProjectContext, new_data: Path | None = None) -> list[str]:
     """Before the first trend merge, put this wave's files in Data\\Merge.
 
@@ -164,8 +177,6 @@ def seed_first_merge(context: ProjectContext, new_data: Path | None = None) -> l
     rerun_last_merge() keeps the data current instead. Returns one note per
     file copied.
     """
-    import filecmp
-
     folder = merge_folder(context)
     if folder is None or latest_merge_run(context) is not None:
         return []
@@ -186,7 +197,7 @@ def seed_first_merge(context: ProjectContext, new_data: Path | None = None) -> l
     for source in sources:
         target = folder / source.name
         if target.exists():
-            if filecmp.cmp(source, target, shallow=False):
+            if _same_bytes(source, target):
                 continue
             backup = _backup(folder, [target])
             shutil.copy2(source, target)

@@ -36,6 +36,14 @@ _YEAR_FOLDER_RE = re.compile(r"^(19|20)\d{2}$")
 _JOB_FOLDER_RE = re.compile(r"^NPA\d+\b", re.IGNORECASE)
 
 
+def _same_bytes(a, b) -> bool:
+    """True when two files hold the same bytes (filecmp's remembered answers are cleared
+    first: they are keyed by size and modified time, so a same-size rewrite within one
+    clock tick could look unchanged in a long-running process)."""
+    filecmp.clear_cache()
+    return filecmp.cmp(a, b, shallow=False)
+
+
 @dataclass(frozen=True)
 class IntakeTarget:
     key: str
@@ -57,7 +65,7 @@ def destination_for(context: ProjectContext, target: IntakeTarget, source: Path)
         # The same report dropped again maps to its existing copy, not a new number.
         for existing in folder.iterdir():
             if existing.is_file() and existing.suffix.casefold() == source.suffix.casefold():
-                if filecmp.cmp(source, existing, shallow=False):
+                if _same_bytes(source, existing):
                     return existing
         return folder / next_report_name(context, folder, source.suffix)
     return folder / source.name
@@ -205,7 +213,7 @@ def check_source(target: IntakeTarget, source: Path) -> str | None:
 def place_file(source: Path, destination: Path, replace: bool = False) -> str:
     """Copy source to destination. Returns 'copied', 'identical' or 'exists' (different, not replaced)."""
     if destination.exists():
-        if filecmp.cmp(source, destination, shallow=False):
+        if _same_bytes(source, destination):
             return "identical"
         if not replace:
             return "exists"

@@ -37,6 +37,14 @@ STARTUP_DIRECTORY_ALIASES: dict[tuple[str, ...], tuple[tuple[str, ...], ...]] = 
 }
 
 
+def _same_bytes(a, b) -> bool:
+    """True when two files hold the same bytes (filecmp's remembered answers are cleared
+    first: they are keyed by size and modified time, so a same-size rewrite within one
+    clock tick could look unchanged in a long-running process)."""
+    filecmp.clear_cache()
+    return filecmp.cmp(a, b, shallow=False)
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -834,7 +842,7 @@ def inspect_project_startup(context: ProjectContext) -> ProjectStartupCheck:
     if destination is None or not destination.exists():
         return ProjectStartupCheck(tuple(missing), source, destination, "not_copied")
     try:
-        if filecmp.cmp(source, destination, shallow=False):
+        if _same_bytes(source, destination):
             status = "current"
         elif source.stat().st_mtime_ns > destination.stat().st_mtime_ns:
             status = "source_newer"
@@ -921,7 +929,7 @@ def run_project_startup(context: ProjectContext, use_word: bool = False) -> Proj
             action = "copied"
         else:
             try:
-                same = filecmp.cmp(source, destination, shallow=False)
+                same = _same_bytes(source, destination)
                 source_is_newer = source.stat().st_mtime_ns > destination.stat().st_mtime_ns
             except OSError:
                 same = False

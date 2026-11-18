@@ -58,6 +58,14 @@ XlsxWriteMode = Literal["replace_workbook", "preserve_sheets"]
 DEFAULT_ROW_ORDER: RowOrder = "secondary_first"
 
 
+def _same_bytes(a, b) -> bool:
+    """True when two files hold the same bytes (filecmp's remembered answers are cleared
+    first: they are keyed by size and modified time, so a same-size rewrite within one
+    clock tick could look unchanged in a long-running process)."""
+    filecmp.clear_cache()
+    return filecmp.cmp(a, b, shallow=False)
+
+
 @dataclass
 class MergeOptions:
     primary_path: Path
@@ -2023,7 +2031,7 @@ def copy_trend_file_to_data(output_path: Path) -> Path | None:
         return None
     target = merge_dir.parent / output_path.name
     if target.exists():
-        if filecmp.cmp(output_path, target, shallow=False):
+        if _same_bytes(output_path, target):
             return target
         backup = merge_dir / "Backups" / datetime.now().strftime("%Y%m%d_%H%M%S")
         backup.mkdir(parents=True, exist_ok=True)

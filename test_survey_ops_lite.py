@@ -454,7 +454,11 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertEqual(defaults["secondary_survey_json"].name, "NPA9920 Client Week 1 FinalJSON.json")
 
         day2 = root / "Data" / "NPA9930.csv"
+        day1_stamp = day2.stat().st_mtime_ns
         day2.write_text("day 2", encoding="utf-8")
+        # Same size and same modified time as day 1 (a rewrite within one clock tick): it must
+        # still be seen as new. This used to fail now and then, when filecmp's cache answered.
+        os.utime(day2, ns=(day1_stamp, day1_stamp))
         [note] = merge_autorun.seed_first_merge(context, day2)
         self.assertIn("older copy", note)
         self.assertEqual((merge / "NPA9930.csv").read_text(encoding="utf-8"), "day 2")
