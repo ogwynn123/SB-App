@@ -80,6 +80,16 @@ def format_code_choice(item: core.CodeInfo) -> str:
     return f"{item.code} | {label}"
 
 
+def also_text(others: list[str], labels: dict[str, str]) -> str:
+    """The "also" note under a response in the code review window: its other codes with
+    their labels, e.g. "   also 3 - Cost of living; 7 - Schools" (a code with no label
+    shows on its own). Labels can hold commas, so codes are separated by semicolons."""
+    if not others:
+        return ""
+    parts = [f"{code} - {labels[code]}" if labels.get(code) else code for code in others]
+    return "   also " + "; ".join(parts)
+
+
 def parse_code_choice(raw: str) -> str:
     return core.normalize_code(raw.split("|", 1)[0])
 
@@ -1667,9 +1677,10 @@ class RecordCoderApp:
         bar.pack(side=tk.RIGHT, fill=tk.Y)
         text.tag_configure("bold", font=(base["family"], 11, "bold"))
         text.tag_configure("key", foreground="#6b6b6b", font=(base["family"], 9))
+        labels = {c.code: c.label for c in self.session.list_codes(question.id, include_inactive=True)}
         for response in responses:
             others = [c for c in response.final_codes if c != code]
-            text.insert(tk.END, response.record_key + ("   also " + ", ".join(others) if others else "") + "\n", "key")
+            text.insert(tk.END, response.record_key + also_text(others, labels) + "\n", "key")
             verbatim = response.verbatim
             position = 0
             for start, end in glance.bold_spans(verbatim, terms):

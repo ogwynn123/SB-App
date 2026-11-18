@@ -49,6 +49,12 @@ class RecordCoderGuiHelpersTests(unittest.TestCase):
         self.assertEqual(shown, "500 | Health care costs")
         self.assertEqual(gui.parse_code_choice(shown), "500")
 
+    def test_code_review_also_line_shows_each_other_codes_label(self) -> None:
+        labels = {"3": "Cost of living, rent", "7": "Schools", "96": ""}
+        self.assertEqual(gui.also_text(["3", "7"], labels), "   also 3 - Cost of living, rent; 7 - Schools")
+        self.assertEqual(gui.also_text(["96", "12"], labels), "   also 96; 12")  # no label known: code alone
+        self.assertEqual(gui.also_text([], labels), "")
+
     def test_import_scope_labels_map_to_core_values(self) -> None:
         self.assertEqual(gui.import_scope_key("New or changed"), "new_or_changed")
         self.assertEqual(gui.import_scope_key("New only"), "new")

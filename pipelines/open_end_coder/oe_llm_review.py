@@ -498,6 +498,10 @@ def build(folder: Path, unused_codes: tuple[str, ...] = (), *, accept_changes: b
             problems[name] = [f"missing {list_path.name if not list_path.exists() else name + ' recode.tsv'}"]
             continue
         codes, list_problems = read_list(list_path)
+        # A code the job's list already had without a label (e.g. an analyst's preliminary list) is not this review's doing.
+        inherited_blank = {c for c, info in question.get("fixed", {}).items() if not (info.get("label") or "").strip()}
+        list_problems = [p for p in list_problems
+                         if not any(p.endswith(f"code {c} has no label") for c in inherited_blank)]
         recode, recode_problems = read_recode(recode_paths)
         problems[name] = list_problems + recode_problems + check_question(question, codes, recode, unused)
         summaries[name] = qa_summary(question, codes, recode)
@@ -513,7 +517,7 @@ def build(folder: Path, unused_codes: tuple[str, ...] = (), *, accept_changes: b
         for code in sorted(codes, key=int):
             info = codes[code]
             final.append([int(code), info["label"], info["net"], uses.get(code, 0), round(100 * uses.get(code, 0) / n, 1)])
-        for code in sorted(set(uses) & set(STANDARD), key=int):
+        for code in sorted(set(uses) & set(STANDARD) - set(codes), key=int):  # a job's own 97-99 are already listed
             final.append([int(code), STANDARD[code], "", uses[code], round(100 * uses[code] / n, 1)])
         recoded = book.create_sheet(f"Q{number} recoded")
         recoded.append(["survnum", "Verbatim", "Lead-in answer"] + [f"New c{number}_{k}" for k in range(1, MAX_CODES + 1)]
