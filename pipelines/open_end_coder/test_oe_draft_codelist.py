@@ -37,6 +37,35 @@ class DraftJobTests(unittest.TestCase):
             for k, text in enumerate(TEXTS, 1):
                 writer.writerow([k, "5550000", "Smith", "1" if k % 2 else "2", text])
 
+    def test_plan_finds_this_waves_open_ends_wording_and_lead_ins(self):
+        import json
+
+        project = self.folder / "NPA9988 Project"
+        data = project / "Data"
+        data.mkdir(parents=True)
+        (data / "NPA9988.csv").write_text(
+            "survnum,q5,q6,c6_1,c6_2,c6_3,3854_q9,3854_c9_1,3854_c9_2,3854_c9_3\n"
+            "1,1,Good on taxes,,,,old,,,\n2,2,Too old,,,,old,,,\n", encoding="utf-8")
+        (data / "NPA9988 Quotas.csv").write_text("x\n", encoding="utf-8")
+        table_gen = project / "Job" / "Table Gen"
+        table_gen.mkdir(parents=True)
+        (table_gen / "NPA9988 FinalJSON.json").write_text(json.dumps({"elements": [
+            {"type": "question", "qnum": "5", "text": "Has your opinion of Smith gotten more or less favorable?",
+             "question_type": "opinion_trend", "instructions": [],
+             "response_options": [{"value": "1", "text": "More favorable"}, {"value": "2", "text": "Less favorable"}]},
+            {"type": "question", "qnum": "6", "text": "What are you hearing about Smith?", "instructions": []},
+        ]}), encoding="utf-8")
+
+        spec = job.plan_from_project(project, "NPA9988", questionnaire_folders=[table_gen],
+                                     out_path=self.folder / "out.xlsx")
+
+        self.assertEqual(Path(spec["data"]).name, "NPA9988.csv")
+        self.assertEqual([q["column"] for q in spec["questions"]], ["q6"])  # carried 3854_q9 skipped
+        self.assertEqual(spec["questions"][0]["text"], "What are you hearing about Smith?")
+        self.assertEqual(spec["questions"][0]["lead"]["column"], "q5")
+        self.assertEqual(spec["questions"][0]["lead"]["options"], ["More favorable", "Less favorable"])
+        self.assertEqual(spec["notes"], [])
+
     def test_only_needed_columns_are_read(self):
         rows = job.read_rows(self.data, ["q5", "q6"])
         self.assertEqual(set(rows[0]), {"survnum", "q5", "q6"})

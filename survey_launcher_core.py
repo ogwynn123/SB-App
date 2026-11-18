@@ -121,6 +121,9 @@ class ToolSpec:
     # The app writes its outputs into its work folder (Table Gen), so a test
     # run points the work folder itself at the test folder.
     output_in_work_dir: bool = False
+    # Older folders still used when they already hold one of the app's files
+    # (folder parts, file pattern), checked before a new work folder is made.
+    work_dirs_holding: tuple[tuple[tuple[str, ...], str], ...] = ()
 
     @property
     def folder_label(self) -> str:
@@ -174,13 +177,13 @@ TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         key="open_end_coder",
         label="Open-End Coder",
-        create_work_dir=("Data",),
+        # The coding session is created in Data\Partial\OEs when the job has no open-end folder yet.
+        create_work_dir=("Data", "Partial", "OEs"),
         existing_work_dirs=(
             ("Data", "Partial", "Open Ends"),
             ("Data", "Partial", "OEs"),
             ("Data", "Partial Data", "Open Ends"),
             ("Data", "Partial Data", "OEs"),
-            ("Data",),
         ),
         entry_candidates=(
             ("pipelines", "open_end_coder", "dist", "oe_record_coder_gui.exe"),
@@ -189,22 +192,8 @@ TOOLS: tuple[ToolSpec, ...] = (
             ("pipelines", "open_end_coder", "oe_codebook_gui.py"),
         ),
         accepts_launch_context=True,
-        create_on_launch=False,
-    ),
-    ToolSpec(
-        key="oe_draft",
-        label="Draft Open-End Code Lists",
-        create_work_dir=("Data",),
-        existing_work_dirs=(
-            ("Data", "Partial", "Open Ends"),
-            ("Data", "Partial", "OEs"),
-            ("Data", "Partial Data", "Open Ends"),
-            ("Data", "Partial Data", "OEs"),
-            ("Data",),
-        ),
-        entry_candidates=(),
-        create_on_launch=False,
-        internal_action="oe_draft",
+        # A session an earlier launch made in Data stays there; coding is never moved.
+        work_dirs_holding=((("Data",), "*.oe_session.sqlite"),),
     ),
     ToolSpec(
         key="quota_checker",
@@ -333,6 +322,10 @@ class ProjectContext:
             existing = resolve_relative_directory(self.project_root, parts)
             if existing is not None:
                 return existing
+        for parts, pattern in tool.work_dirs_holding:
+            folder = resolve_relative_directory(self.project_root, parts)
+            if folder is not None and any(path.is_file() for path in folder.glob(pattern)):
+                return folder
         return self.project_root if tool.create_work_dir is None else None
 
     def ensure_work_dir(self, tool: ToolSpec) -> Path:
@@ -1313,40 +1306,6 @@ def run_prelim_qc(
         counts[issue.severity] = counts.get(issue.severity, 0) + 1
     record_tool_launch(context, TOOL_BY_KEY["prelim_qc"], job_dir)
     return md_path, counts, inputs
-
-
-def plan_oe_draft(
-    context: ProjectContext, *, app_root: Path = APP_ROOT, test_run: bool = False, data_path: Path | None = None,
-) -> dict[str, Any]:
-    """What drafting this project's open ends would do: data file, open ends,
-    lead-ins and the workbook path (in the test folder during a test run)."""
-    drafting = _import_pipeline_module("open_end_coder", "oe_draft_codelist", app_root)
-    out_dir = test_output_dir(context) if test_run else context.ensure_work_dir(TOOL_BY_KEY["oe_draft"])
-    table_gen = resolve_relative_directory(context.project_root, ("Job", "Table Gen"))
-    folders = [folder for folder in (table_gen, test_output_dir(context, create=False)) if folder is not None]
-    return drafting.plan_from_project(
-        context.project_root, context.survey_id, questionnaire_folders=folders,
-        out_path=out_dir / f"{context.survey_id} Draft Code Lists.xlsx", data_path=data_path,
-    )
-
-
-def run_oe_draft(context: ProjectContext, spec: dict[str, Any], *, app_root: Path = APP_ROOT) -> tuple[Path, list[str]]:
-    """Draft the planned open ends; returns the workbook written and one line per question."""
-    drafting = _import_pipeline_module("open_end_coder", "oe_draft_codelist", app_root)
-    try:
-        evaluation = _import_pipeline_module("open_end_coder", "oe_codelist_eval", app_root)
-        knowledge = evaluation.load_questions() or None  # past coded jobs, when this PC has them
-    except Exception:
-        knowledge = None
-    job = {key: value for key, value in spec.items() if key != "notes"}
-    results = drafting.run(job, knowledge)
-    written = Path(job.get("written") or job["out"])  # beside the original when it is open in Excel
-    lines = []
-    for question, (_kept, texts, _answers, numbered) in zip(spec["questions"], results):
-        themes = sum(1 for _number, code in numbered if code.label not in drafting.STANDARD_NUMBERS)
-        lines.append(f"{question['column']}: {len(texts)} responses, {themes} draft codes")
-    record_tool_launch(context, TOOL_BY_KEY["oe_draft"], written.parent)
-    return written, lines
 
 
 def stale_packaged_apps(app_root: Path = APP_ROOT) -> list[str]:

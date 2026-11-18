@@ -26,6 +26,7 @@ browser review in the same format) into the session.
 from __future__ import annotations
 
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -98,28 +99,96 @@ def review_folder(session_path: Path, mode: str, questions: list[str] | None = N
     return session_path.parent / "OE review" / f"{stem} {datetime.now():%Y-%m-%d %H%M}{which} {label}"
 
 
+def _questionnaire_folders(session_path: Path, source: Path) -> list[Path]:
+    """Where this job's Table Gen questionnaire (*JSON.json) is: beside the session (a test
+    run's folder), else Job/Table Gen in the nearest job folder above the session or its
+    data file. The session's saved project folder is not used: it is whichever job the
+    launcher last opened the session with."""
+    for start in (session_path.resolve().parent, source.resolve().parent):
+        for folder in (start, *start.parents):
+            table_gen = folder / "Job" / "Table Gen"
+            if table_gen.is_dir():
+                return [session_path.resolve().parent, table_gen]
+    return [session_path.resolve().parent]
+
+
+def session_question_specs(session: oe.CodingSession, session_path: Path,
+                           names: list[str] | None = None) -> tuple[list[dict], dict, list[str]]:
+    """The draft tool's question entries for a session's questions: wording from the
+    job's questionnaire and the lead-in each open end follows, read from the session's
+    data file. Returns (questions keyed by question name, the spec fields that read the
+    lead-ins back, notes on anything missing)."""
+    import oe_draft_codelist as runner
+
+    notes: list[str] = []
+    picked = [q for q in session.questions() if names is None or q.name in names]
+    dataset = session.active_dataset()
+    source = Path(str(dataset["source_path"])) if dataset is not None else None
+    if source is None or not source.is_file():
+        notes.append("The session's data file is not available, so the draft has no question wording or lead-in splits.")
+        return [{"column": q.name, "text": ""} for q in picked], {}, notes
+    headers = oe.read_tabular(source)[0]
+    questionnaire = runner.find_questionnaire(_questionnaire_folders(session_path, source))
+    # Questions an earlier job's trend file carried in (3787_q14) are not in this questionnaire.
+    this_job = [q for q in picked if not re.match(r"^\d{4}_", q.name)]
+    found = dict(zip((q.name for q in this_job),
+                     runner.question_specs(headers, [q.text_column for q in this_job], questionnaire, notes)))
+    specs = [found.get(q.name, {"text": ""}) for q in picked]
+    for question, spec in zip(picked, specs):
+        spec["column"] = question.name  # the review and its import name questions as the session does
+    extra = {"data": str(source), "key_column": str(dataset["key_column"])}
+    if questionnaire is not None:
+        extra["questionnaire"] = str(questionnaire)
+    survnum = oe.resolve_column(headers, "survnum")
+    if survnum:
+        extra["id_column"] = survnum
+    return specs, extra, notes
+
+
+def _lead_values(extra: dict, specs: list[dict]) -> dict[str, dict[str, str]]:
+    """{record key: {lead-in column: answer}} from the session's data file."""
+    columns = sorted({q["lead"]["column"] for q in specs if q.get("lead")})
+    if not columns or not extra.get("data"):
+        return {}
+    headers, rows = oe.read_tabular(Path(extra["data"]))
+    key_columns = oe.record_key_columns(headers, extra["key_column"])
+    return {oe.record_key_for(row, key_columns): {c: str(row.get(c, "")) for c in columns} for row in rows}
+
+
+def write_session_spec(folder: Path, specs: list[dict], extra: dict) -> Path | None:
+    """oe_draft_spec.json in the review folder: lets the review show each response's lead-in answer."""
+    if not any(q.get("lead") for q in specs) or "id_column" not in extra:
+        return None
+    path = folder / "oe_draft_spec.json"
+    path.write_text(json.dumps({**extra, "questions": specs}, indent=1), encoding="utf-8")
+    return path
+
+
 def _draft_from_session(session_path: Path, out: Path, *, not_heard: str | None, detail: str,
-                        questions: list[str] | None = None) -> Path:
-    """Draft workbook for every question (or only ``questions``), from the latest wave's responses in the session."""
+                        questions: list[str] | None = None) -> tuple[Path, list[str]]:
+    """Draft workbook for every question (or only ``questions``), from the latest wave's responses
+    in the session, with each question's wording and lead-in split from the job's questionnaire."""
     import oe_draft_codelist as runner
 
     rows_by_key: dict[str, dict[str, str]] = {}
-    names = []
     with oe.CodingSession(session_path) as session:
+        specs, extra, notes = session_question_specs(session, session_path, questions)
+        leads = _lead_values(extra, specs)
         latest = session.max_timeseries()
-        dataset = session.active_dataset()
-        source = str(dataset["source_path"]) if dataset is not None else ""
+        wanted = {q["column"] for q in specs}
         for question in session.questions():
-            if questions is not None and question.name not in questions:
+            if question.name not in wanted:
                 continue
-            names.append(question.name)
             for response in session.list_responses(question.id, timeseries=latest):
-                row = rows_by_key.setdefault(response.record_key, {"survnum": llm._survnum(response.record_key)})
+                row = rows_by_key.setdefault(response.record_key, {"survnum": llm._survnum(response.record_key),
+                                                                   **leads.get(response.record_key, {})})
                 row[question.name] = response.verbatim
     rows = list(rows_by_key.values())
-    spec = {"data": source, "out": str(out), "detail": detail,
-            "questions": [{"column": name, "text": ""} for name in names],
-            "options": {"bundle": 0.5, **({"not_heard": not_heard} if not_heard else {})}}
+    spec = {"data": extra.get("data", ""), "out": str(out), "detail": detail, "questions": specs,
+            "options": {"target_codes": 60, "bundle": 0.5, **({"not_heard": not_heard} if not_heard else {})}}
+    if "questionnaire" in extra:
+        spec["questionnaire"] = extra["questionnaire"]
+    write_session_spec(out.parent, specs, extra)
     try:
         from oe_codelist_eval import load_questions
 
@@ -127,7 +196,7 @@ def _draft_from_session(session_path: Path, out: Path, *, not_heard: str | None,
     except Exception:  # no coded archive on this PC
         knowledge = None
     results = [runner.draft_question(rows, q, detail, knowledge, spec["options"]) for q in spec["questions"]]
-    return runner.write_workbook(out, spec, results)
+    return runner.write_workbook(out, spec, results), notes
 
 
 def prepare_review(session_path: Path, *, uses_96: bool = False, detail: str = "fine",
@@ -145,11 +214,15 @@ def prepare_review(session_path: Path, *, uses_96: bool = False, detail: str = "
     folder.mkdir(parents=True, exist_ok=True)
     notes: list[str] = []
     if mode == "scratch":
-        draft = _draft_from_session(session_path, folder / f"{session_path.name.split('.')[0]} Draft Code Lists.xlsx",
-                                    not_heard=None if uses_96 else "97", detail=detail, questions=picked)
+        draft, notes = _draft_from_session(session_path, folder / f"{session_path.name.split('.')[0]} Draft Code Lists.xlsx",
+                                           not_heard=None if uses_96 else "97", detail=detail, questions=picked)
         llm.export(draft, folder)
     else:
-        _written, notes = llm.continue_export(session_path, folder, recheck=recheck, questions=tuple(picked))
+        with oe.CodingSession(session_path) as session:
+            specs, extra, notes = session_question_specs(session, session_path, picked)
+        spec = write_session_spec(folder, specs, extra)  # each response's lead-in answer in the review
+        _written, more = llm.continue_export(session_path, folder, spec=spec, recheck=recheck, questions=tuple(picked))
+        notes += more
     job_path = folder / "job.json"
     job = json.loads(job_path.read_text(encoding="utf-8"))
     # 96 is unused unless the job uses it for "Have not heard enough", or a question's own list makes it a theme.

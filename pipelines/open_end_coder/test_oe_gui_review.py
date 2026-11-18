@@ -151,6 +151,80 @@ class GuiReviewTests(unittest.TestCase):
         self.assertIn("Bash(py -3:*)", command)
         self.assertIn(str(self.folder), command)
 
+    def _job_with_lead_in(self):
+        """A job folder with a Table Gen questionnaire where q5 (approve/disapprove) leads into q6."""
+        project = self.folder / "NPA0001 Job"
+        table_gen = project / "Job" / "Table Gen"
+        table_gen.mkdir(parents=True)
+        elements = [
+            {"type": "question", "qnum": "5", "qid": "5", "text": "Do you approve or disapprove of Smith?",
+             "question_type": "approve_disapprove_4pt", "instructions": [],
+             "response_options": [{"value": str(v), "text": t} for v, t in enumerate(
+                 ("Strongly approve", "Somewhat approve", "Somewhat disapprove", "Strongly disapprove"), 1)]},
+            {"type": "question", "qnum": "6", "qid": "6", "text": "Why do you say that?", "question_type": "unknown",
+             "instructions": [], "response_options": []},
+        ]
+        (table_gen / "NPA0001 JSON.json").write_text(json.dumps({"elements": elements}), encoding="utf-8")
+        oes = project / "Data" / "Partial" / "OEs"
+        oes.mkdir(parents=True)
+        data = oes / "lead.csv"
+        with data.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["survnum", "q5", "q6", "c6_1", "c6_2", "c6_3"])
+            for k, text in enumerate(TEXTS, 1):
+                writer.writerow([k, 1 if k % 2 else 4, text, "", "", ""])
+        session_path = oes / "LEAD.oe_session.sqlite"
+        # The saved project folder is another job's (as when the launcher last had that job open).
+        with oe.CodingSession(session_path, survey_id="NPA0001", project_root=self.folder / "Other Job") as session:
+            session.import_data(data, key_column="survnum")
+        return session_path
+
+    def test_session_drafts_use_the_questionnaire_and_lead_in(self):
+        session_path = self._job_with_lead_in()
+        with oe.CodingSession(session_path) as session:
+            specs, extra, notes = gui_review.session_question_specs(session, session_path)
+        self.assertEqual(specs[0]["column"], "q6")
+        self.assertEqual(specs[0]["text"], "Why do you say that?")
+        self.assertEqual(specs[0]["lead"]["column"], "q5")
+        self.assertEqual(notes, [])
+
+        import oe_draft_codelist as runner
+
+        seen = {}
+        real_draft = runner.draft_question
+
+        def drafted(rows, question, *args):
+            seen["rows"], seen["question"] = rows, question
+            return real_draft(rows, question, *args)
+
+        with mock.patch.object(embed_drafter, "embed", fake_embed), \
+                mock.patch("oe_codelist_eval.load_questions", return_value=[]), \
+                mock.patch.object(runner, "draft_question", drafted):
+            prepared = gui_review.prepare_review(session_path, folder=self.folder / "lead review")
+        self.assertEqual(prepared.mode, "scratch")
+        self.assertEqual(seen["question"]["lead"]["column"], "q5")
+        self.assertEqual({row["q5"] for row in seen["rows"]}, {"1", "4"})  # each respondent's lead-in answer
+        spec = json.loads((self.folder / "lead review" / "oe_draft_spec.json").read_text(encoding="utf-8"))
+        self.assertEqual(spec["questions"][0]["lead"]["column"], "q5")
+
+    def test_session_without_questionnaire_says_so(self):
+        with oe.CodingSession(self.session_path) as session:
+            specs, _extra, notes = gui_review.session_question_specs(session, self.session_path)
+        self.assertEqual(specs, [{"column": "q6", "text": ""}])
+        self.assertIn("No Table Gen questionnaire", notes[0])
+
+    def test_continue_review_shows_lead_in_answers(self):
+        session_path = self._job_with_lead_in()
+        codelist = self.folder / "preliminary.csv"
+        codelist.write_text("question_col,code,label,supercategory\nq6,1,Too old,Age\n", encoding="utf-8")
+        with oe.CodingSession(session_path) as session:
+            session.load_codelist(codelist)
+        prepared = gui_review.prepare_review(session_path, uses_96=True, folder=self.folder / "lead continue")
+        self.assertEqual(prepared.mode, "continue")
+        job = json.loads((self.folder / "lead continue" / "job.json").read_text(encoding="utf-8"))
+        leads = {r.get("lead") for r in job["questions"][0]["responses"]}
+        self.assertEqual(leads, {"Strongly approve", "Strongly disapprove"})
+
     def test_session_needs_data_first(self):
         empty = self.folder / "EMPTY.oe_session.sqlite"
         with self.assertRaises(ValueError):

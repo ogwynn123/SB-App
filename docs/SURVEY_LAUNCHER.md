@@ -10,8 +10,7 @@ remains inside each specialist application or pipeline module.
 | WinCross Table Generator | Table Gen app | `Job\Table Gen` |
 | Table Merger | Sheet Merge app (writes the Combined Demographics carry-over after a timeseries merge) | `Data` |
 | Sample Append | launcher dialog over `pipelines\table_merger\sample_append.py` | `Data` |
-| Open-End Coder | OE app | `Data\Partial\Open Ends` or `Data` |
-| Draft Open-End Code Lists | launcher dialog over `pipelines\open_end_coder\oe_draft_codelist.py` | `Data\Partial\Open Ends` or `Data` |
+| Open-End Coder | OE app (drafts first code lists through **Prepare Claude Review**) | `Data\Partial\Open Ends` or `Data\Partial\OEs` (created on launch) |
 | Sample Quota Checker | Quota app | `Data` |
 | Sample Weighting | Weighting app (`pipelines\weighting\weighting_gui.py`) | `Data` |
 | Trend Table Updater | Trend app | `Job\Table Gen` |
@@ -38,7 +37,6 @@ touching its live folders. While it is on (it is remembered between sessions):
 - the Open-End Coder keeps its session and coded CSV there, apart from real coding;
 - Auto Results saves the filled document there instead of beside the template;
 - Preliminary QC writes `QC\<timestamp>` there;
-- the draft open-end workbook goes there;
 - Sample Weighting saves the weighted data, its report and the weighting setup
   (`<data>_weighting.json`) there. A setup already saved beside the live data is
   read as the starting point but never written to.
@@ -55,15 +53,11 @@ has an **Open Output Folder** button for the folder its last output went to.
 
 ## Drafting open-end code lists
 
-**Draft Open-End Code Lists** plans the draft before running it: the newest data
-file named after the survey that has open ends (latest wave only in a trended
-file; Browse to choose another), this wave's open ends, and each one's wording
-and lead-in question from Table Gen's questionnaire file (`Job\Table Gen\*JSON.json`,
-or the test folder's). Without that file it still drafts, without lead-in
-splits. Choose the detail (about how many codes per question, default 60 at
-fine detail, with near-duplicate codes bundled) and **Draft**; it runs on this
-PC in about a minute and writes `<survey id> Draft Code Lists.xlsx` for analyst
-review. See `pipelines\open_end_coder\README.md`.
+First code lists are drafted inside the Open-End Coder: with no code list in
+the session, **Prepare Claude Review** drafts one on this PC using each open
+end's wording and lead-in question from Table Gen's questionnaire file
+(`Job\Table Gen\*JSON.json`, found from the session's own job folder, or a
+test run's folder). See `pipelines\open_end_coder\README.md`.
 
 ## Project status panel
 

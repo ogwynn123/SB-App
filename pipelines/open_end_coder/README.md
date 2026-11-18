@@ -75,7 +75,8 @@ ungrouped `None` and `Don't know` categories with `RL` when present.
 
 Use `Launch_OE_Codebook_GUI.bat` or select **Open-End Coder** in the Survey
 Launcher. The launcher passes the survey ID, project root, and preferred Open
-Ends working folder to the app.
+Ends working folder to the app: an existing `Data\Partial\Open Ends` or `OEs`
+folder, a session already in `Data`, or else a new `Data\Partial\OEs`.
 
 The former aggregated codebook editor remains available through
 `Launch_OE_Codebook_Legacy_GUI.bat`.
@@ -223,7 +224,11 @@ in Claude Code, under the house rules in `oe_review_rules.md`, with
 
 In the Open-End Coder, **Prepare Claude Review** does the export step for you
 (`oe_gui_review.py`): with no code list in the session it drafts one from
-scratch on this PC; with one (an earlier day, or a preliminary list loaded with
+scratch on this PC, with each question's wording and lead-in split from the
+job's Table Gen questionnaire (`Job\Table Gen\*JSON.json` in the job folder
+above the session or its data file, or beside the session in a test run; the
+session's saved project folder is not used, since it is whichever job the
+launcher last opened it with); with one (an earlier day, or a preliminary list loaded with
 **Load Codelist**) it prepares only the uncoded responses, reused codes keeping
 their numbers. It first asks which questions to prepare (all, or some: those
 picked must all have a code list or all lack one; `prepare --questions Q12,Q14`

@@ -361,26 +361,19 @@ def find_questionnaire(folders: list[Path]) -> Path | None:
     return max(found, key=lambda p: p.stat().st_mtime) if found else None
 
 
-def plan_from_project(project_root: Path, survey_id: str, *, questionnaire_folders: list[Path], out_path: Path,
-                      data_path: Path | None = None) -> dict:
-    """A ready-to-run spec for this job, plus "notes" explaining anything missing."""
-    notes: list[str] = []
-    data = data_path or find_data_file(project_root, survey_id)
-    spec = {"data": str(data or ""), "out": str(out_path), "detail": "fine",
-            "options": {"target_codes": 60, "bundle": 0.5}, "questions": [], "notes": notes}
-    if data is None:
-        notes.append(f"No data file named after {survey_id} with open ends was found in Data.")
-        return spec
-    headers = _csv_headers(data) if data.suffix.casefold() == ".csv" else oe.read_tabular(data)[0]
-    columns = open_end_columns(headers)
-    questionnaire = find_questionnaire(questionnaire_folders)
+def question_specs(headers: list[str], columns: list[str], questionnaire: Path | None,
+                   notes: list[str]) -> list[dict]:
+    """One drafting entry per open-end column: its wording from the Table Gen
+    questionnaire and, when the closed question before it is in the data, that
+    lead-in (column, type and answer options) so codes are split by side.
+    Anything missing is explained in ``notes``."""
     elements: list[dict] = []
     if questionnaire is None:
         notes.append("No Table Gen questionnaire file (…JSON.json) was found: drafting without question wording "
                      "or lead-in splits. Run Table Gen first to add them.")
     else:
-        spec["questionnaire"] = str(questionnaire)
         elements = json.loads(questionnaire.read_text(encoding="utf-8")).get("elements", [])
+    questions: list[dict] = []
     by_qnum = {str(e.get("qnum") or e.get("qid") or "").lower(): e for e in elements if e.get("type") == "question"}
     for column in columns:
         qid = re.sub(r"(?i)^q|oe$", "", column).lower()
@@ -396,7 +389,26 @@ def plan_from_project(project_root: Path, survey_id: str, *, questionnaire_folde
                                 "text": lead["text"]}
         elif elements:
             notes.append(f"{column}: no lead-in question found, so codes are not split by side.")
-        spec["questions"].append(question)
+        questions.append(question)
+    return questions
+
+
+def plan_from_project(project_root: Path, survey_id: str, *, questionnaire_folders: list[Path], out_path: Path,
+                      data_path: Path | None = None) -> dict:
+    """A ready-to-run spec for this job, plus "notes" explaining anything missing."""
+    notes: list[str] = []
+    data = data_path or find_data_file(project_root, survey_id)
+    spec = {"data": str(data or ""), "out": str(out_path), "detail": "fine",
+            "options": {"target_codes": 60, "bundle": 0.5}, "questions": [], "notes": notes}
+    if data is None:
+        notes.append(f"No data file named after {survey_id} with open ends was found in Data.")
+        return spec
+    headers = _csv_headers(data) if data.suffix.casefold() == ".csv" else oe.read_tabular(data)[0]
+    columns = open_end_columns(headers)
+    questionnaire = find_questionnaire(questionnaire_folders)
+    if questionnaire is not None:
+        spec["questionnaire"] = str(questionnaire)
+    spec["questions"] = question_specs(headers, columns, questionnaire, notes)
     if not columns:
         notes.append(f"{data.name} has no open-end columns for this wave.")
     return spec
