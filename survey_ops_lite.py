@@ -132,6 +132,7 @@ class SurveyLauncherApp:
         self.root.geometry(safe_window_geometry(self.root, self.settings.get("window_geometry")))
         self.root.minsize(780, 760)
         brand.apply_theme(self.root)
+        brand.set_app_icon(self.root, "launcher")
         brand.add_header(self.root, "Survey Launcher", "Pick a survey, then run each step of the job from here")
 
         shell = ttk.Frame(self.root, padding=12)

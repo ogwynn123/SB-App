@@ -81,6 +81,7 @@ class QuotaCheckerApp:
 
     def _build_ui(self) -> None:
         brand.apply_theme(self.root)
+        brand.set_app_icon(self.root, "quota_checker")
         brand.add_header(self.root, 'Sample Quota Checker', 'Check pulled sample against the quotas and minimums')
         launch_paths.add_test_run_banner(self.root)
         outer = ttk.Frame(self.root, padding=10)

@@ -165,6 +165,7 @@ class RecordCoderApp:
 
     def _build_ui(self) -> None:
         brand.apply_theme(self.root)
+        brand.set_app_icon(self.root, "open_end_coder")
         brand.add_header(self.root, 'Open-End Coder', 'Code open-end responses record by record')
         launch_paths.add_test_run_banner(self.root)
         outer = ttk.Frame(self.root, padding=10)

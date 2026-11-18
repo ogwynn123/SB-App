@@ -148,6 +148,19 @@ WORKSPACE_FILE_ROLE_LABEL_TO_ID = {label: role_id for role_id, label, _rel_dir, 
 OE_QUESTION_COL_RE = re.compile(r"^(?:(?P<prefix>\d{4,})[_-])?q(?P<num>\d{1,3})(?:[_-]?oe)?$", re.IGNORECASE)
 
 
+def _set_app_icon(root, key: str) -> None:
+    """This app's window and taskbar icon (brand.py in pipelines/common); skipped if brand is missing."""
+    common = Path(__file__).resolve().parents[1] / "common"
+    if common.is_dir() and str(common) not in sys.path:
+        sys.path.append(str(common))
+    try:
+        import brand
+
+        brand.set_app_icon(root, key)
+    except Exception:
+        pass
+
+
 @dataclass
 class DataIntakeTable:
     headers: list[str]
@@ -535,6 +548,7 @@ class RepositoryDashboardGUI:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Survey Platform Dashboard")
+        _set_app_icon(self.root, "dashboard")
         self.root.geometry(screen_safe_geometry(self.root, 1720, 940))
 
         default_source_root, default_discovery_mode = _package_repo_defaults()

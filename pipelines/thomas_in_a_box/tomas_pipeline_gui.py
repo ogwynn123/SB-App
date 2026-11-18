@@ -110,10 +110,24 @@ def _load_default_api_key() -> str:
     return ""
 
 
+def _set_app_icon(root, key: str) -> None:
+    """This app's window and taskbar icon (brand.py in pipelines/common); skipped if brand is missing."""
+    common = Path(__file__).resolve().parents[1] / "common"
+    if common.is_dir() and str(common) not in sys.path:
+        sys.path.append(str(common))
+    try:
+        import brand
+
+        brand.set_app_icon(root, key)
+    except Exception:
+        pass
+
+
 class TomasPipelineGUI(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("TOMAS Dual Pipeline")
+        _set_app_icon(self, "tomas")
         self.geometry("1000x760")
         self.minsize(900, 680)
 

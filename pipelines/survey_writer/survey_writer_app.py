@@ -56,6 +56,19 @@ QUESTION_TEMPLATES = (
 )
 
 
+def _set_app_icon(root, key: str) -> None:
+    """This app's window and taskbar icon (brand.py in pipelines/common); skipped if brand is missing."""
+    common = Path(__file__).resolve().parents[1] / "common"
+    if common.is_dir() and str(common) not in sys.path:
+        sys.path.append(str(common))
+    try:
+        import brand
+
+        brand.set_app_icon(root, key)
+    except Exception:
+        pass
+
+
 @dataclass
 class SearchResult:
     question_id: int
@@ -678,6 +691,7 @@ class SurveyWriterApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Survey Writer")
+        _set_app_icon(self.root, "survey_writer")
         self.root.geometry("1180x760")
         DRAFT_ROOT.mkdir(parents=True, exist_ok=True)
 

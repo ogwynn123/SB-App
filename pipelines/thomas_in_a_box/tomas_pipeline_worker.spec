@@ -29,6 +29,12 @@ hiddenimports += tmp_ret[2]
 hiddenimports = sorted(set(hiddenimports))
 
 
+from pathlib import Path as _IconPath
+
+# Window and taskbar icon (pipelines/common/icons, from make_app_icons.py).
+APP_ICON_DIR = _IconPath(SPECPATH).resolve().parent / "common" / "icons"
+APP_ICON = str(APP_ICON_DIR / "tomas.ico")
+
 a = Analysis(
     ['tomas_pipeline_worker.py'],
     pathex=[str(Path.cwd())],
@@ -51,6 +57,7 @@ exe = EXE(
     a.datas,
     [],
     name='tomas_pipeline_worker',
+    icon=APP_ICON,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -43,6 +43,12 @@ class PackagedApp:
 
 
 APPS: tuple[PackagedApp, ...] = (
+    # A thin shell that runs survey_ops_lite.py from the repo (see survey_launcher_exe.py),
+    # so only its entry script and spec count as sources.
+    PackagedApp(
+        "launcher", "Survey Launcher", BASE_DIR,
+        ("survey_launcher.spec",), ("survey_launcher.exe",), "build_launcher_exe.bat",
+    ),
     PackagedApp(
         "wincross", "Table Gen (WinCross)", PIPELINES / "wincross_table_generator",
         ("survey_pipeline_gui.spec",), ("survey_pipeline_gui.exe",), "build_gui_exe.bat",

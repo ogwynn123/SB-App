@@ -1,6 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 
+from pathlib import Path as _IconPath
+
+# Window and taskbar icon (pipelines/common/icons, from make_app_icons.py).
+APP_ICON_DIR = _IconPath(SPECPATH).resolve().parent / "common" / "icons"
+APP_ICON = str(APP_ICON_DIR / "wincross.ico")
+
 a = Analysis(
     ['survey_pipeline.py'],
     pathex=[],
@@ -23,6 +29,7 @@ exe = EXE(
     a.datas,
     [],
     name='survey_pipeline',
+    icon=APP_ICON,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

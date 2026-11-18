@@ -72,6 +72,7 @@ class TrendTableUpdaterApp:
 
     def _build_ui(self) -> None:
         brand.apply_theme(self.root)
+        brand.set_app_icon(self.root, "trend_table_updater")
         brand.add_header(self.root, 'Trend Table Updater', 'Roll the trend tables forward to the new wave')
         launch_paths.add_test_run_banner(self.root)
         self.last_output = ""

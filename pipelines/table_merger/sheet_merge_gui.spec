@@ -50,11 +50,20 @@ hiddenimports = sorted(
     )
 )
 
+from pathlib import Path as _IconPath
+
+# Window and taskbar icon (pipelines/common/icons, from make_app_icons.py).
+APP_ICON_DIR = _IconPath(SPECPATH).resolve().parent / "common" / "icons"
+APP_ICON = str(APP_ICON_DIR / "table_merger.ico")
+APP_ICON_DATAS = [(APP_ICON, "icons")] + [
+    (str(path), "icons") for path in sorted(APP_ICON_DIR.glob("table_merger_*.png"))
+]
+
 a = Analysis(
     ['sheetMerging_gui.py'],
     pathex=[str(Path.cwd()), str(Path(SPECPATH).resolve().parent / "common")],
     binaries=binaries,
-    datas=datas,
+    datas=datas + APP_ICON_DATAS,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -72,6 +81,7 @@ exe = EXE(
     a.datas,
     [],
     name='sheet_merge_gui',
+    icon=APP_ICON,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

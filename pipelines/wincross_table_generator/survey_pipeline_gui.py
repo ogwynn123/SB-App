@@ -411,6 +411,7 @@ class SurveyPipelineGui:
 
     def _build_ui(self) -> None:
         brand.apply_theme(self.root)
+        brand.set_app_icon(self.root, "wincross")
         brand.add_header(self.root, 'WinCross Table Generator', 'Questionnaire to WinCross tables, banners and cover')
         launch_paths.add_test_run_banner(self.root)
         top = ttk.Frame(self.root, padding=10)

@@ -25,6 +25,15 @@ class PackagedAppsTests(unittest.TestCase):
             self.assertIn('"common"', text, f"{key} build must find pipelines/common")
             self.assertIn("npa_logo_header.png", text, f"{key} build must bundle the header logo")
 
+    def test_launcher_exe_is_a_thin_shell_over_the_repo(self) -> None:
+        # survey_launcher_exe.py runs the launcher from the repo, so launcher edits never make it stale.
+        app = packaged_apps.APPS_BY_KEY["launcher"]
+        names = {path.name for path in source_files(app)}
+        self.assertEqual(names, {"survey_launcher.spec", "survey_launcher_exe.py"})
+        text = (app.folder / "survey_launcher.spec").read_text(encoding="utf-8")
+        self.assertIn("launcher.ico", text)
+        self.assertTrue((app.folder / app.build_script).is_file())
+
     def test_wincross_sources_cover_every_bundled_module(self) -> None:
         names = {path.name for path in source_files(packaged_apps.APPS_BY_KEY["wincross"])}
 

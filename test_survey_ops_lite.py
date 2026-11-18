@@ -850,6 +850,49 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertEqual(command[command.index("--work-dir") + 1], str(work_dir))
         self.assertEqual(command[command.index("--source-root") + 1], str(qst))
 
+    def test_python_tools_run_with_this_python_from_source(self) -> None:
+        with patch.object(core.sys, "frozen", False, create=True):
+            self.assertEqual(core.python_command(), [sys.executable])
+
+    def test_packaged_launcher_runs_python_tools_with_installed_python(self) -> None:
+        # Frozen, sys.executable is the launcher EXE, so a real Python is looked up instead.
+        found = {"py": r"C:\Windows\py.exe", "python": r"C:\Python\python.exe"}
+        with patch.object(core.sys, "frozen", True, create=True), \
+                patch.dict(os.environ, {core.PYTHON_OVERRIDE_ENV: ""}), \
+                patch.object(core.shutil, "which", side_effect=found.get):
+            self.assertEqual(core.python_command(), [r"C:\Windows\py.exe", "-3"])
+
+    def test_packaged_launcher_skips_store_python_and_explains_when_none(self) -> None:
+        store = {"python": r"C:\Users\x\AppData\Local\Microsoft\WindowsApps\python.exe"}
+        with patch.object(core.sys, "frozen", True, create=True), \
+                patch.dict(os.environ, {core.PYTHON_OVERRIDE_ENV: ""}), \
+                patch.object(core.shutil, "which", side_effect=store.get):
+            with self.assertRaises(FileNotFoundError) as caught:
+                core.python_command()
+        self.assertIn("no Python 3 was found", str(caught.exception))
+
+    def test_packaged_launcher_does_not_pass_its_own_tcl_paths_to_tools(self) -> None:
+        bundle = r"C:\Temp\_MEI12345"
+        environ = {
+            "TCL_LIBRARY": bundle + r"\_tcl_data", "TK_LIBRARY": bundle + r"\_tk_data",
+            "_PYI_APPLICATION_HOME_DIR": bundle, "PATH": r"C:\Windows", "OTHER_TCL": "kept",
+        }
+        env = core.tool_base_environment(environ, bundle)
+        self.assertNotIn("TCL_LIBRARY", env)
+        self.assertNotIn("TK_LIBRARY", env)
+        self.assertNotIn("_PYI_APPLICATION_HOME_DIR", env)
+        self.assertEqual(env["PATH"], r"C:\Windows")
+        self.assertEqual(env["PYINSTALLER_RESET_ENVIRONMENT"], "1")
+
+    def test_tool_environment_is_untouched_from_source(self) -> None:
+        environ = {"TCL_LIBRARY": r"C:\Python\tcl\tcl8.6"}
+        self.assertEqual(core.tool_base_environment(environ, ""), environ)
+
+    def test_packaged_launcher_honours_python_override(self) -> None:
+        with patch.object(core.sys, "frozen", True, create=True), \
+                patch.dict(os.environ, {core.PYTHON_OVERRIDE_ENV: sys.executable}):
+            self.assertEqual(core.python_command(), [sys.executable])
+
     def test_recent_project_pairing_is_reused_and_deduplicated(self) -> None:
         case = self._case_dir()
         settings_path = case / "launcher_settings.json"

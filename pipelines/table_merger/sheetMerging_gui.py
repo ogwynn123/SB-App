@@ -304,6 +304,7 @@ class SheetMergeGUI:
 
     def _build_ui(self) -> None:
         brand.apply_theme(self.root)
+        brand.set_app_icon(self.root, "table_merger")
         brand.add_header(self.root, 'Table Merger', 'Merge this wave onto the trend file')
         launch_paths.add_test_run_banner(self.root)
 

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_DB = ROOT / "repository" / "questions.sqlite"
 DEFAULT_OUT = ROOT / "dist" / "question_browser"
 BROWSER_SOURCE = ROOT / "pipelines" / "catalogger" / "repository_dashboard_gui.py"
+BRAND_DIR = ROOT / "pipelines" / "common"
 
 
 STANDALONE_APP = r'''#!/usr/bin/env python3
@@ -32,6 +33,7 @@ sys.path.insert(0, str(APP_DIR))
 from pipelines.catalogger.repository_dashboard_gui import (  # noqa: E402
     RepositoryDashboardGUI,
     _configure_tcl_env,
+    _set_app_icon,
     messagebox,
     tk,
     ttk,
@@ -49,6 +51,7 @@ class QuestionBrowserOnlyGUI(RepositoryDashboardGUI):
             pass
 
         self.root.title("Survey Question Browser")
+        _set_app_icon(self.root, "question_browser")
         self.root.geometry("1500x900")
         self.repo_root_var.set(str(APP_DIR / "repository"))
 
@@ -192,6 +195,12 @@ def export_question_browser(source_db: Path, out_dir: Path, *, overwrite: bool) 
     shutil.copy2(BROWSER_SOURCE, browser_target)
     _write_text(out_dir / "pipelines" / "__init__.py", "")
     _write_text(out_dir / "pipelines" / "catalogger" / "__init__.py", "")
+    # brand.py and the Question Browser icon, so the window gets its own icon.
+    brand_target = out_dir / "pipelines" / "common"
+    (brand_target / "icons").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(BRAND_DIR / "brand.py", brand_target / "brand.py")
+    for icon in (BRAND_DIR / "icons").glob("question_browser*"):
+        shutil.copy2(icon, brand_target / "icons" / icon.name)
 
     _write_text(out_dir / "question_browser_standalone.py", STANDALONE_APP)
     _write_text(out_dir / "Launch Question Browser.bat", LAUNCH_BAT)

@@ -45,6 +45,19 @@ USER_CODE_START = 500
 ExistingMapKey = tuple[str, str, str, str]
 
 
+def _set_app_icon(root, key: str) -> None:
+    """This app's window and taskbar icon (brand.py in pipelines/common); skipped if brand is missing."""
+    common = Path(__file__).resolve().parents[1] / "common"
+    if common.is_dir() and str(common) not in sys.path:
+        sys.path.append(str(common))
+    try:
+        import brand
+
+        brand.set_app_icon(root, key)
+    except Exception:
+        pass
+
+
 @dataclass
 class RowItem:
     question_col: str
@@ -644,6 +657,7 @@ class App:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("OE Codebook Editor")
+        _set_app_icon(self.root, "oe_codebook")
         self._set_initial_geometry()
 
         self.survey_var = tk.StringVar()

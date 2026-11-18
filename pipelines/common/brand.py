@@ -37,6 +37,59 @@ def _asset(name: str) -> Path | None:
     return None
 
 
+# Each app's window and taskbar icon, in icons/ beside this module. Regenerate
+# them with make_app_icons.py after adding a key here.
+APP_ICONS = (
+    "launcher", "wincross", "table_merger", "open_end_coder", "oe_codebook",
+    "quota_checker", "weighting", "trend_table_updater", "auto_results", "tomas",
+    "dashboard", "question_browser", "survey_writer",
+)
+ICON_PNG_SIZES = (16, 32, 48, 256)
+
+
+def set_app_icon(root, key: str) -> bool:
+    """Give the window (and the dialogs it opens) this app's icon. Never raises.
+
+    On Windows it also gives the process its own taskbar identity, so apps
+    started with the same python.exe get separate taskbar buttons, each with
+    its own icon instead of Python's.
+    """
+    if key not in APP_ICONS:
+        return False
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(f"NormingtonPetts.SurveyPlatform.{key}")
+        except Exception:
+            pass
+    # Windows: the .ico, sharpest at every size it asks for. Use one or the other:
+    # iconphoto followed by iconbitmap leaves Windows showing a blank icon.
+    if sys.platform == "win32":
+        ico = _asset(f"icons/{key}.ico")
+        if ico is not None:
+            try:
+                root.iconbitmap(default=str(ico))  # this window and every dialog it opens
+                return True
+            except Exception:
+                pass
+    try:
+        import tkinter as tk
+
+        images = []
+        for size in ICON_PNG_SIZES:
+            path = _asset(f"icons/{key}_{size}.png")
+            if path is not None:
+                images.append(tk.PhotoImage(master=root, file=str(path)))
+        if images:
+            root.iconphoto(True, *images)
+            root._app_icon_images = images  # keep references so Tk does not drop them
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def apply_theme(root) -> None:
     """Brand colours on ttk widgets ("clam" lets buttons and headings take colours)."""
     from tkinter import ttk

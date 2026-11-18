@@ -34,11 +34,20 @@ for dll_name in ("_tkinter.pyd", "tcl86t.dll", "tk86t.dll"):
     if os.path.exists(dll_path):
         binaries.append((dll_path, "."))
 
+from pathlib import Path as _IconPath
+
+# Window and taskbar icon (pipelines/common/icons, from make_app_icons.py).
+APP_ICON_DIR = _IconPath(SPECPATH).resolve().parent / "common" / "icons"
+APP_ICON = str(APP_ICON_DIR / "wincross.ico")
+APP_ICON_DATAS = [(APP_ICON, "icons")] + [
+    (str(path), "icons") for path in sorted(APP_ICON_DIR.glob("wincross_*.png"))
+]
+
 a = Analysis(
     ['survey_pipeline_gui.py'],
     pathex=[str(Path(SPECPATH).resolve().parent / "common")],
     binaries=binaries,
-    datas=datas,
+    datas=datas + APP_ICON_DATAS,
     hiddenimports=['docx', 'pdfplumber', 'tkinter', 'tkinter.scrolledtext', '_tkinter'],
     hookspath=[],
     hooksconfig={},
@@ -56,6 +65,7 @@ exe = EXE(
     a.datas,
     [],
     name='survey_pipeline_gui',
+    icon=APP_ICON,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

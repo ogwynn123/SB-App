@@ -1116,6 +1116,7 @@ class AutoResultsGUI:
 
     def _build_ui(self) -> None:
         brand.apply_theme(self.root)
+        brand.set_app_icon(self.root, "auto_results")
         brand.add_header(self.root, 'Auto Results', 'Fill the results template from the marginals')
         launch_paths.add_test_run_banner(self.root)
         self.last_output = ""

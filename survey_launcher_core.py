@@ -1047,17 +1047,46 @@ def resolve_tool_entry(tool: ToolSpec, app_root: Path = APP_ROOT) -> Path:
     raise FileNotFoundError(f"No launcher was found for {tool.label}. Tried:\n{tried}")
 
 
+PYTHON_OVERRIDE_ENV = "SURVEY_PLATFORM_PYTHON"
+# Tried in order when the launcher runs as an EXE: windowless first, like run_survey_ops_lite.bat.
+PYTHON_CANDIDATES: tuple[tuple[str, ...], ...] = (("pyw", "-3"), ("py", "-3"), ("pythonw",), ("python",))
+
+
+def python_command() -> list[str]:
+    """How to run a .py tool. From source that is this Python. In the packaged
+    launcher sys.executable is the launcher EXE itself, so use an installed
+    Python: SURVEY_PLATFORM_PYTHON if set, else the first of pyw / py / pythonw
+    / python on PATH (skipping the Microsoft Store stub)."""
+    if not getattr(sys, "frozen", False):
+        return [sys.executable]
+    override = os.environ.get(PYTHON_OVERRIDE_ENV, "").strip().strip('"')
+    if override:
+        if Path(override).is_file() or shutil.which(override):
+            return [override]
+        raise FileNotFoundError(f"{PYTHON_OVERRIDE_ENV} is set to {override}, but that Python was not found.")
+    for name, *args in PYTHON_CANDIDATES:
+        found = shutil.which(name)
+        if found and "windowsapps" not in found.casefold():
+            return [found, *args]
+    raise FileNotFoundError(
+        "This tool runs from its Python source, but no Python 3 was found on this PC.\n"
+        "Install Python 3 from python.org (tick \"Add python.exe to PATH\"), "
+        f"or set {PYTHON_OVERRIDE_ENV} to the full path of python.exe."
+    )
+
+
 def build_tool_command(
     context: ProjectContext,
     tool: ToolSpec,
     work_dir: Path,
     *,
     app_root: Path = APP_ROOT,
-    python_executable: str = sys.executable,
+    python_executable: str | None = None,
 ) -> list[str]:
     entry = resolve_tool_entry(tool, app_root)
     if entry.suffix.casefold() == ".py":
-        command = [python_executable, str(entry)]
+        python = [python_executable] if python_executable else python_command()
+        command = [*python, str(entry)]
     elif entry.suffix.casefold() in {".bat", ".cmd"}:
         command = ["cmd", "/c", str(entry)]
     else:
@@ -1093,12 +1122,31 @@ def test_output_dir(context: ProjectContext, *, create: bool = True) -> Path:
     return folder
 
 
+def tool_base_environment(environ: dict[str, str] | None = None, bundle: str | None = None) -> dict[str, str]:
+    """This process's environment, minus what the packaged launcher EXE set for
+    itself: Tcl/Tk paths into its temporary unpack folder (gone once the
+    launcher closes, so a Python tool's Tk would fail to start) and
+    PyInstaller's own variables (which would confuse a packaged tool)."""
+    env = dict(os.environ if environ is None else environ)
+    bundle = bundle if bundle is not None else getattr(sys, "_MEIPASS", None)
+    if not bundle:
+        return env
+    folded = os.path.normcase(os.path.abspath(bundle))
+    for key in list(env):
+        if key.startswith(("_PYI", "_MEIPASS")):
+            del env[key]
+        elif key in {"TCL_LIBRARY", "TK_LIBRARY"} and os.path.normcase(os.path.abspath(env[key])).startswith(folded):
+            del env[key]
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"  # a packaged tool unpacks its own copy
+    return env
+
+
 def build_launch_environment(
     context: ProjectContext, tool: ToolSpec, work_dir: Path, *, output_dir: Path | None = None,
 ) -> dict[str, str]:
     """Environment for an app: the project, its work folder, and where outputs go
     (``output_dir`` is the test folder during a test run)."""
-    env = os.environ.copy()
+    env = tool_base_environment()
     env.update(
         {
             "SURVEY_PLATFORM_SURVEY_ID": context.survey_id,
