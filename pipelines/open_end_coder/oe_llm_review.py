@@ -428,7 +428,10 @@ def check_continue(question: dict, codes: dict[str, dict], accept_changes: bool 
             problems.append(f"code {code} {info['label']!r} is missing; existing codes are never removed or renumbered")
             continue
         for field, name in (("label", "label"), ("net", "NET")):
-            if mine[field].strip() != (info[field] or "").strip():
+            now, before = mine[field].strip(), (info[field] or "").strip()
+            if field == "net":  # NETs are saved upper case, so case alone is no change
+                now, before = now.upper(), before.upper()
+            if now != before:
                 change = f"code {code}: {name} {info[field]!r} -> {mine[field]!r}"
                 agreed = accept_changes or code in question.get("flagged_codes", [])  # the user flagged it for review
                 (changes if agreed else problems).append(

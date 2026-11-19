@@ -160,7 +160,7 @@ def _read_final_list(question: ReviewQuestion, rows: list[tuple], title: str) ->
             continue
         if not label:
             question.problems.append(f"{title}: code {code} has no label.")
-        question.codes[code] = ReviewCode(code, label, net, _direction(net))
+        question.codes[code] = ReviewCode(code, label, net.upper(), _direction(net))
 
 
 def _read_recoded(question: ReviewQuestion, rows: list[tuple], title: str) -> None:

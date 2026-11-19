@@ -46,6 +46,11 @@ def clean_text(value: object | None) -> str:
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
+def supercategory_text(value: object | None) -> str:
+    """Supercategories (NETs) are always upper case."""
+    return clean_text(value).upper()
+
+
 def clean_verbatim(value: object | None) -> str:
     return clean_text(value).replace(",", " ")
 
@@ -296,7 +301,7 @@ def parse_wincross_codebook(text: str) -> list[WinCrossCodebookEntry]:
     entries: list[WinCrossCodebookEntry] = []
     for label, expression, flags in _wincross_records(_repair_mojibake(text)):
         if re.fullmatch(r"NET(?:\s+\d+)?", expression, re.IGNORECASE):
-            current_supercategory = label
+            current_supercategory = supercategory_text(label)
             seen_net = True
             continue
         if not label or not expression:
@@ -664,6 +669,15 @@ class CodingSession:
             self.connection.execute("ALTER TABLE codes ADD COLUMN review_flag INTEGER NOT NULL DEFAULT 0")
         if "review_note" not in code_columns:
             self.connection.execute("ALTER TABLE codes ADD COLUMN review_note TEXT NOT NULL DEFAULT ''")
+        for row in self.connection.execute(
+            "SELECT question_id, code, supercategory FROM codes WHERE supercategory<>''"
+        ).fetchall():
+            upper = supercategory_text(row["supercategory"])
+            if upper != row["supercategory"]:
+                self.connection.execute(
+                    "UPDATE codes SET supercategory=? WHERE question_id=? AND code=?",
+                    (upper, row["question_id"], row["code"]),
+                )
         self.connection.execute(
             "UPDATE responses SET first_seen_dataset_id=dataset_id "
             "WHERE first_seen_dataset_id IS NULL"
@@ -1354,7 +1368,7 @@ class CodingSession:
                 "INSERT INTO codes(question_id, code, label, supercategory, direction, source, active, created_at, updated_at) "
                 "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(question_id, code) DO NOTHING",
-                (question_id, code, clean_text(label), clean_text(supercategory), direction, source, int(active), timestamp, timestamp),
+                (question_id, code, clean_text(label), supercategory_text(supercategory), direction, source, int(active), timestamp, timestamp),
             )
             return
         self.connection.execute(
@@ -1363,7 +1377,7 @@ class CodingSession:
             "ON CONFLICT(question_id, code) DO UPDATE SET label=excluded.label, "
             "supercategory=excluded.supercategory, direction=excluded.direction, source=excluded.source, "
             "active=excluded.active, updated_at=excluded.updated_at",
-            (question_id, code, clean_text(label), clean_text(supercategory), direction, source, int(active), timestamp, timestamp),
+            (question_id, code, clean_text(label), supercategory_text(supercategory), direction, source, int(active), timestamp, timestamp),
         )
 
     def upsert_code(
@@ -1399,7 +1413,7 @@ class CodingSession:
                     now_iso(),
                     question.name,
                     normalized_code,
-                    json.dumps({"label": clean_text(label), "supercategory": clean_text(supercategory)}),
+                    json.dumps({"label": clean_text(label), "supercategory": supercategory_text(supercategory)}),
                 ),
             )
         return self.get_code(question_id, normalized_code)
@@ -1538,7 +1552,7 @@ class CodingSession:
                         code = normalize_code(raw[0] if len(raw) > 0 else "")
                         label = clean_text(raw[1] if len(raw) > 1 else "")
                         if code and label and CODE_RE.fullmatch(code):
-                            supercategory = clean_text(raw[2] if len(raw) > 2 else "")
+                            supercategory = supercategory_text(raw[2] if len(raw) > 2 else "")
                             direction = clean_text(raw[3] if len(raw) > 3 else "")
                             entries.append((question.name, code, label, supercategory, direction))
             finally:
@@ -1584,7 +1598,7 @@ class CodingSession:
                 updates: dict[str, str] = {}
                 incoming = {
                     "label": clean_text(label),
-                    "supercategory": clean_text(supercategory),
+                    "supercategory": supercategory_text(supercategory),
                     "direction": imported_direction,
                 }
                 existing = {

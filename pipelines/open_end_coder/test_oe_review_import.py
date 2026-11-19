@@ -53,7 +53,7 @@ class ReviewImportTests(unittest.TestCase):
         questions = review_import.read_review(write_review(self.folder / "review.xlsx"))
         q5 = questions["q5"]
         self.assertEqual(q5.problems, [])
-        self.assertEqual(q5.codes["1"].net, "Positive - record")
+        self.assertEqual(q5.codes["1"].net, "POSITIVE - RECORD")
         self.assertEqual(q5.codes["1"].direction, "+")
         self.assertEqual(q5.codes["3"].direction, "-")
         self.assertEqual(q5.codes["4"].direction, "o")
@@ -91,7 +91,7 @@ class ReviewImportTests(unittest.TestCase):
         with codelist.open(encoding="utf-8") as handle:
             rows = list(csv.DictReader(handle))
         self.assertEqual(rows[0], {"question_col": "q5", "code": "1", "label": "Doing a good job",
-                                   "supercategory": "Positive - record", "direction": "+"})
+                                   "supercategory": "POSITIVE - RECORD", "direction": "+"})
         self.assertIn("4 coded responses", report.read_text(encoding="utf-8"))
         self.assertTrue(assignments.exists())
 
@@ -120,7 +120,7 @@ class ReviewImportTests(unittest.TestCase):
         self.assertEqual(summary.verbatim_mismatch, ["103"])
         self.assertEqual(summary.kept_analyst_codes, 2)
         self.assertEqual(codes["1"].label, "Doing a good job")
-        self.assertEqual(codes["1"].supercategory, "Positive - record")
+        self.assertEqual(codes["1"].supercategory, "POSITIVE - RECORD")
         self.assertEqual(codes["3"].direction, "-")
 
 

@@ -82,7 +82,7 @@ class GuiReviewTests(unittest.TestCase):
         job = json.loads((self.folder / "review" / "job.json").read_text(encoding="utf-8"))
         self.assertEqual(sorted(job["questions"][0]["fixed"]), ["1", "2"])
         self.assertEqual(job["unused_codes"], [])
-        self.assertIn("1 | Age | 0 | Too old", (self.folder / "review" / "q6 draft.md").read_text(encoding="utf-8"))
+        self.assertIn("1 | AGE | 0 | Too old", (self.folder / "review" / "q6 draft.md").read_text(encoding="utf-8"))
 
     def test_individual_questions(self):
         data = self.folder / "two.csv"

@@ -144,7 +144,7 @@ class ContinueTests(unittest.TestCase):
 
     def test_export_has_the_list_and_only_new_responses(self):
         text = (self.out / "q5 draft.md").read_text(encoding="utf-8")
-        self.assertIn("1 | Ads | 1 | Negative ads | Awful attack ads", text)
+        self.assertIn("1 | ADS | 1 | Negative ads | Awful attack ads", text)
         self.assertIn("4 responses to code; 3 already coded.", text)
         self.assertIn("104 |  | New | Lies in his ads", text)
         self.assertNotIn("101 |", text.split("## Responses")[1])
@@ -290,7 +290,7 @@ class FlaggedCodeTests(unittest.TestCase):
 
     def test_export_sends_the_flagged_code_and_its_untouched_responses(self):
         text = (self.out / "q5 draft.md").read_text(encoding="utf-8")
-        self.assertIn("1 | Ads | Campaign | 4 | too broad: seen ads vs attack ads?", text.split("## Codes flagged for review")[1])
+        self.assertIn("1 | Ads | CAMPAIGN | 4 | too broad: seen ads vs attack ads?", text.split("## Codes flagged for review")[1])
         recheck = text.split("## Responses to recheck")[1]
         for key in ("101", "102", "103"):
             self.assertIn(f"{key} |  | split 1 | 1 |", recheck)

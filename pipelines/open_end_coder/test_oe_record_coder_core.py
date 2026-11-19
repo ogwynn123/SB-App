@@ -123,6 +123,26 @@ class RecordCoderCoreTests(unittest.TestCase):
             self.assertEqual(read_csv(source)[0]["c16_1"], "98")
             self.assertEqual(exported.modified_records, 2)
 
+    def test_supercategories_are_always_upper_case(self) -> None:
+        with local_tmp() as temp:
+            source = write_csv(temp / "data.csv", sample_rows())
+            path = temp / "coding.sqlite"
+            with core.CodingSession(path) as session:
+                session.import_data(source)
+                question = session.questions()[0]
+                info = session.upsert_code(question.id, "500", label="Roads", supercategory="  Local  issues ")
+                self.assertEqual(info.supercategory, "LOCAL ISSUES")
+                session.connection.execute(
+                    "UPDATE codes SET supercategory='Older session' WHERE question_id=? AND code='500'",
+                    (question.id,),
+                )
+                session.connection.commit()
+            with core.CodingSession(path) as session:
+                question = session.questions()[0]
+                self.assertEqual(session.get_code(question.id, "500").supercategory, "OLDER SESSION")
+        entries = core.parse_wincross_codebook("Local issues^NET 1^NS,SK\nRoads^c16 (500)^NS\n")
+        self.assertEqual([e.supercategory for e in entries], ["LOCAL ISSUES"])
+
     def test_responses_filter_by_original_final_or_blank_code(self) -> None:
         with local_tmp() as temp:
             source = write_csv(temp / "data.csv", sample_rows())
@@ -438,7 +458,7 @@ class RecordCoderCoreTests(unittest.TestCase):
 
             self.assertEqual(updated_response.final_codes, ("500",))
             self.assertEqual(code.label, "Medical affordability")
-            self.assertEqual(code.supercategory, "Economic Concerns")
+            self.assertEqual(code.supercategory, "ECONOMIC CONCERNS")
 
     def test_assignment_cannot_exceed_available_slots(self) -> None:
         with local_tmp() as temp:
@@ -498,7 +518,7 @@ class RecordCoderCoreTests(unittest.TestCase):
             self.assertEqual(summary.conflicts, ())
             self.assertEqual(summary.overwrites, ())
             self.assertEqual(item.label, "Health care costs")
-            self.assertEqual(item.supercategory, "Health Care")
+            self.assertEqual(item.supercategory, "HEALTH CARE")
             self.assertEqual(item.direction, "-")
 
     def test_codelist_preserves_conflicts_by_default_and_can_overwrite(self) -> None:
@@ -541,13 +561,13 @@ class RecordCoderCoreTests(unittest.TestCase):
             self.assertEqual(len(preserved.conflicts), 3)
             self.assertEqual(preserved.overwrites, ())
             self.assertEqual(preserved_item.label, "User label")
-            self.assertEqual(preserved_item.supercategory, "User group")
+            self.assertEqual(preserved_item.supercategory, "USER GROUP")
             self.assertEqual(preserved_item.direction, "+")
             self.assertEqual(overwritten.conflicts, ())
             self.assertEqual(len(overwritten.overwrites), 3)
             self.assertEqual(overwritten.updated_code_count, 1)
             self.assertEqual(overwritten_item.label, "Delivered label")
-            self.assertEqual(overwritten_item.supercategory, "Delivered group")
+            self.assertEqual(overwritten_item.supercategory, "DELIVERED GROUP")
             self.assertEqual(overwritten_item.direction, "-")
 
     def test_parses_flattened_wincross_net_groups_and_multi_code_rows(self) -> None:
