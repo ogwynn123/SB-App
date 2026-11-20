@@ -415,6 +415,19 @@ class AutoFlagTests(unittest.TestCase):
         self.assertEqual(text.count("| split 1 |"), 3)
         self.assertNotIn("split 3", text)
 
+    def test_a_flag_the_user_turned_off_stays_off(self):
+        review.continue_export(self.session_path, self.folder / "day 2", recheck=("98", "flagged", "codes"))
+        with self.oe.CodingSession(self.session_path) as session:
+            self.assertTrue(session.get_code(self.qid, "1").review_flag)
+            session.set_code_review_flag(self.qid, "1", False, "")  # the user unticks it, note cleared
+        review.continue_export(self.session_path, self.folder / "day 3", recheck=("98", "flagged", "codes"))
+        with self.oe.CodingSession(self.session_path) as session:
+            self.assertFalse(session.get_code(self.qid, "1").review_flag)
+            session.set_code_review_flag(self.qid, "1", True, "split it after all")  # ticked again by hand
+        review.continue_export(self.session_path, self.folder / "day 4", recheck=("98", "flagged", "codes"))
+        with self.oe.CodingSession(self.session_path) as session:
+            self.assertEqual(session.get_code(self.qid, "1").review_note, "split it after all")
+
     def test_no_auto_flag_without_code_rechecks(self):
         review.continue_export(self.session_path, self.folder / "day 2", recheck=("98",))
         with self.oe.CodingSession(self.session_path) as session:

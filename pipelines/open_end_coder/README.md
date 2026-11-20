@@ -234,7 +234,8 @@ their numbers. It first asks which questions to prepare (all, or some: those
 picked must all have a code list or all lack one; `prepare --questions Q12,Q14`
 on the command line). With **Recheck** ticked, a code held by more than 9% of
 a question's respondents is flagged for a split review automatically, once
-(its Codebook note starts "Auto:"; after a review it is not flagged again).
+(its Codebook note starts "Auto:"; after a review, or once you untick its
+flag in the Codebook, it is not flagged again).
 It copies one `/oe-review "<folder>"` line to paste into Claude
 Code, or runs it with **Run with Claude** when the Claude Code command-line
 tool is installed; the skill imports the result into the session. **Import

@@ -228,9 +228,11 @@ def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, 
                 # "Flagged" in the Codebook) unless a review has already looked at them once.
                 answered = [r for r in responses if r.verbatim.strip()]
                 held = Counter(code for r in answered for code in set(r.final_codes))
+                cleared = session.unflagged_codes(info.id)  # turned off by the user (or after a split review)
                 for code, count in sorted(held.items()):
                     share = count / len(answered)
                     if (code in fixed and code not in flagged_codes and share > auto_flag_share
+                            and code not in cleared
                             and not codes[code].review_note.startswith("Reviewed (split)")):
                         note = (f"Auto: {count} of {len(answered)} respondents ({share:.0%}), over "
                                 f"{auto_flag_share:.0%}; check whether it combines ideas")

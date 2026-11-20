@@ -1436,6 +1436,20 @@ class CodingSession:
             review_note=str(row["review_note"]),
         )
 
+    def unflagged_codes(self, question_id: int) -> set[str]:
+        """Codes whose review flag was last turned off (so an automatic flag should leave them alone)."""
+        question = self.question(question_id)
+        last: dict[str, bool] = {}
+        for row in self.connection.execute(
+            "SELECT detail, new_value FROM audit_log WHERE action='flag_code' AND question_name=? ORDER BY id",
+            (question.name,),
+        ):
+            try:
+                last[str(row["detail"])] = bool(json.loads(row["new_value"])[0])
+            except (ValueError, IndexError, TypeError):
+                continue
+        return {code for code, flagged in last.items() if not flagged}
+
     def set_code_review_flag(self, question_id: int, code: str, flagged: bool, note: str = "") -> CodeInfo:
         """Flag a code for the next Claude review (for example to split a broad code), or clear it."""
         current = self.get_code(question_id, code)
