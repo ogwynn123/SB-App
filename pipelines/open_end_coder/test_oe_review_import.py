@@ -123,6 +123,24 @@ class ReviewImportTests(unittest.TestCase):
         self.assertEqual(codes["1"].supercategory, "POSITIVE - RECORD")
         self.assertEqual(codes["3"].direction, "-")
 
+    def test_98_goes_under_other_and_standard_nets_are_kept(self):
+        data = self.folder / "data.csv"
+        with data.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["survnum", "q5", "c5_1", "c5_2", "c5_3"])
+            for survnum, text in ((101, "He does a good job for vets"), (102, "Too old"),
+                                  (103, "Not hearing anything"), (104, "Old republican"), (105, "Purple")):
+                writer.writerow([survnum, text, "", "", ""])
+        path = write_review(self.folder / "review.xlsx", extra_rows=[[105, "", "Purple", "98", 98, None, None, ""]])
+        with oe.CodingSession(self.folder / "s.oe_session.sqlite") as session:
+            session.import_data(data, key_column="survnum")
+            question = session.questions()[0]
+            session.upsert_code(question.id, "97", label="Nothing", supercategory="No opinion")
+            review_import.apply_to_session(session, review_import.read_review(path))
+            codes = {c.code: c for c in session.list_codes(question.id)}
+        self.assertEqual(codes["98"].supercategory, "OTHER")
+        self.assertEqual(codes["97"].supercategory, "NO OPINION")  # the review did not blank it
+
 
 if __name__ == "__main__":
     unittest.main()

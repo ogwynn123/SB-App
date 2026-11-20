@@ -285,7 +285,8 @@ def continue_export(session_path: Path, out: Path, *, spec: Path | None = None, 
             for code in sorted(fixed, key=lambda c: int(c) if c.isdigit() else 0):
                 lines.append(" | ".join([code, _clean(fixed[code]["net"]), str(uses.get(code, 0)), _clean(fixed[code]["label"]),
                                          " / ".join(_clean(t)[:100] for t in examples.get(code, []))]))
-            lines += ["", "Standard codes: " + ", ".join(f"{c} {STANDARD[c]}" for c in sorted(STANDARD) if c not in fixed), "",
+            lines += ["", "Standard codes: " + ", ".join(f"{c} {STANDARD[c]}" for c in sorted(STANDARD) if c not in fixed),
+                      "A new code with no better-fitting NET may go under the NET OTHER.", "",
                       f"## Responses to code ({len(to_code)})", "survnum | lead-in | import status | verbatim"]
             for r in to_code:
                 lines.append(" | ".join([r["survnum"], _clean(r["lead"]), r["status"], _clean(r["verbatim"])]))
@@ -523,7 +524,8 @@ def build(folder: Path, unused_codes: tuple[str, ...] = (), *, accept_changes: b
             info = codes[code]
             final.append([int(code), info["label"], info["net"], uses.get(code, 0), round(100 * uses.get(code, 0) / n, 1)])
         for code in sorted(set(uses) & set(STANDARD) - set(codes), key=int):  # a job's own 97-99 are already listed
-            final.append([int(code), STANDARD[code], "", uses[code], round(100 * uses[code] / n, 1)])
+            final.append([int(code), STANDARD[code], "OTHER" if code == "98" else "", uses[code],
+                          round(100 * uses[code] / n, 1)])
         recoded = book.create_sheet(f"Q{number} recoded")
         recoded.append(["survnum", "Verbatim", "Lead-in answer"] + [f"New c{number}_{k}" for k in range(1, MAX_CODES + 1)]
                        + ["New labels", "Note", "Draft codes", "Recheck"])

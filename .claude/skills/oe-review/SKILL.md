@@ -81,8 +81,9 @@ Work one question at a time. Following the rules file:
 2. Read every draft-98 response against the whole list. Recurring ideas (3+)
    become codes.
 3. Write the frozen list to `llm_review/q14 list.tsv`: `code<TAB>label<TAB>NET`,
-   theme codes only, numbered from 1 with codes of a NET next to each other. Do
-   not list 96-99; they are added automatically. (Day 1 only: numbering may
+   theme codes only, numbered from 1 with codes of a NET next to each other. A
+   code with no better-fitting NET may go under `OTHER` (98 "Other" always sits
+   there). Do not list 96-99; they are added automatically. (Day 1 only: numbering may
    still be tidied before the import; after it, numbers are fixed.)
 4. Write `llm_review/q14 changes.tsv`: `codes<TAB>action<TAB>new label<TAB>reason`
    for the main changes from the draft (rename, merge, split, new code, delete).
@@ -177,7 +178,8 @@ highest existing theme code (skipping 96-99). Do not renumber to close gaps.
 3. Write `q14 list.tsv` with **every existing code, number, label and NET
    unchanged**, plus any new codes. A new code needs an idea recurring in 3+ of
    today's responses (or today's plus earlier 98s); otherwise use the closest
-   existing code or 98. If an existing label or NET is wrong, do not change it
+   existing code or 98. Give a new code an existing NET where it fits, else
+   `OTHER`. If an existing label or NET is wrong, do not change it
    yourself: ask the user, and only then rebuild with `--accept-changes`.
 4. Write `q14 recode.tsv` for today's responses, as on Day 1, and
    `q14 changes.tsv` for new codes (and any agreed label changes).

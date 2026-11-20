@@ -34,6 +34,7 @@ sys.path.insert(0, str(HERE))
 
 import oe_record_coder_core as oe  # noqa: E402
 
+OTHER_NET = "OTHER"  # 98 "Other" always sits under it; new codes with no better NET may too
 STANDARD_LABELS = {
     "96": "Have not heard enough / need more info",
     "97": "Nothing",
@@ -229,7 +230,7 @@ def _check(question: ReviewQuestion, unused_codes: tuple[str, ...] = ()) -> None
             same = sorted(c.code for c in question.codes.values() if c.label.casefold() == label)
             question.problems.append(f"codes {', '.join(same)} share the label {label!r}.")
     for code in sorted({c for row in question.rows for c in row.codes} & set(STANDARD_LABELS)):
-        question.codes.setdefault(code, ReviewCode(code, STANDARD_LABELS[code]))
+        question.codes.setdefault(code, ReviewCode(code, STANDARD_LABELS[code], OTHER_NET if code == "98" else ""))
 
 
 def write_outputs(questions: dict[str, ReviewQuestion], out_dir: Path, stem: str) -> tuple[Path, Path, Path]:
@@ -323,8 +324,12 @@ def apply_to_session(session: oe.CodingSession, questions: dict[str, ReviewQuest
         summary = ApplySummary(question.name)
         labels_before = {c.code: c.label for c in session.list_codes(question.id)}
         split_done: set[str] = set()  # record keys this review recoded for a split
+        existing_nets = {c.code: c.supercategory for c in session.list_codes(question.id, include_inactive=True)}
         for code in review.codes.values():
-            session.upsert_code(question.id, code.code, label=code.label, supercategory=code.net,
+            net = code.net
+            if code.code in STANDARD_LABELS and not net:
+                net = existing_nets.get(code.code, "")  # a standard code keeps the NET it already has
+            session.upsert_code(question.id, code.code, label=code.label, supercategory=net,
                                 direction=code.direction, source="review")
             summary.codes_written += 1
         responses = {}
