@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from survey_launcher_core import APP_ROOT, ProjectContext, resolve_relative_directory
+from survey_launcher_core import APP_ROOT, ProjectContext, python_command, resolve_relative_directory
 
 # Mappings the merge derives by itself every run; everything else is pinned.
 _DERIVED_METHODS = {"join", "timeseries_extra", "timeseries_system", "secondary_extra"}
@@ -63,12 +63,13 @@ def _mapping_pairs(run: dict) -> set[tuple[str, str]]:
     }
 
 
-def build_rerun_command(run: dict, folder: Path, python: str = sys.executable) -> list[str]:
+def build_rerun_command(run: dict, folder: Path, python: list[str] | None = None) -> list[str]:
     primary = _local(run["primary_path"], folder)
     secondary = _local(run["secondary_path"], folder)
     output = _local(run["output_path"], folder)
+    # Packaged, sys.executable is survey_launcher.exe, so run the merge with a real Python.
     command = [
-        python,
+        *(python if python is not None else python_command()),
         str(APP_ROOT / "pipelines" / "table_merger" / "unified_merge.py"),
         "--primary", str(primary),
         "--secondary", str(secondary),
@@ -230,11 +231,14 @@ def rerun_last_merge(context: ProjectContext, new_data: Path, timeout: int = 900
             "failed", f"The last merge used {primary.name}, which is not a {new_data.suffix} like {new_data.name}."
         )
 
+    try:
+        command = build_rerun_command(run, folder)  # before any file is touched
+    except FileNotFoundError as error:
+        return AutorunResult("failed", str(error))
     catalog = output.with_name(f"{output.stem}.catalog.json")
     backup = _backup(folder, [primary, output, catalog, folder / "timeseries_master.json"])
     shutil.copy2(new_data, primary)
 
-    command = build_rerun_command(run, folder)
     try:
         proc = subprocess.run(
             command,

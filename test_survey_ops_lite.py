@@ -505,6 +505,37 @@ class SurveyLauncherTests(unittest.TestCase):
         self.assertEqual((data / "Merge" / "NPA9915.csv").read_text(encoding="utf-8"), new_day.read_text(encoding="utf-8"))
         self.assertTrue(any("LEGACY_RENAMED" in line for line in result.log_lines))
 
+    def test_rerun_button_merges_the_data_csv_with_the_saved_mapping(self) -> None:
+        import tkinter as tk
+
+        import pandas as pd
+
+        import data_intake
+
+        context = self._intake_project("NPA9915")
+        data = context.project_root / "Data"
+        try:
+            tk_root = tk.Tk()
+        except tk.TclError:
+            self.skipTest("No display for Tk")
+        tk_root.withdraw()
+        self.addCleanup(tk_root.destroy)
+        dialog = data_intake.DataIntakeDialog(tk_root, context)
+        with patch.object(data_intake.messagebox, "showinfo") as info:
+            dialog.rerun_trend_merge()  # no merge yet
+        self.assertIn("Table Merger once", info.call_args.args[1])
+
+        self._first_merge(data)
+        (data / "NPA9915.csv").write_text("survnum,q1,q2,qold\n1,1,2,x\n2,2,1,y\n3,1,1,z\n", encoding="utf-8")
+        with patch.object(data_intake.messagebox, "askyesno", return_value=True), \
+                patch.object(data_intake.messagebox, "showinfo") as info, \
+                patch.object(data_intake.messagebox, "showwarning") as warning:
+            dialog.rerun_trend_merge()
+        warning.assert_not_called()
+        info.assert_called_once()
+        self.assertEqual(dialog.last_merge_status, "merged")
+        self.assertEqual(len(pd.read_csv(data / "Merge" / "NPA9915ts.csv")), 2 + 3)
+
     def test_from_outlook_fills_boxes_from_attachments(self) -> None:
         import tkinter as tk
 
@@ -885,6 +916,17 @@ class SurveyLauncherTests(unittest.TestCase):
                 patch.dict(os.environ, {core.PYTHON_OVERRIDE_ENV: ""}), \
                 patch.object(core.shutil, "which", side_effect=found.get):
             self.assertEqual(core.python_command(), [r"C:\Windows\py.exe", "-3"])
+
+    def test_packaged_launcher_reruns_the_merge_with_installed_python(self) -> None:
+        # Packaged, the launcher EXE must not be handed the merge's arguments.
+        import merge_autorun
+
+        run = {"primary_path": "a.csv", "secondary_path": "b.csv", "output_path": "ts.csv"}
+        found = {"py": r"C:\Windows\py.exe"}
+        with patch.object(core.sys, "frozen", True, create=True),                 patch.dict(os.environ, {core.PYTHON_OVERRIDE_ENV: ""}),                 patch.object(core.shutil, "which", side_effect=found.get):
+            command = merge_autorun.build_rerun_command(run, Path("C:/job/Data/Merge"))
+        self.assertEqual(command[:2], [r"C:\Windows\py.exe", "-3"])
+        self.assertTrue(command[2].endswith("unified_merge.py"))
 
     def test_packaged_launcher_skips_store_python_and_explains_when_none(self) -> None:
         store = {"python": r"C:\Users\x\AppData\Local\Microsoft\WindowsApps\python.exe"}

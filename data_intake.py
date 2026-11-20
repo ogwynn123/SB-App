@@ -19,7 +19,7 @@ import sys
 import tkinter as tk
 import zipfile
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
@@ -30,6 +30,7 @@ from survey_launcher_core import (
     find_latest_final_docx,
     questionnaire_area,
     questionnaire_base_name,
+    resolve_relative_directory,
 )
 
 _YEAR_FOLDER_RE = re.compile(r"^(19|20)\d{2}$")
@@ -417,6 +418,7 @@ class DataIntakeDialog(tk.Toplevel):
         buttons = ttk.Frame(body)
         buttons.pack(fill=tk.X, pady=(12, 0))
         ttk.Button(buttons, text="From Outlook (selected email)", command=self.from_outlook).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Rerun Trend Merge", command=self.rerun_trend_merge).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(buttons, text="Close", command=self.destroy).pack(side=tk.RIGHT)
         ttk.Button(buttons, text="Add Files", command=self.add_files).pack(side=tk.RIGHT, padx=(0, 8))
 
@@ -575,6 +577,34 @@ class DataIntakeDialog(tk.Toplevel):
                 summary += "\n" + self._rerun_merge(new_data)
         return summary
 
+    def rerun_trend_merge(self) -> None:
+        """Rerun the last trend merge on the survey's Data CSV now, without unzipping new data."""
+        from merge_autorun import latest_merge_run
+
+        title = "Rerun trend merge"
+        run = latest_merge_run(self.context)
+        if run is None:
+            messagebox.showinfo(
+                title, "No earlier merge in Data\\Merge; run the Table Merger once to set the mapping.", parent=self
+            )
+            return
+        data_dir = resolve_relative_directory(self.context.project_root, ("Data",))
+        new_data = data_dir / f"{self.context.survey_id}.csv" if data_dir else None
+        if new_data is None or not new_data.is_file():
+            messagebox.showinfo(title, f"There is no Data\\{self.context.survey_id}.csv to merge.", parent=self)
+            return
+        if not messagebox.askyesno(
+            title,
+            f"Merge Data\\{new_data.name} into the trend file with the mapping saved on "
+            f"{datetime.fromtimestamp(run.stat().st_mtime):%d %b %H:%M}?\n\n"
+            "The current files are backed up first.",
+            parent=self,
+        ):
+            return
+        detail = self._rerun_merge(new_data)
+        if self.last_merge_status == "merged" and not self.last_merge_differences:
+            messagebox.showinfo(title, detail, parent=self)
+
     def _rerun_merge(self, new_data: Path) -> str:
         """New current-wave data arrived: rerun the last trend merge with the same mapping."""
         from merge_autorun import rerun_last_merge
@@ -585,6 +615,8 @@ class DataIntakeDialog(tk.Toplevel):
             result = rerun_last_merge(self.context, new_data)
         finally:
             self.config(cursor="")
+        self.last_merge_status = result.status
+        self.last_merge_differences = list(result.mapping_differences)
         self.log(f"Merge: {result.detail}")
         if result.backup_dir:
             self.log(f"Merge: previous files backed up in {result.backup_dir}")
