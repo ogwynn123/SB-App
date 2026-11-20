@@ -1436,6 +1436,49 @@ class CodingSession:
             review_note=str(row["review_note"]),
         )
 
+    KEEP_BLANK_CODES = frozenset({"97", "98", "99"})
+
+    def blank_unused_codes(self, question_id: int) -> list[str]:
+        """Codes with no label that no response holds (assigned or in the imported data); 97-99 stay."""
+        used: set[str] = {
+            str(row["code"])
+            for row in self.connection.execute(
+                "SELECT DISTINCT a.code FROM assignments a JOIN responses r ON r.id=a.response_id "
+                "WHERE r.question_id=?",
+                (question_id,),
+            )
+        }
+        for row in self.connection.execute(
+            "SELECT original_codes_json FROM responses WHERE question_id=?", (question_id,)
+        ):
+            used.update(_json_codes(row["original_codes_json"]))
+        blank = [
+            str(row["code"])
+            for row in self.connection.execute(
+                "SELECT code, label FROM codes WHERE question_id=?", (question_id,)
+            )
+            if not clean_text(row["label"])
+            and str(row["code"]) not in used
+            and str(row["code"]) not in self.KEEP_BLANK_CODES
+        ]
+        return sorted(blank, key=lambda code: (not code.isdigit(), int(code) if code.isdigit() else 0, code))
+
+    def clear_blank_codes(self, question_id: int) -> list[str]:
+        """Drop codes with no label and no responses (not 97-99). Returns the codes dropped."""
+        codes = self.blank_unused_codes(question_id)
+        if not codes:
+            return []
+        question = self.question(question_id)
+        with self.connection:
+            self.connection.executemany(
+                "DELETE FROM codes WHERE question_id=? AND code=?", [(question_id, code) for code in codes]
+            )
+            self.connection.execute(
+                "INSERT INTO audit_log(changed_at, action, question_name, detail) VALUES(?, 'clear_blank_codes', ?, ?)",
+                (now_iso(), question.name, json.dumps(codes)),
+            )
+        return codes
+
     def unflagged_codes(self, question_id: int) -> set[str]:
         """Codes whose review flag was last turned off (so an automatic flag should leave them alone)."""
         question = self.question(question_id)

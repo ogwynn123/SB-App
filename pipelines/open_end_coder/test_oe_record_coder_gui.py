@@ -33,6 +33,16 @@ class RecordCoderGuiHelpersTests(unittest.TestCase):
             Path(r"C:\Projects\NPA9999\Data\Partial\Open Ends\NPA9999.oe_session.sqlite").resolve(),
         )
 
+    def test_wincross_export_opens_in_the_oes_folder(self) -> None:
+        here = Path(__file__).resolve().parent
+        oes = Path("C:/Job/Data/Partial/OEs")
+        self.assertEqual(gui.wincross_export_folder(oes / "NPA1.oe_session.sqlite", None), oes)
+        test_oes = Path("C:/Job/OG Clean/NPA1pt/Data/Partial/OEs - pt")
+        self.assertEqual(gui.wincross_export_folder(test_oes / "NPA1.oe_session.sqlite", here), test_oes)
+        elsewhere = Path("C:/Users/x/AppData/Local/OpenEndCoder")
+        self.assertEqual(gui.wincross_export_folder(elsewhere / "a.oe_session.sqlite", here), here)
+        self.assertEqual(gui.wincross_export_folder(elsewhere / "a.oe_session.sqlite", None), elsewhere)
+
     def test_code_choice_round_trip(self) -> None:
         item = core.CodeInfo(
             question_id=1,

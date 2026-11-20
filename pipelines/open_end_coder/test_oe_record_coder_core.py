@@ -123,6 +123,24 @@ class RecordCoderCoreTests(unittest.TestCase):
             self.assertEqual(read_csv(source)[0]["c16_1"], "98")
             self.assertEqual(exported.modified_records, 2)
 
+    def test_clear_blank_codes_drops_only_unlabelled_unused_codes(self) -> None:
+        with local_tmp() as temp:
+            source = write_csv(temp / "data.csv", sample_rows())
+            with core.CodingSession(temp / "coding.sqlite") as session:
+                session.import_data(source)
+                question = session.questions()[0]
+                by_key = {r.record_key: r for r in session.list_responses(question.id)}
+                for code in ("5", "6", "7", "9", "97", "99"):
+                    session.upsert_code(question.id, code, label="")
+                session.upsert_code(question.id, "8", label="Has a label")
+                session.set_assignment(by_key["1001"].id, ["7"])  # used by hand, no label
+                self.assertEqual(session.blank_unused_codes(question.id), ["5", "6", "9"])
+                self.assertEqual(session.clear_blank_codes(question.id), ["5", "6", "9"])
+                left = {c.code for c in session.list_codes(question.id, include_inactive=True)}
+                self.assertTrue({"7", "8", "97", "98", "99"} <= left)  # 98 is in the imported data
+                self.assertFalse({"5", "6", "9"} & left)
+                self.assertEqual(session.clear_blank_codes(question.id), [])
+
     def test_supercategories_are_always_upper_case(self) -> None:
         with local_tmp() as temp:
             source = write_csv(temp / "data.csv", sample_rows())

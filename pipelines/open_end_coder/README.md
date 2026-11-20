@@ -59,6 +59,9 @@ source changes so the coder can review it.
    metadata** explicitly replaces those differences, with every replacement
    shown in the report and audit log. Existing WinCross open-end tables use the
    same preserve-and-report policy when imported into the selected question.
+   **Clear Blank Codes** drops the question's codes that have no label and no
+   responses (assigned or in the imported data), after a confirmation; 97-99
+   are kept and no code is renumbered.
 3. **Review & Export** shows completion and exports the coded CSV. Codebook,
    audit, and formatted WinCross open-end table files are secondary outputs.
 

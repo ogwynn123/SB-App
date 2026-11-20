@@ -75,6 +75,17 @@ def default_session_path(context: LaunchContext) -> Path:
     return base / f"{survey_name}.oe_session.sqlite"
 
 
+def wincross_export_folder(session_path: Path, work_dir: Path | None) -> Path:
+    """Where Export WinCross Table opens: the job's Data\\Partial\\OEs (the session's own
+    OEs folder, e.g. "OEs - pt" on a test run), else the launcher's OEs folder, else the session's folder."""
+    folder = session_path.parent
+    if folder.name.casefold().startswith("oes"):
+        return folder
+    if work_dir is not None and work_dir.is_dir():
+        return work_dir
+    return folder
+
+
 def format_code_choice(item: core.CodeInfo) -> str:
     label = item.label or "(label not set)"
     return f"{item.code} | {label}"
@@ -410,6 +421,9 @@ class RecordCoderApp:
         search.pack(side=tk.LEFT, padx=(6, 6), fill=tk.X, expand=True)
         search.bind("<KeyRelease>", lambda _event: self.refresh_codebook())
         ttk.Button(controls, text="New Code", command=self.new_codebook_entry).pack(side=tk.RIGHT)
+        ttk.Button(controls, text="Clear Blank Codes", command=self.clear_blank_codes).pack(
+            side=tk.RIGHT, padx=(0, 6)
+        )
         ttk.Button(
             controls,
             text="Import WinCross Codebook",
@@ -1720,6 +1734,27 @@ class RecordCoderApp:
         self.edit_review_flag_var.set(False)
         self.edit_review_note_var.set("")
 
+    def clear_blank_codes(self) -> None:
+        """Drop this question's codes that have no label and no responses (97-99 stay)."""
+        question = self._active_codebook_question()
+        if self.session is None or question is None:
+            return
+        codes = self.session.blank_unused_codes(question.id)
+        if not codes:
+            messagebox.showinfo("Clear blank codes", f"{question.name} has no blank, unused codes.", parent=self.root)
+            return
+        shown = ", ".join(codes[:40]) + (f" ... ({len(codes)} in all)" if len(codes) > 40 else "")
+        if not messagebox.askyesno(
+            "Clear blank codes",
+            f"Drop {len(codes)} code(s) from {question.name} that have no label and no responses?\n\n{shown}\n\n"
+            "97-99 are kept. Other codes keep their numbers.",
+            parent=self.root,
+        ):
+            return
+        dropped = self.session.clear_blank_codes(question.id)
+        self.refresh_codebook()
+        self.status_var.set(f"{question.name}: dropped {len(dropped)} blank code(s)")
+
     def new_codebook_entry(self) -> None:
         question = self._active_codebook_question()
         if self.session is None or question is None:
@@ -1890,7 +1925,7 @@ class RecordCoderApp:
     def export_wincross_table(self) -> None:
         if self.session is None:
             return
-        base = Path(self.export_var.get()).parent if self.export_var.get().strip() else self.session.path.parent
+        base = wincross_export_folder(self.session.path, self.context.work_dir)
         survey = self.session.get_meta("survey_id") or self.context.survey_id or "open_end"
         picked = filedialog.asksaveasfilename(
             title="Export WinCross Open-End Table",
